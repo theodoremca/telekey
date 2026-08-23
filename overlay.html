@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Flowtype</title>
+    <link rel="stylesheet" href="/src/overlay/overlay.css" />
+  </head>
+  <body>
+    <!-- The capsule is a child of a transparent body so its shadow has room to fall. -->
+    <div class="stage">
+      <div class="capsule" id="capsule" data-state="recording">
+        <span class="indicator" aria-hidden="true"></span>
+
+        <div class="trace">
+          <canvas id="trace" width="342" height="60"></canvas>
+          <div class="sweep" aria-hidden="true"></div>
+        </div>
+
+        <span class="timer" id="timer">0:00</span>
+        <p class="message" id="message"></p>
+      </div>
+    </div>
+
+    <p class="sr-only" id="live" role="status" aria-live="polite"></p>
+    <script type="module" src="/src/overlay/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Flowtype — overlay states</title>
+    <!-- Loads the real stylesheet, so this page cannot drift from the app. -->
+    <link rel="stylesheet" href="/src/overlay/overlay.css" />
+    <style>
+      body {
+        pointer-events: auto;
+        background: #ffffff;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+        color: #1b1a21;
+        overflow: auto;
+      }
+      .sheet {
+        max-width: 640px;
+        margin: 0 auto;
+        padding: 48px 24px 72px;
+      }
+      h1 {
+        margin: 0 0 4px;
+        font-size: 19px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+      .note {
+        margin: 0 0 36px;
+        font-size: 13px;
+        line-height: 1.5;
+        color: #6b6875;
+      }
+      .row {
+        margin-bottom: 28px;
+      }
+      .label {
+        margin: 0 0 8px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: #8c8996;
+      }
+      .plate {
+        display: grid;
+        place-items: center;
+        padding: 10px 0;
+        border-radius: 14px;
+        /* Ruled paper, so the capsule is judged over real content rather than
+           a flat swatch. */
+        background: repeating-linear-gradient(
+          #ffffff 0 22px,
+          #eceaf1 22px 23px
+        );
+        border: 1px solid #e6e4ea;
+      }
+      .plate .stage {
+        width: 296px;
+        height: auto;
+      }
+      .plate.dark {
+        background: repeating-linear-gradient(
+          #1c1b22 0 22px,
+          #26252e 22px 23px
+        );
+        border-color: #2c2b34;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="sheet">
+      <h1>Overlay states</h1>
+      <p class="note">
+        Design reference for the recording panel. Pulls in the app's own
+        stylesheet, so anything you change in
+        <code>src/overlay/overlay.css</code> shows up here on reload.
+      </p>
+      <div id="rows"></div>
+    </div>
+
+    <template id="capsule-template">
+      <div class="stage">
+        <div class="capsule" data-state="recording">
+          <span class="indicator"></span>
+          <div class="trace">
+            <canvas width="342" height="60"></canvas>
+            <div class="sweep"></div>
+          </div>
+          <span class="timer">0:07</span>
+          <p class="message"></p>
+        </div>
+      </div>
+    </template>
+
+    <script type="module" src="/src/overlay/preview.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Hardened Runtime blocks microphone access unless this is declared.
+    Without it, recording silently produces silence in a signed build even
+    though it works in development.
+  -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+
+  <!--
+    Deliberately NOT sandboxed. The App Sandbox blocks the two things this app
+    exists to do: synthesising ⌘V into another application, and registering a
+    system-wide hotkey. Adding com.apple.security.app-sandbox would break both.
+
+    Accessibility itself needs no entitlement — it is granted by the user in
+    System Settings and enforced by TCC.
+  -->
+</dict>
+</plist>

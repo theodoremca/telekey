@@ -1,0 +1,79 @@
+[package]
+name = "flowtype"
+version = "0.1.0"
+description = "Push-to-talk dictation for macOS"
+authors = ["Theodore"]
+edition = "2021"
+
+[lib]
+name = "flowtype_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
+tauri-plugin-global-shortcut = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# audio capture + resampling + encoding
+cpal = "0.18"
+rubato = "5.0"
+
+
+# transcription
+reqwest = { version = "0.13", default-features = false, features = [
+  "blocking",
+  "multipart",
+  "json",
+  "rustls",
+  "rustls-native-certs",
+  "charset",
+  "http2",
+] }
+
+# text injection
+enigo = "0.6"
+arboard = "3.6"
+
+# storage
+keyring = "4"
+dirs = "6"
+dotenvy = "0.15"
+
+# misc
+anyhow = "1"
+thiserror = "2"
+zeroize = "1"
+parking_lot = "0.12"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = [
+  "NSWorkspace",
+  "NSRunningApplication",
+  "NSApplication",
+  "NSWindow",
+  "NSPanel",
+  "NSResponder",
+] }
+objc2-foundation = { version = "0.3", features = [
+  "NSString",
+  "NSArray",
+  "NSDictionary",
+  "NSValue",
+] }
+objc2-av-foundation = { version = "0.3", features = [
+  "AVCaptureDevice",
+  "AVMediaFormat",
+] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+hound = "3.5"
+wiremock = "0.6"
+tempfile = "3"

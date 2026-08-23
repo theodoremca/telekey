@@ -1,0 +1,605 @@
+/*
+ * Flowtype settings.
+ *
+ * The overlay is a dark HUD because it floats over other apps. This is a
+ * document you sit with, so it is a light surface with room to breathe — and
+ * follows the system theme, since it is a native window.
+ *
+ * The amber from the overlay carries through as the single accent, darkened
+ * for contrast on a light ground.
+ */
+
+:root {
+  --paper: #fbfafc;
+  --surface: #ffffff;
+  --line: #e8e5ec;
+  --line-strong: #d8d4de;
+
+  --ink: #17161d;
+  --muted: #6c6879;
+  --faint: #94909f;
+
+  /* The overlay's #f5b324 fails contrast on white; this is the same hue with
+     enough depth to sit on a light surface. */
+  --voice: #b57d0a;
+  --voice-wash: #fdf5e3;
+
+  --ok: #16a34a;
+  --warn: #d97706;
+  --bad: #dc2626;
+
+  --radius: 12px;
+  --radius-sm: 8px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #131218;
+    --surface: #1b1a22;
+    --line: #2a2833;
+    --line-strong: #38353f;
+
+    --ink: #f2f0f7;
+    --muted: #9c98a8;
+    --faint: #6f6b7b;
+
+    --voice: #f5b324;
+    --voice-wash: #2a2211;
+
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --bad: #fb7185;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+.page {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 28px 24px 56px;
+}
+
+.loading {
+  color: var(--muted);
+  text-align: center;
+  padding: 60px 0;
+}
+
+/* ---- masthead --------------------------------------------------------- */
+
+.masthead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.masthead h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.verdict {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--bad);
+}
+
+.verdict.ready {
+  color: var(--ok);
+}
+
+.banner {
+  margin: 0 0 20px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--voice-wash);
+  border: 1px solid var(--line-strong);
+  font-size: 13px;
+  color: var(--ink);
+}
+
+/* ---- sections --------------------------------------------------------- */
+
+.section {
+  margin-bottom: 28px;
+}
+
+.section h2 {
+  margin: 0 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.note {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+/* ---- rows ------------------------------------------------------------- */
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.row + .row {
+  border-top: 1px solid var(--line);
+}
+
+/* A stacked row: the divider rule above still applies, so this only changes
+   the axis, never the separators. */
+.row.column {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+/* Nested control clusters must not inherit the row's own padding. */
+.row.column > .row.tight,
+.row.tight {
+  padding: 0;
+  gap: 8px;
+}
+
+.row.column > .row.tight + * {
+  margin-top: 8px;
+}
+
+.rowText {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.rowLabel {
+  font-weight: 500;
+}
+
+.rowHint {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowValue {
+  flex: none;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.problem {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--bad);
+}
+
+.dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+
+.dot.ok {
+  background: var(--ok);
+}
+.dot.warn {
+  background: var(--warn);
+}
+.dot.bad {
+  background: var(--bad);
+}
+
+/* ---- controls --------------------------------------------------------- */
+
+button {
+  flex: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    opacity 120ms ease;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--voice);
+  outline-offset: 2px;
+}
+
+.ghost {
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--ink);
+}
+
+.ghost:hover:not(:disabled) {
+  background: var(--paper);
+  border-color: var(--faint);
+}
+
+.primary {
+  border: 1px solid transparent;
+  background: var(--ink);
+  color: var(--surface);
+}
+
+.primary:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
+.input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--voice);
+  box-shadow: 0 0 0 3px var(--voice-wash);
+}
+
+/* ---- shortcut recorder ------------------------------------------------ */
+
+.keys {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1 1 auto;
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+}
+
+.keys.listening {
+  border-color: var(--voice);
+  background: var(--voice-wash);
+  box-shadow: 0 0 0 3px var(--voice-wash);
+}
+
+.keys .prompt {
+  font-size: 13px;
+  color: var(--voice);
+}
+
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--surface);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* ---- vocabulary chips ------------------------------------------------- */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chips li {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px 3px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--paper);
+  font-size: 13px;
+}
+
+.chips button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--faint);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.chips button:hover {
+  background: var(--line);
+  color: var(--ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button {
+    transition: none;
+  }
+}
+
+/* ---- tabs ------------------------------------------------------------- */
+
+.tabs {
+  display: inline-flex;
+  gap: 2px;
+  margin-bottom: 24px;
+  padding: 2px;
+  border-radius: 10px;
+  background: var(--line);
+}
+
+.tab {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 5px 14px;
+  border-radius: 8px;
+}
+
+.tab.current {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+/* ---- toggle ----------------------------------------------------------- */
+
+.toggleRow {
+  cursor: pointer;
+}
+
+/* The platform control, restyled rather than rebuilt: it keeps keyboard
+   behaviour and the accessibility tree for free. */
+.switch {
+  flex: none;
+  appearance: none;
+  position: relative;
+  width: 38px;
+  height: 22px;
+  margin: 0;
+  border-radius: 999px;
+  background: var(--line-strong);
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
+  transition: transform 140ms ease;
+}
+
+.switch:checked {
+  background: var(--voice);
+}
+
+.switch:checked::after {
+  transform: translateX(16px);
+}
+
+.switch:focus-visible {
+  outline: 2px solid var(--voice);
+  outline-offset: 2px;
+}
+
+/* ---- history ---------------------------------------------------------- */
+
+.historyBar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.danger {
+  border: 1px solid transparent;
+  background: var(--bad);
+  color: #ffffff;
+}
+
+.danger:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.entries {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.entries li {
+  display: flex;
+  align-items: stretch;
+}
+
+.entries li + li {
+  border-top: 1px solid var(--line);
+}
+
+/* The whole row copies — that is why the panel exists, so it should not be a
+   small target. */
+.entry {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+  font-weight: 400;
+}
+
+.entry:hover {
+  background: var(--paper);
+}
+
+.entryText {
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.4;
+  /* Three lines is enough to recognise a transcript without turning the list
+     into a reading surface. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.entryMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.entryMeta > span + span::before {
+  content: "·";
+  margin-right: 8px;
+  color: var(--line-strong);
+}
+
+.copied {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.remove {
+  flex: none;
+  width: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--faint);
+  font-size: 16px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.entries li:hover .remove,
+.remove:focus-visible {
+  opacity: 1;
+}
+
+.remove:hover {
+  color: var(--bad);
+}
+
+.empty {
+  padding: 44px 20px;
+  text-align: center;
+  color: var(--muted);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+}
+
+.empty p {
+  margin: 0;
+}
+
+.emptyHint {
+  margin-top: 8px !important;
+  font-size: 13px;
+  color: var(--faint);
+}
+
+.emptyHint kbd {
+  margin: 0 1px;
+}
+
+/* ---- select ----------------------------------------------------------- */
+
+/* Native selects, restyled to match the text inputs: the platform popup is
+   better than anything worth rebuilding here. */
+select.input {
+  appearance: none;
+  padding-right: 26px;
+  cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) calc(50% + 1px),
+    calc(100% - 9px) calc(50% + 1px);
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}

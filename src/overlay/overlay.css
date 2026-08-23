@@ -1,0 +1,274 @@
+/*
+ * Flowtype recording overlay.
+ *
+ * Seen dozens of times a day over whatever the user is working in, so restraint
+ * here is functional rather than decorative: one accent, one moving element,
+ * no chrome that does not carry information.
+ */
+
+:root {
+  /* Warm graphite rather than pure black — it sits more calmly over light
+     content, and pure black reads as a system alert. */
+  --ink: #15141b;
+  --ink-lift: #211f2b;
+  --hairline: rgba(255, 255, 255, 0.1);
+
+  /* Amber, not red. Red means error; amber is the VU-meter lineage — live,
+     warm, and unalarming at a glance. */
+  --voice: #f5b324;
+  --voice-soft: rgba(245, 179, 36, 0.24);
+
+  --settled: #4ade80;
+  --alert: #fb7185;
+
+  --text: #f2f0f7;
+  --text-dim: rgba(242, 240, 247, 0.52);
+
+  --radius: 999px;
+  --enter: 360ms cubic-bezier(0.22, 1.4, 0.36, 1);
+  --exit: 180ms cubic-bezier(0.4, 0, 1, 1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  /* The Tauri window is transparent; only the capsule paints. */
+  background: transparent;
+  overflow: hidden;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  /* The panel must never intercept clicks meant for the app underneath. */
+  pointer-events: none;
+}
+
+.stage {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: 8px;
+}
+
+.capsule {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 280px;
+  height: 44px;
+  padding: 0 16px;
+
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--ink-lift), var(--ink));
+  /* The hairline keeps the capsule readable against dark app backgrounds,
+     where the fill alone would disappear. */
+  box-shadow:
+    inset 0 0 0 0.5px var(--hairline),
+    0 6px 18px rgba(0, 0, 0, 0.28),
+    0 1px 2px rgba(0, 0, 0, 0.22);
+
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  color: var(--text);
+
+  animation: enter var(--enter) both;
+}
+
+.capsule[data-leaving="true"] {
+  animation: exit var(--exit) both;
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes exit {
+  to {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+/* ---- state dot ------------------------------------------------------- */
+
+.indicator {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--voice);
+  transition: background 200ms ease;
+}
+
+[data-state="recording"] .indicator {
+  /* Deliberately still. The waveform is the only thing that moves while
+     recording — a pulsing dot alongside it is a second animation competing for
+     the same glance. */
+  box-shadow: 0 0 0 3px var(--voice-soft);
+}
+
+[data-state="transcribing"] .indicator {
+  background: var(--text-dim);
+}
+
+[data-state="inserted"] .indicator {
+  background: var(--settled);
+}
+
+[data-state="failed"] .indicator {
+  background: var(--alert);
+}
+
+/* ---- the trace ------------------------------------------------------- */
+
+.trace {
+  position: relative;
+  flex: 1 1 auto;
+  height: 30px;
+  min-width: 0;
+}
+
+.trace canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* A single sweep passing through the frozen waveform while the API works.
+   One moving thing at a time: the dot stops pulsing when this runs. */
+.sweep {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(242, 240, 247, 0.16),
+    transparent
+  );
+}
+
+[data-state="transcribing"] .sweep {
+  opacity: 1;
+  animation: sweep 1.1s ease-in-out infinite;
+}
+
+@keyframes sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* Only the waveform is meaningful while recording; once the audio is gone the
+   trace has nothing left to say, so a message takes its place. */
+[data-state="inserted"] .trace,
+[data-state="failed"] .trace {
+  display: none;
+}
+
+/* ---- timer and message ----------------------------------------------- */
+
+.timer {
+  flex: none;
+  font-family: ui-monospace, "SF Mono", SFMono-Regular, monospace;
+  /* Tabular figures stop the capsule twitching as the seconds tick. */
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  letter-spacing: 0.01em;
+  color: var(--text-dim);
+}
+
+[data-state="inserted"] .timer,
+[data-state="failed"] .timer {
+  display: none;
+}
+
+.message {
+  display: none;
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  /* Two lines maximum: an overlay is a glance, not a reading surface. */
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+[data-state="inserted"] .message,
+[data-state="failed"] .message {
+  display: -webkit-box;
+}
+
+[data-state="inserted"] .message {
+  flex: none;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+[data-state="failed"] .message {
+  color: var(--text);
+}
+
+/* The failure capsule needs room for a sentence the user must actually read. */
+.capsule[data-state="failed"] {
+  height: auto;
+  min-height: 44px;
+  padding: 12px 16px;
+  border-radius: 16px;
+  align-items: flex-start;
+}
+
+[data-state="failed"] .indicator {
+  margin-top: 5px;
+}
+
+/* ---- accessibility --------------------------------------------------- */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .capsule,
+  .capsule[data-leaving="true"] {
+    animation: fade 140ms both;
+  }
+
+  [data-state="transcribing"] .sweep {
+    animation: none;
+  }
+
+  @keyframes fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}
