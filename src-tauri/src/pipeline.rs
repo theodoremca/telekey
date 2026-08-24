@@ -18,6 +18,7 @@ use crate::frontmost::{frontmost_app, TargetApp};
 use crate::history::History;
 use crate::inject::{self, PASTE_SETTLE_DELAY};
 use crate::polish::{OpenAiPolisher, Polisher};
+use crate::usage::{Units, Usage};
 use crate::settings::{self, Settings};
 use crate::transcribe::{OpenAiTranscriber, TranscriptionContext, Transcriber};
 use crate::trigger::TriggerEvent;
@@ -54,12 +55,18 @@ pub struct Pipeline {
     polisher: Mutex<Option<Arc<dyn Polisher>>>,
     sink: Arc<dyn StatusSink>,
     history: Arc<History>,
+    usage: Arc<Usage>,
     /// Read by the level ticker so it only emits while there is audio to show.
     recording: AtomicBool,
 }
 
 impl Pipeline {
-    pub fn new(settings: Settings, sink: Arc<dyn StatusSink>, history: Arc<History>) -> Self {
+    pub fn new(
+        settings: Settings,
+        sink: Arc<dyn StatusSink>,
+        history: Arc<History>,
+        usage: Arc<Usage>,
+    ) -> Self {
         Self {
             engine: AudioEngine::spawn(),
             settings: Mutex::new(settings),
@@ -68,6 +75,7 @@ impl Pipeline {
             polisher: Mutex::new(None),
             sink,
             history,
+            usage,
             recording: AtomicBool::new(false),
         }
     }
@@ -96,6 +104,21 @@ impl Pipeline {
 
     pub fn history(&self) -> &Arc<History> {
         &self.history
+    }
+
+    pub fn usage(&self) -> &Arc<Usage> {
+        &self.usage
+    }
+
+    /// Record billing units. Never fatal: the text is already inserted, so a
+    /// bookkeeping failure must not read as a failed dictation.
+    fn meter(&self, units: &Units) {
+        if units.is_empty() {
+            return;
+        }
+        if let Err(err) = self.usage.record(units) {
+            tracing::warn!("could not record usage: {err:#}");
+        }
     }
 
     /// Drop the cached clients so the next dictation picks up a new API key.
@@ -208,12 +231,15 @@ impl Pipeline {
         // worked. It was never written to disk, so this is the only copy.
         clip.samples.zeroize();
 
-        let text = result?;
+        let transcription = result?;
         tracing::debug!(
             api_ms = upload_started.elapsed().as_millis() as u64,
+            billed_seconds = transcription.units.transcribe_seconds,
             "transcription returned"
         );
+        self.meter(&transcription.units);
 
+        let text = transcription.text;
         if text.is_empty() {
             anyhow::bail!("nothing was transcribed — try speaking a little longer");
         }
@@ -259,7 +285,8 @@ impl Pipeline {
                     polish_ms = started.elapsed().as_millis() as u64,
                     "formatting applied"
                 );
-                formatted
+                self.meter(&formatted.units);
+                formatted.text
             }
             Err(err) => {
                 tracing::warn!("formatting failed, keeping the transcript: {err:#}");
@@ -348,6 +375,11 @@ impl Pipeline {
 mod tests {
     use super::*;
 
+    fn test_usage() -> Arc<Usage> {
+        let dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
+        Arc::new(Usage::load(dir.path()))
+    }
+
     fn test_history() -> Arc<History> {
         // Leaks a temp dir for the duration of the test process, which is fine
         // for a handful of unit tests and keeps the helper a one-liner.
@@ -405,7 +437,7 @@ mod tests {
             ..Default::default()
         };
 
-        let pipeline = Pipeline::new(settings, Arc::new(NullSink), test_history());
+        let pipeline = Pipeline::new(settings, Arc::new(NullSink), test_history(), test_usage());
         let context = pipeline.context();
 
         assert_eq!(context.keywords, vec!["Hordanso".to_string()]);
@@ -418,7 +450,7 @@ mod tests {
 
     #[test]
     fn updating_settings_changes_the_next_context() {
-        let pipeline = Pipeline::new(Settings::default(), Arc::new(NullSink), test_history());
+        let pipeline = Pipeline::new(Settings::default(), Arc::new(NullSink), test_history(), test_usage());
         assert!(pipeline.context().keywords.is_empty());
 
         pipeline.update_settings(Settings {

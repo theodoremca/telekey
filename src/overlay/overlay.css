@@ -65,6 +65,10 @@ body {
 
   border-radius: var(--radius);
   background: linear-gradient(180deg, var(--ink-lift), var(--ink));
+  /* Nothing should ever paint outside the pill. Belt and braces alongside the
+     clip on .trace, so a future child cannot escape either. Outer box-shadows
+     are unaffected by this. */
+  overflow: hidden;
   /* The hairline keeps the capsule readable against dark app backgrounds,
      where the fill alone would disappear. */
   box-shadow:
@@ -138,6 +142,10 @@ body {
   flex: 1 1 auto;
   height: 30px;
   min-width: 0;
+  /* The sweep below travels a full width past each edge, so without this it
+     escapes the capsule entirely — measured at ~150px beyond a 280px pill. */
+  overflow: hidden;
+  border-radius: 4px;
 }
 
 .trace canvas {

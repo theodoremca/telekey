@@ -40,6 +40,7 @@ arboard = "3.6"
 
 # storage
 keyring = "4"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 dirs = "6"
 dotenvy = "0.15"
 

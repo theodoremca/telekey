@@ -15,6 +15,7 @@ use crate::permissions::{self, Permissions, SettingsPane};
 use crate::pipeline::Pipeline;
 use crate::settings::{self, ApiKeySource, Settings};
 use crate::signing::{self, Signing};
+use crate::usage::{Cost, DailyPoint, Units};
 use crate::trigger;
 
 /// Anything that went wrong is shown to the user, so keep the cause chain.
@@ -188,6 +189,53 @@ pub fn copy_to_clipboard(text: String) -> Result<(), String> {
 
     let mut clipboard = crate::inject::SystemClipboard::new().map_err(to_message)?;
     clipboard.write_text(&text).map_err(to_message)
+}
+
+/// Which span of time the Usage tab is showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Period {
+    Today,
+    Month,
+    Lifetime,
+}
+
+/// Units and money for one period.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageSummary {
+    pub units: Units,
+    pub cost: Cost,
+    /// Minutes, precomputed so the UI never has to know the unit is seconds.
+    pub minutes: f64,
+}
+
+#[tauri::command]
+pub fn usage_summary(pipeline: State<'_, Arc<Pipeline>>, period: Period) -> UsageSummary {
+    let usage = pipeline.usage();
+    let units = match period {
+        Period::Today => usage.today(),
+        Period::Month => usage.this_month(),
+        Period::Lifetime => usage.lifetime(),
+    };
+
+    let rates = pipeline.settings().rates;
+    UsageSummary {
+        cost: rates.cost_of(&units),
+        minutes: units.minutes(),
+        units,
+    }
+}
+
+/// The last `days` days for the chart, including days with no activity.
+#[tauri::command]
+pub fn usage_daily(pipeline: State<'_, Arc<Pipeline>>, days: i64) -> Vec<DailyPoint> {
+    pipeline.usage().recent_days(days.clamp(1, 366))
+}
+
+#[tauri::command]
+pub fn clear_usage(pipeline: State<'_, Arc<Pipeline>>) -> Result<(), String> {
+    pipeline.usage().clear().map_err(to_message)
 }
 
 /// Apps that are open right now, so a formatting profile can be picked from a

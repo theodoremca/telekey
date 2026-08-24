@@ -91,6 +91,7 @@ Everything below is optional — Flowtype works with none of it configured.
 | **Vocabulary** | Names and jargon — "Kubernetes", your product names — sent to the model as recognition hints so they come back spelled right. |
 | **Formatting** | Per-app styles: literal in a terminal (no sentence capital, no full stop), terse in Slack, formal in Mail. Literal runs on your Mac; the others cost one extra request. |
 | **History** | Recent transcripts, click any to copy. Stored `0600` on your Mac only, capped, clearable, and switchable off entirely. |
+| **Usage** | What you have spent and how many minutes you have dictated — today, this month, all time — with a 30-day chart. Rates are editable, since published prices change. |
 
 ## Privacy
 
@@ -100,6 +101,8 @@ Everything below is optional — Flowtype works with none of it configured.
 - **Transcripts stay local.** History is a file on your Mac, owner-readable
   only. Turn it off in Settings and existing entries are deleted immediately.
 - **Your API key** lives in the Keychain, and is never logged or printed.
+- **Usage records are counts, not content** — seconds and token totals, never
+  what you said. Rolled up as they age, so the file stays a few KB for life.
 
 ---
 
@@ -175,7 +178,7 @@ hold key → trigger → capture audio → [release] → WAV in memory
               └──────────→ format (optional) ←────────┘
                                  │
                                  ▼
-                          paste at cursor → history, buffer zeroed
+                    paste at cursor → history + usage, buffer zeroed
 ```
 
 | Module | Job |
@@ -187,6 +190,7 @@ hold key → trigger → capture audio → [release] → WAV in memory
 | `inject.rs` | Clipboard save → ⌘V → restore |
 | `panel.rs` | Non-activating `NSPanel` so the overlay never steals focus |
 | `signing.rs` | Detects a signature that cannot hold a permission |
+| `usage.rs` | Billing units from the API, rolled up by age |
 
 ### Two rules for this codebase
 

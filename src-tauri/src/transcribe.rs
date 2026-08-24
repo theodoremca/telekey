@@ -11,6 +11,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
 
 use crate::audio::{encode_wav_16bit_mono, Clip, TARGET_SAMPLE_RATE};
+use crate::usage::Units;
 
 pub const DEFAULT_MODEL: &str = "gpt-transcribe";
 pub const DEFAULT_ENDPOINT: &str = "https://api.openai.com/v1/audio/transcriptions";
@@ -34,10 +35,19 @@ pub struct TranscriptionContext {
     pub prompt: Option<String>,
 }
 
+/// A transcript, plus what the API says it billed for producing it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Transcription {
+    pub text: String,
+    /// Empty when the response carried no `usage` object — the transcript is
+    /// still good, so a missing figure must not fail the dictation.
+    pub units: Units,
+}
+
 /// The seam that lets a local engine be dropped in later without the pipeline
 /// noticing.
 pub trait Transcriber: Send + Sync {
-    fn transcribe(&self, clip: &Clip, context: &TranscriptionContext) -> Result<String>;
+    fn transcribe(&self, clip: &Clip, context: &TranscriptionContext) -> Result<Transcription>;
 }
 
 pub struct OpenAiTranscriber {
@@ -77,10 +87,41 @@ impl OpenAiTranscriber {
 #[derive(Deserialize)]
 struct TranscriptionResponse {
     text: String,
+    #[serde(default)]
+    usage: Option<ApiUsage>,
+}
+
+/// The response's `usage` object.
+///
+/// The API returns one of two shapes — `{ seconds, type: "duration" }` for
+/// duration-billed models, `{ input_tokens, output_tokens, … }` for token-billed
+/// ones. Every field is optional rather than switching on `type`, so a new shape
+/// degrades to a missing figure instead of a parse failure that would throw away
+/// a perfectly good transcript.
+#[derive(Debug, Default, Deserialize)]
+struct ApiUsage {
+    #[serde(default)]
+    seconds: Option<f64>,
+    #[serde(default)]
+    input_tokens: Option<u64>,
+    #[serde(default)]
+    output_tokens: Option<u64>,
+}
+
+impl ApiUsage {
+    fn into_units(self) -> Units {
+        Units {
+            dictations: 1,
+            // Transcription bills to the nearest second.
+            transcribe_seconds: self.seconds.unwrap_or(0.0).round().max(0.0) as u64,
+            transcribe_tokens: self.input_tokens.unwrap_or(0) + self.output_tokens.unwrap_or(0),
+            ..Default::default()
+        }
+    }
 }
 
 impl Transcriber for OpenAiTranscriber {
-    fn transcribe(&self, clip: &Clip, context: &TranscriptionContext) -> Result<String> {
+    fn transcribe(&self, clip: &Clip, context: &TranscriptionContext) -> Result<Transcription> {
         if clip.is_empty() {
             bail!("nothing was recorded");
         }
@@ -135,7 +176,20 @@ impl Transcriber for OpenAiTranscriber {
             .json()
             .context("could not parse the transcription response")?;
 
-        Ok(parsed.text.trim().to_string())
+        let units = parsed
+            .usage
+            .map(ApiUsage::into_units)
+            // No usage object still counts as one dictation; only the billing
+            // figures are unknown.
+            .unwrap_or(Units {
+                dictations: 1,
+                ..Default::default()
+            });
+
+        Ok(Transcription {
+            text: parsed.text.trim().to_string(),
+            units,
+        })
     }
 }
 
@@ -196,7 +250,10 @@ mod tests {
             .and(header("authorization", "Bearer test-key"))
             .respond_with(
                 ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({ "text": "  Ship it on Wednesday.  " })),
+                    .set_body_json(serde_json::json!({
+                        "text": "  Ship it on Wednesday.  ",
+                        "usage": { "seconds": 6.4, "type": "duration" }
+                    })),
             )
             .mount(&server)
             .await;
@@ -211,7 +268,10 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(text, "Ship it on Wednesday.");
+        assert_eq!(text.text, "Ship it on Wednesday.");
+        // 6.4s bills as 6 — the API rounds to the nearest second.
+        assert_eq!(text.units.transcribe_seconds, 6);
+        assert_eq!(text.units.dictations, 1);
     }
 
     #[tokio::test]
@@ -319,6 +379,44 @@ mod tests {
             .transcribe(&blip, &TranscriptionContext::default())
             .unwrap_err();
         assert!(err.to_string().contains("too short"), "got: {err}");
+    }
+
+    #[test]
+    fn both_documented_usage_shapes_parse() {
+        // Duration-billed models report seconds; token-billed ones report
+        // tokens. Neither may be dropped, and neither may fail the parse.
+        let duration: ApiUsage =
+            serde_json::from_value(serde_json::json!({ "seconds": 12.6, "type": "duration" }))
+                .unwrap();
+        let units = duration.into_units();
+        assert_eq!(units.transcribe_seconds, 13, "rounds to the nearest second");
+        assert_eq!(units.transcribe_tokens, 0);
+
+        let tokens: ApiUsage = serde_json::from_value(serde_json::json!({
+            "input_tokens": 300, "output_tokens": 40, "total_tokens": 340, "type": "tokens"
+        }))
+        .unwrap();
+        let units = tokens.into_units();
+        assert_eq!(units.transcribe_tokens, 340);
+        assert_eq!(units.transcribe_seconds, 0);
+    }
+
+    #[test]
+    fn an_unknown_usage_shape_still_counts_the_dictation() {
+        let odd: ApiUsage = serde_json::from_value(serde_json::json!({ "widgets": 3 })).unwrap();
+        let units = odd.into_units();
+        assert_eq!(units.dictations, 1, "the dictation happened regardless");
+        assert_eq!(units.transcribe_seconds, 0);
+    }
+
+    #[test]
+    fn a_response_without_usage_still_returns_the_text() {
+        // Older or unusual responses omit `usage`; losing a billing figure must
+        // never cost the user their transcript.
+        let parsed: TranscriptionResponse =
+            serde_json::from_value(serde_json::json!({ "text": "hello" })).unwrap();
+        assert!(parsed.usage.is_none());
+        assert_eq!(parsed.text, "hello");
     }
 
     #[test]

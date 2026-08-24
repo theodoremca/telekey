@@ -18,6 +18,7 @@ pub mod polish;
 pub mod settings;
 pub mod signing;
 pub mod transcribe;
+pub mod usage;
 pub mod trigger;
 
 use std::sync::{mpsc, Arc};
@@ -104,6 +105,9 @@ pub fn run() {
             commands::copy_to_clipboard,
             commands::open_apps,
             commands::signing_status,
+            commands::usage_summary,
+            commands::usage_daily,
+            commands::clear_usage,
         ])
         .setup(move |app| {
             // A menubar app, not a dock app.
@@ -124,7 +128,8 @@ pub fn run() {
                 overlay: Arc::clone(&overlay),
             });
             let history = Arc::new(history::History::load(&config_dir));
-            let pipeline = Arc::new(Pipeline::new(loaded.clone(), sink, history));
+            let usage = Arc::new(usage::Usage::load(&config_dir));
+            let pipeline = Arc::new(Pipeline::new(loaded.clone(), sink, history, usage));
 
             // Open the microphone once now, so the first real dictation is not
             // truncated waiting for CoreAudio to initialise.
@@ -203,16 +208,17 @@ pub fn open_main_window(app: &AppHandle, tab: &str) -> tauri::Result<()> {
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let history_item = MenuItem::with_id(app, "history", "History…", true, None::<&str>)?;
+    let usage_item = MenuItem::with_id(app, "usage", "Usage…", true, None::<&str>)?;
     let settings_item =
         MenuItem::with_id(app, "settings", "Settings…", true, Some("CmdOrCtrl+,"))?;
     let quit = MenuItem::with_id(app, "quit", "Quit Flowtype", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&history_item, &settings_item, &quit])?;
+    let menu = Menu::with_items(app, &[&history_item, &usage_item, &settings_item, &quit])?;
 
     let mut tray = TrayIconBuilder::with_id("flowtype")
         .menu(&menu)
         .tooltip("Flowtype — hold to dictate")
         .on_menu_event(|app, event| match event.id().as_ref() {
-            id @ ("settings" | "history") => {
+            id @ ("settings" | "history" | "usage") => {
                 if let Err(err) = open_main_window(app, id) {
                     tracing::error!("could not open the {id} window: {err}");
                 }

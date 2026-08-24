@@ -6,21 +6,23 @@ import {
   messageFrom,
   type ApiKeyStatus,
   type Permissions,
+  type Rates,
   type Settings,
   type Signing,
 } from "./api";
 import { HistoryPanel } from "./HistoryPanel";
 import { SettingsPanel } from "./SettingsPanel";
+import { UsagePanel } from "./UsagePanel";
 import { toGlyphs } from "./shortcut";
 
-type Tab = "settings" | "history";
+type Tab = "settings" | "history" | "usage";
 
 const TAB_EVENT = "flowtype://tab";
 
 /** The tray can open this window straight onto either tab. */
 function initialTab(): Tab {
   const requested = new URLSearchParams(window.location.search).get("tab");
-  return requested === "history" ? "history" : "settings";
+  return requested === "history" || requested === "usage" ? requested : "settings";
 }
 
 export function App() {
@@ -71,7 +73,10 @@ export function App() {
   useEffect(() => {
     let stop: (() => void) | undefined;
     listen<string>(TAB_EVENT, (event) => {
-      setTab(event.payload === "history" ? "history" : "settings");
+      const requested = event.payload;
+      setTab(
+        requested === "history" || requested === "usage" ? requested : "settings",
+      );
     })
       .then((unlisten) => {
         stop = unlisten;
@@ -112,7 +117,7 @@ export function App() {
       </header>
 
       <nav className="tabs" role="tablist">
-        {(["settings", "history"] as Tab[]).map((name) => (
+        {(["settings", "history", "usage"] as Tab[]).map((name) => (
           <button
             key={name}
             role="tab"
@@ -120,7 +125,11 @@ export function App() {
             className={tab === name ? "tab current" : "tab"}
             onClick={() => setTab(name)}
           >
-            {name === "settings" ? "Settings" : "History"}
+            {name === "settings"
+              ? "Settings"
+              : name === "history"
+                ? "History"
+                : "Usage"}
           </button>
         ))}
       </nav>
@@ -141,8 +150,19 @@ export function App() {
           onSave={save}
           onKeyChanged={setKeyStatus}
         />
-      ) : (
+      ) : tab === "history" ? (
         <HistoryPanel shortcut={toGlyphs(settings.shortcut)} />
+      ) : (
+        <UsagePanel
+          settings={settings}
+          onSaveRates={(rates: Rates) =>
+            save({
+              ...settings,
+              rates,
+              ratesUpdated: new Date().toISOString().slice(0, 10),
+            })
+          }
+        />
       )}
     </main>
   );

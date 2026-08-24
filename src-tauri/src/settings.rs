@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::polish::AppProfile;
+use crate::usage::Rates;
 
 const KEYCHAIN_SERVICE: &str = "flowtype";
 const KEYCHAIN_ACCOUNT: &str = "openai-api-key";
@@ -41,6 +42,11 @@ pub struct Settings {
     /// Per-app formatting. Empty by default: with no profile, a dictation goes
     /// straight from transcript to cursor with no extra round-trip.
     pub profiles: Vec<AppProfile>,
+    /// What the user pays per unit. Editable because published prices change,
+    /// and a stale rate would report a confident wrong number.
+    pub rates: Rates,
+    /// When the rates were last set, so staleness is visible rather than silent.
+    pub rates_updated: String,
 }
 
 impl Default for Settings {
@@ -53,6 +59,8 @@ impl Default for Settings {
             history_limit: 200,
             history_enabled: true,
             profiles: Vec::new(),
+            rates: Rates::default(),
+            rates_updated: "2026-08-24".to_string(),
         }
     }
 }
@@ -250,6 +258,8 @@ mod tests {
             history_limit: 50,
             history_enabled: false,
             profiles: Vec::new(),
+            rates: Rates::default(),
+            rates_updated: "2026-08-24".to_string(),
         };
 
         original.save(dir.path()).unwrap();

@@ -10,6 +10,8 @@ export interface Settings {
   historyLimit: number;
   historyEnabled: boolean;
   profiles: AppProfile[];
+  rates: Rates;
+  ratesUpdated: string;
 }
 
 export type Permission = "granted" | "denied" | "notAsked" | "unknown";
@@ -44,6 +46,42 @@ export interface HistoryEntry {
   at: number;
   app: string | null;
   words: number;
+}
+
+/** Billing units as reported by OpenAI, not measured locally. */
+export interface Units {
+  dictations: number;
+  transcribeSeconds: number;
+  transcribeTokens: number;
+  polishInputTokens: number;
+  polishCachedTokens: number;
+  polishOutputTokens: number;
+}
+
+export interface Cost {
+  transcription: number;
+  formatting: number;
+  total: number;
+}
+
+export interface UsageSummary {
+  units: Units;
+  cost: Cost;
+  minutes: number;
+}
+
+export interface DailyPoint {
+  date: string;
+  units: Units;
+}
+
+export type Period = "today" | "month" | "lifetime";
+
+/** What the user pays per unit. Editable, because published prices change. */
+export interface Rates {
+  transcribePerMinute: number;
+  polishInputPerMillion: number;
+  polishOutputPerMillion: number;
 }
 
 /** Whether this build's signature can hold a permission grant. */
@@ -81,6 +119,12 @@ const previewState: {
     polishEnabled: false,
     historyLimit: 200,
     historyEnabled: true,
+    rates: {
+      transcribePerMinute: 0.0045,
+      polishInputPerMillion: 0.2,
+      polishOutputPerMillion: 1.2,
+    },
+    ratesUpdated: "2026-08-24",
     profiles: [
       { app: "com.tinyspeck.slackmacgap", label: "Slack", style: { kind: "terse" } },
       { app: "com.apple.Terminal", label: "Terminal", style: { kind: "literal" } },
@@ -153,6 +197,48 @@ const preview = {
   },
   copyToClipboard: async () => undefined,
   signingStatus: async (): Promise<Signing> => "unstable",
+  usageSummary: async (period: Period): Promise<UsageSummary> => {
+    const scale = period === "today" ? 1 : period === "month" ? 18 : 74;
+    const units: Units = {
+      dictations: 11 * scale,
+      transcribeSeconds: 214 * scale,
+      transcribeTokens: 0,
+      polishInputTokens: 1900 * scale,
+      polishCachedTokens: 420 * scale,
+      polishOutputTokens: 1400 * scale,
+    };
+    const transcription = (units.transcribeSeconds / 60) * 0.0045;
+    const formatting =
+      ((units.polishInputTokens - units.polishCachedTokens) / 1e6) * 0.2 +
+      (units.polishCachedTokens / 1e6) * 0.02 +
+      (units.polishOutputTokens / 1e6) * 1.2;
+    return {
+      units,
+      minutes: units.transcribeSeconds / 60,
+      cost: { transcription, formatting, total: transcription + formatting },
+    };
+  },
+  usageDaily: async (days: number): Promise<DailyPoint[]> =>
+    Array.from({ length: days }, (_, i) => {
+      const date = new Date();
+      date.setDate(date.getDate() - (days - 1 - i));
+      // A plausible working-week shape, quiet at weekends.
+      const weekday = date.getDay();
+      const busy = weekday === 0 || weekday === 6 ? 0.15 : 1;
+      const seconds = Math.round((120 + Math.sin(i / 2.3) * 90 + 60) * busy);
+      return {
+        date: date.toISOString().slice(0, 10),
+        units: {
+          dictations: Math.round(seconds / 20),
+          transcribeSeconds: seconds,
+          transcribeTokens: 0,
+          polishInputTokens: 0,
+          polishCachedTokens: 0,
+          polishOutputTokens: 0,
+        },
+      };
+    }),
+  clearUsage: async () => undefined,
   openApps: async (): Promise<RunningApp[]> => [
     { key: "com.apple.Safari", label: "Safari" },
     { key: "com.apple.Terminal", label: "Terminal" },
@@ -182,6 +268,10 @@ const live = {
   copyToClipboard: (text: string) => invoke<void>("copy_to_clipboard", { text }),
   openApps: () => invoke<RunningApp[]>("open_apps"),
   signingStatus: () => invoke<Signing>("signing_status"),
+  usageSummary: (period: Period) =>
+    invoke<UsageSummary>("usage_summary", { period }),
+  usageDaily: (days: number) => invoke<DailyPoint[]>("usage_daily", { days }),
+  clearUsage: () => invoke<void>("clear_usage"),
 };
 
 export const api: typeof live = inTauri() ? live : (preview as typeof live);

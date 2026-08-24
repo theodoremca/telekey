@@ -12,6 +12,8 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::usage::Units;
+
 pub const DEFAULT_MODEL: &str = "gpt-5.6-luna";
 pub const DEFAULT_ENDPOINT: &str = "https://api.openai.com/v1/responses";
 
@@ -74,9 +76,52 @@ pub struct AppProfile {
     pub style: Style,
 }
 
+/// Reformatted text, plus what the API says it billed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Polished {
+    pub text: String,
+    /// Zero for a locally-applied style, and zero when the response carried no
+    /// `usage` object.
+    pub units: Units,
+}
+
 /// The seam, so the pipeline can be tested without a network.
 pub trait Polisher: Send + Sync {
-    fn polish(&self, text: &str, style: &Style) -> Result<String>;
+    fn polish(&self, text: &str, style: &Style) -> Result<Polished>;
+}
+
+/// The Responses API `usage` object. Optional throughout so a shape change
+/// costs a figure rather than the rewrite itself.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ApiUsage {
+    #[serde(default, alias = "input_tokens")]
+    input_tokens: Option<u64>,
+    #[serde(default, alias = "output_tokens")]
+    output_tokens: Option<u64>,
+    #[serde(default, alias = "input_tokens_details")]
+    input_tokens_details: Option<InputDetails>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InputDetails {
+    #[serde(default, alias = "cached_tokens")]
+    cached_tokens: Option<u64>,
+}
+
+impl ApiUsage {
+    fn into_units(self) -> Units {
+        Units {
+            polish_input_tokens: self.input_tokens.unwrap_or(0),
+            polish_cached_tokens: self
+                .input_tokens_details
+                .and_then(|d| d.cached_tokens)
+                .unwrap_or(0),
+            polish_output_tokens: self.output_tokens.unwrap_or(0),
+            ..Default::default()
+        }
+    }
 }
 
 /// Apply the deterministic rules for [`Style::Literal`].
@@ -173,9 +218,13 @@ impl OpenAiPolisher {
 }
 
 impl Polisher for OpenAiPolisher {
-    fn polish(&self, text: &str, style: &Style) -> Result<String> {
+    fn polish(&self, text: &str, style: &Style) -> Result<Polished> {
         let Some(instructions) = style.instruction() else {
-            return Ok(apply_literal(text));
+            // Applied on this Mac: nothing was billed.
+            return Ok(Polished {
+                text: apply_literal(text),
+                units: Units::default(),
+            });
         };
 
         let body = serde_json::json!({
@@ -205,7 +254,14 @@ impl Polisher for OpenAiPolisher {
             serde_json::from_str(&raw).context("could not parse the formatting response")?;
 
         let polished = extract_text(&value).unwrap_or_default();
-        Ok(guard(text, polished))
+        let units = serde_json::from_value::<ApiUsage>(value.get("usage").cloned().unwrap_or_default())
+            .unwrap_or_default()
+            .into_units();
+
+        Ok(Polished {
+            text: guard(text, polished),
+            units,
+        })
     }
 }
 
@@ -419,7 +475,12 @@ mod tests {
                 "output": [{
                     "type": "message",
                     "content": [{ "type": "output_text", "text": "Ship it Wednesday." }]
-                }]
+                }],
+                "usage": {
+                    "input_tokens": 210,
+                    "output_tokens": 42,
+                    "input_tokens_details": { "cached_tokens": 64 }
+                }
             })))
             .mount(&server)
             .await;
@@ -438,7 +499,10 @@ mod tests {
         .unwrap()
         .unwrap();
 
-        assert_eq!(polished, "Ship it Wednesday.");
+        assert_eq!(polished.text, "Ship it Wednesday.");
+        assert_eq!(polished.units.polish_input_tokens, 210);
+        assert_eq!(polished.units.polish_cached_tokens, 64);
+        assert_eq!(polished.units.polish_output_tokens, 42);
 
         let requests = server.received_requests().await.unwrap();
         let body: serde_json::Value = serde_json::from_slice(&requests[0].body).unwrap();
@@ -467,7 +531,12 @@ mod tests {
         .unwrap()
         .unwrap();
 
-        assert_eq!(polished, "git status");
+        assert_eq!(polished.text, "git status");
+        assert!(
+            polished.units.is_empty(),
+            "a local style bills nothing: {:?}",
+            polished.units
+        );
         assert!(
             server.received_requests().await.unwrap().is_empty(),
             "Literal must be handled locally"
