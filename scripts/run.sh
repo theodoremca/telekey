@@ -23,7 +23,7 @@ bun tauri build --bundles app >/dev/null
 echo "▸ Signing…"
 "$ROOT/scripts/dev-sign.sh" "$BUILT" >/dev/null
 
-echo "▸ Installing to $INSTALLED…"
+echo "▸ Installing to ${INSTALLED}…"
 # Quit the running copy first: replacing a bundle underneath a live process
 # leaves it running stale code.
 pkill -f "flowtype.app/Contents/MacOS" 2>/dev/null || true

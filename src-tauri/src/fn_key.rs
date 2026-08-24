@@ -129,7 +129,7 @@ fn run_tap(tx: mpsc::Sender<TriggerEvent>, ready: mpsc::Sender<Result<(), String
         return;
     };
 
-    let source = unsafe { CFMachPort::new_run_loop_source(None, Some(&tap), 0) };
+    let source = CFMachPort::new_run_loop_source(None, Some(&tap), 0);
     let Some(source) = source else {
         let _ = ready.send(Err("could not attach the event tap to a run loop".to_string()));
         return;
@@ -175,7 +175,7 @@ unsafe extern "C-unwind" fn on_event(
         CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => {
             if let Some(tap) = state.tap.as_ref() {
                 tracing::warn!("Fn tap was disabled by the system; re-enabling");
-                unsafe { CGEvent::tap_enable(tap, true) };
+                CGEvent::tap_enable(tap, true);
             }
             return event_ptr;
         }
