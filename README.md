@@ -108,6 +108,8 @@ Everything below is optional — Flowtype works with none of it configured.
 
 ## Build from source
 
+### macOS
+
 Requires macOS 12+, [Bun](https://bun.sh), a [Rust](https://rustup.rs)
 toolchain, and Xcode Command Line Tools.
 
@@ -119,6 +121,33 @@ bun install
 ```
 
 `run.sh` builds, signs, installs to `/Applications`, and launches with logging.
+
+### Windows
+
+One script installs every prerequisite it finds missing, then builds an
+installer. Run it from the repository root in PowerShell:
+
+```powershell
+git clone <this repo>
+cd flowtype
+.\scripts\windows-setup.ps1
+```
+
+It checks for and installs, as needed: the Visual Studio C++ build tools
+(required because Rust's MSVC toolchain links with `link.exe`), the WebView2
+runtime, Rust with the MSVC toolchain, and Bun. Re-running it is safe — each
+step is skipped when already satisfied.
+
+Add `-SkipBuild` to set up without building, or `-Msi` for an `.msi` instead of
+the default `.exe`. NSIS is the default because MSI additionally needs the
+VBSCRIPT optional Windows feature, and without it the build fails with an
+opaque `failed to run light.exe`.
+
+**Windows support is newer than macOS and less exercised.** The overlay,
+paste-at-cursor, target-app detection, and every feature above work, but they
+have had far less real use. Two known gaps: the formatting editor cannot list
+running apps to pick from, so profiles must match an existing entry; and there
+is no code-signing story yet, so SmartScreen will warn on first run.
 
 ### Read this before granting permissions
 
@@ -189,10 +218,16 @@ hold key → trigger → capture audio → [release] → WAV in memory
 | `polish.rs` | Per-app formatting; local rules where a model is not needed |
 | `inject.rs` | Clipboard save → ⌘V → restore |
 | `panel.rs` | Non-activating `NSPanel` so the overlay never steals focus |
-| `signing.rs` | Detects a signature that cannot hold a permission |
+| `signing.rs` | Detects a signature that cannot hold a permission (macOS) |
 | `usage.rs` | Billing units from the API, rolled up by age |
 
 ### Two rules for this codebase
+
+**Platform code lives behind `cfg`, with a real implementation per OS.**
+`panel.rs`, `frontmost.rs`, `inject.rs` and `signing.rs` each have macOS and
+Windows paths. A stub that silently does nothing is worse than a missing
+feature — the overlay stealing focus breaks pasting entirely — so prefer an
+honest no-op with a comment saying what is missing.
 
 **AppKit and Text Input Services are main-thread-only.** The pipeline runs on a
 worker thread, and calling window or keyboard-layout APIs from it kills the

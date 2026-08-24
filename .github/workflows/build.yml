@@ -1,0 +1,73 @@
+name: build
+
+# Builds on both platforms so a change that only compiles on macOS is caught
+# here rather than by whoever next clones the repo on Windows.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: tests (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: bun install --frozen-lockfile
+      - name: TypeScript
+        run: |
+          bun run tsc --noEmit
+          bun test
+      - name: Rust
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  build:
+    name: build (${{ matrix.label }})
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            label: macOS
+            bundles: app
+          - os: windows-latest
+            label: Windows
+            # NSIS rather than MSI: MSI additionally needs the VBSCRIPT optional
+            # Windows feature, which the hosted runners do not enable.
+            bundles: nsis
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.os }}
+
+      - run: bun install --frozen-lockfile
+
+      # Unsigned on purpose. Signing needs certificates that do not belong in
+      # CI secrets for a personal project; these artifacts are for verifying the
+      # build compiles and bundles, not for distribution.
+      - name: Build
+        run: bun tauri build --bundles ${{ matrix.bundles }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flowtype-${{ matrix.label }}
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/macos/*.app
+          if-no-files-found: error
+          retention-days: 14

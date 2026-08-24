@@ -37,7 +37,65 @@ pub fn frontmost_app() -> TargetApp {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+/// The app currently in the foreground, via its executable name.
+///
+/// Windows has no bundle identifier, so the executable's file stem stands in —
+/// `slack`, `Code`, `WindowsTerminal`. That is what a formatting profile is
+/// keyed on here, and what the History list shows.
+#[cfg(target_os = "windows")]
+pub fn frontmost_app() -> TargetApp {
+    use std::os::windows::ffi::OsStringExt;
+
+    use windows_sys::Win32::Foundation::{CloseHandle, MAX_PATH};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowThreadProcessId,
+    };
+
+    unsafe {
+        let window = GetForegroundWindow();
+        if window.is_null() {
+            return TargetApp::default();
+        }
+
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(window, &mut pid);
+        if pid == 0 {
+            return TargetApp::default();
+        }
+
+        // Limited information is enough for the image path and, unlike full
+        // query access, does not require elevation for most processes.
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if process.is_null() {
+            return TargetApp::default();
+        }
+
+        let mut buffer = [0u16; MAX_PATH as usize];
+        let mut len = buffer.len() as u32;
+        let ok = QueryFullProcessImageNameW(process, 0, buffer.as_mut_ptr(), &mut len);
+        CloseHandle(process);
+
+        if ok == 0 || len == 0 {
+            return TargetApp::default();
+        }
+
+        let path = std::ffi::OsString::from_wide(&buffer[..len as usize]);
+        let name = std::path::Path::new(&path)
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned());
+
+        TargetApp {
+            // No bundle identifier on Windows; the name is the stable key.
+            bundle_id: None,
+            name,
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn frontmost_app() -> TargetApp {
     TargetApp::default()
 }
@@ -76,6 +134,12 @@ pub fn running_apps() -> Vec<TargetApp> {
     apps
 }
 
+/// Not enumerated on Windows yet.
+///
+/// The formatting editor falls back to whatever is already configured; adding a
+/// profile there needs `EnumWindows` plus the same process-name lookup as
+/// above. Returning empty is honest — the UI shows no candidates rather than
+/// wrong ones.
 #[cfg(not(target_os = "macos"))]
 pub fn running_apps() -> Vec<TargetApp> {
     Vec::new()

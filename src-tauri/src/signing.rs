@@ -10,8 +10,6 @@
 //! one line of explanation, which matters most for someone who has just cloned
 //! the repository and built it for the first time.
 
-use std::process::Command;
-
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -50,6 +48,8 @@ impl Signing {
 /// would check by hand.
 #[cfg(target_os = "macos")]
 pub fn current() -> Signing {
+    use std::process::Command;
+
     let Ok(exe) = std::env::current_exe() else {
         return Signing::Unknown;
     };
@@ -79,6 +79,8 @@ pub fn current() -> Signing {
     Signing::Unknown
 }
 
+/// Windows and Linux have no equivalent of macOS's signature-bound permission
+/// grants, so there is nothing here that could go stale and break dictation.
 #[cfg(not(target_os = "macos"))]
 pub fn current() -> Signing {
     Signing::Unknown

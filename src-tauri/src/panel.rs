@@ -122,7 +122,74 @@ mod imp {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+mod imp {
+    use anyhow::{Context, Result};
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, WS_EX_NOACTIVATE,
+        WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    };
+
+    fn hwnd(window: &tauri::WebviewWindow) -> Result<HWND> {
+        let handle = window.hwnd().context("could not reach the native window handle")?;
+        Ok(handle.0 as HWND)
+    }
+
+    /// The Windows counterpart of the non-activating `NSPanel`.
+    ///
+    /// `WS_EX_NOACTIVATE` is the load-bearing bit: without it, showing the
+    /// overlay takes focus from whatever the user was typing in, and the
+    /// synthetic Ctrl+V lands in the wrong place — the same failure the macOS
+    /// side had. `WS_EX_TOOLWINDOW` additionally keeps it out of Alt-Tab, which
+    /// a transient HUD has no business appearing in.
+    pub fn make_nonactivating(window: &tauri::WebviewWindow) -> Result<()> {
+        let handle = hwnd(window)?;
+
+        unsafe {
+            let current = GetWindowLongPtrW(handle, GWL_EXSTYLE);
+            let wanted = current
+                | WS_EX_NOACTIVATE as isize
+                | WS_EX_TOOLWINDOW as isize
+                | WS_EX_TOPMOST as isize;
+            SetWindowLongPtrW(handle, GWL_EXSTYLE, wanted);
+        }
+
+        Ok(())
+    }
+
+    /// Show without stealing focus.
+    ///
+    /// `SetWindowPos` with `SWP_NOACTIVATE` rather than Tauri's `show()`, which
+    /// activates the window.
+    pub fn show_without_focus(window: &tauri::WebviewWindow) -> Result<()> {
+        let handle = hwnd(window)?;
+
+        unsafe {
+            SetWindowPos(
+                handle,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Whether the window would take focus if shown.
+    pub fn can_become_key(window: &tauri::WebviewWindow) -> Result<bool> {
+        let handle = hwnd(window)?;
+        let style = unsafe { GetWindowLongPtrW(handle, GWL_EXSTYLE) };
+        Ok(style & WS_EX_NOACTIVATE as isize == 0)
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 mod imp {
     use anyhow::Result;
 

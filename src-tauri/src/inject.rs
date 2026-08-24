@@ -116,8 +116,12 @@ impl SystemKeystroke {
 #[cfg(target_os = "macos")]
 const KEYCODE_V: u16 = 0x09;
 
-/// `KEY_V` in the Linux input event codes, used for the non-macOS fallback.
-#[cfg(not(target_os = "macos"))]
+/// `VK_V`, the Windows virtual-key code for V.
+#[cfg(target_os = "windows")]
+const KEYCODE_V: u16 = 0x56;
+
+/// `KEY_V` in the Linux input event codes.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 const KEYCODE_V: u16 = 47;
 
 impl Keystroke for SystemKeystroke {
