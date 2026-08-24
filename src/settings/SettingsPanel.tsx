@@ -70,6 +70,31 @@ export function SettingsPanel({
           value={settings.shortcut}
           onCommit={(shortcut) => onSave({ ...settings, shortcut })}
         />
+
+        <Toggle
+          label="Also hold Fn"
+          hint={
+            settings.fnTrigger
+              ? "Set 🌐 to “Do Nothing” in Keyboard settings, or it will also switch input source."
+              : "One key instead of a chord. Needs Input Monitoring."
+          }
+          checked={settings.fnTrigger}
+          onChange={(fnTrigger) => {
+            // Ask for the permission as it is switched on: this registers
+            // Flowtype in the list, which is where people otherwise get stuck.
+            if (fnTrigger) void api.requestInputMonitoring().catch(() => {});
+            void onSave({ ...settings, fnTrigger });
+          }}
+        />
+
+        {settings.fnTrigger && (
+          <PermissionRow
+            label="Input Monitoring"
+            hint="Lets Flowtype see the Fn key. Restart Flowtype after granting."
+            state={permissions?.inputMonitoring ?? "unknown"}
+            onOpen={() => api.openPermissionSettings("inputMonitoring")}
+          />
+        )}
       </Section>
 
       <Section

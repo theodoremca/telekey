@@ -47,6 +47,11 @@ pub struct Settings {
     pub rates: Rates,
     /// When the rates were last set, so staleness is visible rather than silent.
     pub rates_updated: String,
+    /// Hold Fn to dictate, in addition to the shortcut above.
+    ///
+    /// Off by default: it needs Input Monitoring, and turning it on unasked
+    /// would prompt for a permission the user never requested.
+    pub fn_trigger: bool,
 }
 
 impl Default for Settings {
@@ -61,6 +66,7 @@ impl Default for Settings {
             profiles: Vec::new(),
             rates: Rates::default(),
             rates_updated: "2026-08-24".to_string(),
+            fn_trigger: false,
         }
     }
 }
@@ -260,6 +266,7 @@ mod tests {
             profiles: Vec::new(),
             rates: Rates::default(),
             rates_updated: "2026-08-24".to_string(),
+            fn_trigger: false,
         };
 
         original.save(dir.path()).unwrap();

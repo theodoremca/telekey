@@ -7,6 +7,7 @@
 pub mod audio;
 pub mod cli;
 pub mod commands;
+pub mod fn_key;
 pub mod frontmost;
 pub mod history;
 pub mod inject;
@@ -86,6 +87,9 @@ pub fn run() {
     });
     let loaded = load_settings();
     let (trigger_tx, trigger_rx) = mpsc::channel();
+    // The Fn tap feeds the same channel as the accelerator, so both triggers
+    // are live at once and losing one does not cost the other.
+    let fn_tx = trigger_tx.clone();
 
     tauri::Builder::default()
         .plugin(trigger::plugin(trigger_tx))
@@ -108,6 +112,7 @@ pub fn run() {
             commands::usage_summary,
             commands::usage_daily,
             commands::clear_usage,
+            commands::request_input_monitoring,
         ])
         .setup(move |app| {
             // A menubar app, not a dock app.
@@ -139,6 +144,17 @@ pub fn run() {
 
             if let Err(err) = trigger::rebind(app.handle(), &loaded.shortcut) {
                 tracing::error!("could not bind the push-to-talk shortcut: {err:#}");
+            }
+
+            if loaded.fn_trigger {
+                // Failing here is not fatal: the shortcut above still works, so
+                // the user loses the nicer gesture rather than dictation.
+                if let Err(err) = fn_key::spawn(fn_tx) {
+                    tracing::warn!(
+                        "hold-Fn is enabled but could not start ({err:#}); \
+                         the keyboard shortcut still works"
+                    );
+                }
             }
 
             if !inject::accessibility_granted() {

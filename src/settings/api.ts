@@ -12,6 +12,7 @@ export interface Settings {
   profiles: AppProfile[];
   rates: Rates;
   ratesUpdated: string;
+  fnTrigger: boolean;
 }
 
 export type Permission = "granted" | "denied" | "notAsked" | "unknown";
@@ -19,6 +20,8 @@ export type Permission = "granted" | "denied" | "notAsked" | "unknown";
 export interface Permissions {
   accessibility: Permission;
   microphone: Permission;
+  /** Only needed for the hold-Fn trigger. */
+  inputMonitoring: Permission;
 }
 
 export type Style =
@@ -125,6 +128,7 @@ const previewState: {
       polishOutputPerMillion: 1.2,
     },
     ratesUpdated: "2026-08-24",
+    fnTrigger: false,
     profiles: [
       { app: "com.tinyspeck.slackmacgap", label: "Slack", style: { kind: "terse" } },
       { app: "com.apple.Terminal", label: "Terminal", style: { kind: "literal" } },
@@ -183,7 +187,9 @@ const preview = {
   permissions: async (): Promise<Permissions> => ({
     accessibility: "denied",
     microphone: "notAsked",
+    inputMonitoring: "denied",
   }),
+  requestInputMonitoring: async () => false,
   openPermissionSettings: async () => undefined,
   inputDevice: async () => "coreaudio:BuiltInMicrophoneDevice",
   historyEntries: async () => previewState.history,
@@ -258,8 +264,10 @@ const live = {
   setApiKey: (key: string) => invoke<ApiKeyStatus>("set_api_key", { key }),
   clearApiKey: () => invoke<ApiKeyStatus>("clear_api_key"),
   permissions: () => invoke<Permissions>("permissions_status"),
-  openPermissionSettings: (pane: "accessibility" | "microphone") =>
-    invoke<void>("open_permission_settings", { pane }),
+  openPermissionSettings: (
+    pane: "accessibility" | "microphone" | "inputMonitoring",
+  ) => invoke<void>("open_permission_settings", { pane }),
+  requestInputMonitoring: () => invoke<boolean>("request_input_monitoring"),
   inputDevice: () => invoke<string | null>("input_device"),
   historyEntries: () => invoke<HistoryEntry[]>("history_entries"),
   deleteHistoryEntry: (id: number) =>

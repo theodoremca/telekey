@@ -29,12 +29,15 @@ impl Permission {
 pub struct Permissions {
     pub accessibility: Permission,
     pub microphone: Permission,
+    /// Needed only for the hold-Fn trigger.
+    pub input_monitoring: Permission,
 }
 
 pub fn current() -> Permissions {
     Permissions {
         accessibility: accessibility(),
         microphone: microphone(),
+        input_monitoring: input_monitoring(),
     }
 }
 
@@ -42,6 +45,16 @@ pub fn current() -> Permissions {
 /// is no "not yet asked" state to distinguish.
 pub fn accessibility() -> Permission {
     if crate::inject::accessibility_granted() {
+        Permission::Granted
+    } else {
+        Permission::Denied
+    }
+}
+
+/// Whether this process may observe keyboard events, which the hold-Fn trigger
+/// needs. Distinct from Accessibility, and just as silent when missing.
+pub fn input_monitoring() -> Permission {
+    if crate::fn_key::input_monitoring_granted() {
         Permission::Granted
     } else {
         Permission::Denied
@@ -123,6 +136,9 @@ pub fn open_settings_pane(pane: SettingsPane) -> Result<()> {
         SettingsPane::Microphone => {
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
         }
+        SettingsPane::InputMonitoring => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+        }
     };
 
     std::process::Command::new("open")
@@ -138,6 +154,7 @@ pub fn open_settings_pane(pane: SettingsPane) -> Result<()> {
 pub enum SettingsPane {
     Accessibility,
     Microphone,
+    InputMonitoring,
 }
 
 #[cfg(test)]
@@ -161,6 +178,7 @@ mod tests {
         let json = serde_json::to_value(Permissions {
             accessibility: Permission::Denied,
             microphone: Permission::NotAsked,
+            input_monitoring: Permission::Denied,
         })
         .unwrap();
 
@@ -169,6 +187,7 @@ mod tests {
             serde_json::json!({
                 "accessibility": "denied",
                 "microphone": "notAsked",
+                "inputMonitoring": "denied",
             })
         );
     }

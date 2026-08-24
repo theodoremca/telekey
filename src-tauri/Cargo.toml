@@ -62,6 +62,15 @@ objc2-app-kit = { version = "0.3", features = [
   "NSPanel",
   "NSResponder",
 ] }
+objc2-core-graphics = { version = "0.3", features = [
+  "CGEvent",
+  "CGEventTypes",
+  "CGRemoteOperation",
+] }
+objc2-core-foundation = { version = "0.3", features = [
+  "CFMachPort",
+  "CFRunLoop",
+] }
 objc2-foundation = { version = "0.3", features = [
   "NSString",
   "NSArray",

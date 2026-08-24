@@ -85,6 +85,15 @@ pub fn save_settings(
     let dir = settings::config_dir().map_err(to_message)?;
     settings.save(&dir).map_err(to_message)?;
 
+    if settings.fn_trigger != previous.fn_trigger {
+        // The tap owns a run loop on its own thread for the life of the
+        // process, so toggling it takes effect on relaunch. The UI says so.
+        tracing::info!(
+            enabled = settings.fn_trigger,
+            "hold-Fn setting changed; applies on relaunch"
+        );
+    }
+
     pipeline.update_settings(settings.clone());
     tracing::info!("settings saved");
 
@@ -140,6 +149,12 @@ pub fn permissions_status() -> Permissions {
 }
 
 /// Whether this build's signature can hold a permission grant.
+/// Ask macOS for Input Monitoring, which registers Flowtype in the list.
+#[tauri::command]
+pub fn request_input_monitoring() -> bool {
+    crate::fn_key::request_input_monitoring()
+}
+
 #[tauri::command]
 pub fn signing_status() -> Signing {
     signing::current()
