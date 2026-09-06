@@ -75,8 +75,8 @@ export function SettingsPanel({
           label="Also hold Fn"
           hint={
             settings.fnTrigger
-              ? "Set 🌐 to “Do Nothing” in Keyboard settings, or it will also switch input source."
-              : "One key instead of a chord. Needs Input Monitoring."
+              ? "Quit and reopen Flowtype to start it. Also set 🌐 to “Do Nothing” in Keyboard settings, or dictating will switch your input source."
+              : "One key instead of a chord. Needs Input Monitoring, and a restart."
           }
           checked={settings.fnTrigger}
           onChange={(fnTrigger) => {

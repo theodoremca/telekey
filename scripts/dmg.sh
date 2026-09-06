@@ -11,6 +11,9 @@
 
 set -euo pipefail
 
+# See run.sh: a shadowing `xattr` without -r breaks Tauri's bundler.
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP="$ROOT/src-tauri/target/release/bundle/macos/flowtype.app"
 OUT_DIR="$ROOT/src-tauri/target/release/bundle/dmg"

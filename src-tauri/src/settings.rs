@@ -22,8 +22,13 @@ pub const DEFAULT_SHORTCUT: &str = "Ctrl+Alt+Space";
 /// make unspoken terms appear in the transcript. Cap it.
 pub const MAX_KEYWORDS: usize = 100;
 
+/// Note the `rename_all`: every type crossing into the webview is camelCase, and
+/// this one silently was not. The frontend read `settings.fnTrigger` as
+/// `undefined` and sent it back under a name serde did not recognise, so
+/// `default` reset it on every save — which looked like a toggle that would not
+/// stick. The aliases keep existing snake_case files loading.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, rename_all = "camelCase")]
 pub struct Settings {
     /// Tauri accelerator string, e.g. `Ctrl+Alt+Space`.
     pub shortcut: String,
@@ -33,11 +38,14 @@ pub struct Settings {
     pub languages: Vec<String>,
     /// Off by default: `gpt-transcribe` already punctuates and strips fillers,
     /// so the polish pass only earns its latency for per-app formatting.
+    #[serde(alias = "polish_enabled")]
     pub polish_enabled: bool,
     /// How many transcripts to keep.
+    #[serde(alias = "history_limit")]
     pub history_limit: usize,
     /// Whether to keep transcripts at all. On by default, but dictation can
     /// carry anything, so it must be switchable.
+    #[serde(alias = "history_enabled")]
     pub history_enabled: bool,
     /// Per-app formatting. Empty by default: with no profile, a dictation goes
     /// straight from transcript to cursor with no extra round-trip.
@@ -46,11 +54,13 @@ pub struct Settings {
     /// and a stale rate would report a confident wrong number.
     pub rates: Rates,
     /// When the rates were last set, so staleness is visible rather than silent.
+    #[serde(alias = "rates_updated")]
     pub rates_updated: String,
     /// Hold Fn to dictate, in addition to the shortcut above.
     ///
     /// Off by default: it needs Input Monitoring, and turning it on unasked
     /// would prompt for a permission the user never requested.
+    #[serde(alias = "fn_trigger")]
     pub fn_trigger: bool,
 }
 
@@ -271,6 +281,66 @@ mod tests {
 
         original.save(dir.path()).unwrap();
         assert_eq!(Settings::load(dir.path()).unwrap(), original);
+    }
+
+    #[test]
+    fn every_field_serialises_as_camel_case() {
+        // The webview reads these keys directly. A snake_case key here is
+        // invisible to the frontend, and comes back under a name serde ignores —
+        // so the setting silently resets on every save.
+        let json = serde_json::to_value(Settings::default()).unwrap();
+        let keys: Vec<&String> = json.as_object().unwrap().keys().collect();
+
+        for key in &keys {
+            assert!(
+                !key.contains('_'),
+                "`{key}` is snake_case; the frontend expects camelCase"
+            );
+        }
+
+        // Spot-check the ones that actually broke.
+        for expected in ["fnTrigger", "historyEnabled", "polishEnabled", "ratesUpdated"] {
+            assert!(
+                keys.iter().any(|k| k.as_str() == expected),
+                "missing `{expected}` in {keys:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_setting_survives_a_round_trip_through_the_frontends_shape() {
+        // Regression: this is exactly what the save path does.
+        let mut settings = Settings::default();
+        settings.fn_trigger = true;
+        settings.history_enabled = false;
+
+        let wire = serde_json::to_string(&settings).unwrap();
+        let back: Settings = serde_json::from_str(&wire).unwrap();
+
+        assert!(back.fn_trigger, "fn_trigger was lost in transit");
+        assert!(!back.history_enabled, "history_enabled was lost in transit");
+        assert_eq!(back, settings);
+    }
+
+    #[test]
+    fn an_existing_snake_case_file_still_loads() {
+        // Files written before the rename must not silently reset.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("settings.json"),
+            r#"{"shortcut":"Shift+Super+Space","polish_enabled":true,
+                "history_enabled":false,"history_limit":42,
+                "rates_updated":"2026-01-01","fn_trigger":true}"#,
+        )
+        .unwrap();
+
+        let loaded = Settings::load(dir.path()).unwrap();
+        assert_eq!(loaded.shortcut, "Shift+Super+Space");
+        assert!(loaded.polish_enabled);
+        assert!(!loaded.history_enabled);
+        assert_eq!(loaded.history_limit, 42);
+        assert_eq!(loaded.rates_updated, "2026-01-01");
+        assert!(loaded.fn_trigger);
     }
 
     #[test]

@@ -13,6 +13,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# Tauri's bundler runs `xattr -cr` to strip extended attributes. Anaconda (and
+# some other Python distributions) ship an `xattr` script with no -r flag, and
+# if it shadows the system one the bundle step fails with an opaque
+# "failed to run xattr" after the app has already been built. Put the system
+# binaries first so the real xattr wins.
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+
 BUILT="$ROOT/src-tauri/target/release/bundle/macos/flowtype.app"
 INSTALLED="/Applications/flowtype.app"
 LOG="${FLOWTYPE_LOG_FILE:-$HOME/Library/Logs/flowtype.log}"
