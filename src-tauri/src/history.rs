@@ -1,6 +1,6 @@
 //! Recent transcripts.
 //!
-//! This is the one place Flowtype persists what you said. Audio never reaches
+//! This is the one place TeleKey persists what you said. Audio never reaches
 //! disk, but text does, and dictation can carry anything — so the file is
 //! written `0600`, capped, and can be emptied or switched off entirely.
 

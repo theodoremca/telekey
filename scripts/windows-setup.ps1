@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Install everything Flowtype needs on Windows, then build the installer.
+  Install everything TeleKey needs on Windows, then build the installer.
 
 .DESCRIPTION
   Checks each prerequisite and installs only what is missing, so it is safe to
@@ -60,14 +60,14 @@ function Install-WithWinget {
     Update-Path
 }
 
-Write-Host "Flowtype — Windows setup" -ForegroundColor White
+Write-Host "TeleKey — Windows setup" -ForegroundColor White
 Write-Host "========================"
 
 # ---- 0. Where are we? ---------------------------------------------------
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 if (-not (Test-Path (Join-Path $repoRoot 'src-tauri\tauri.conf.json'))) {
-    Write-Fail "This does not look like the Flowtype repository."
+    Write-Fail "This does not look like the TeleKey repository."
     Write-Host "  Run it from the repo root:  .\scripts\windows-setup.ps1"
     exit 1
 }
@@ -221,7 +221,7 @@ Write-Host ""
 if ($installer) {
     Write-Ok "Built $($installer.Name) ($([math]::Round($installer.Length / 1MB, 1)) MB)"
     Write-Host "  $($installer.FullName)"
-    Write-Host "`nRun it to install Flowtype, then add your OpenAI API key in Settings." -ForegroundColor White
+    Write-Host "`nRun it to install TeleKey, then add your OpenAI API key in Settings." -ForegroundColor White
 } else {
     Write-Fail "Build reported success but no installer was found in $out"
     exit 1

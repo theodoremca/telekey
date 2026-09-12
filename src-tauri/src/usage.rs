@@ -1,4 +1,4 @@
-//! What Flowtype has cost, and how long has been spent dictating.
+//! What TeleKey has cost, and how long has been spent dictating.
 //!
 //! Records the billing units OpenAI reports back — audio seconds from the
 //! transcription response, token counts from the formatting response — rather

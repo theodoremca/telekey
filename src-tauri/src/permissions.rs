@@ -3,7 +3,7 @@
 //! Both permissions this app needs fail quietly rather than loudly: a denied
 //! microphone yields silence instead of an error, and missing Accessibility
 //! swallows the paste keystroke. Surfacing them explicitly is the difference
-//! between "Flowtype is broken" and "Flowtype needs one click".
+//! between "TeleKey is broken" and "TeleKey needs one click".
 
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -64,7 +64,7 @@ pub fn input_monitoring() -> Permission {
 /// Ask macOS to prompt for Accessibility.
 ///
 /// Better than sending the user to System Settings to hunt for the app: this
-/// registers Flowtype in the Accessibility list itself and offers a direct
+/// registers TeleKey in the Accessibility list itself and offers a direct
 /// button to open the pane. Adding an app by hand with `+` is where people get
 /// stuck, and picking the wrong copy of the bundle grants nothing.
 ///

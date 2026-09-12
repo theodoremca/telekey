@@ -30,7 +30,7 @@ pub fn set_api_key() -> Result<()> {
     }
 
     settings::store_api_key(key)?;
-    println!("Saved to the Keychain. Flowtype will pick it up on the next dictation.");
+    println!("Saved to the Keychain. TeleKey will pick it up on the next dictation.");
     Ok(())
 }
 
@@ -45,7 +45,7 @@ pub fn check() -> Result<()> {
     let dir = settings::config_dir()?;
     let loaded = Settings::load(&dir);
 
-    println!("Flowtype setup check");
+    println!("TeleKey setup check");
     println!("--------------------");
 
     match &loaded {
@@ -96,10 +96,10 @@ pub fn check() -> Result<()> {
 /// How to invoke this binary from the user's current directory.
 ///
 /// The binary is not on `PATH` during development, so printing a bare
-/// `flowtype` sends people to `command not found`.
+/// `telekey` sends people to `command not found`.
 fn invocation() -> String {
     let Ok(exe) = std::env::current_exe() else {
-        return "flowtype".to_string();
+        return "telekey".to_string();
     };
 
     match std::env::current_dir() {

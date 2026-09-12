@@ -1,4 +1,4 @@
-//! Flowtype — push-to-talk dictation for macOS.
+//! TeleKey — push-to-talk dictation for macOS.
 //!
 //! Hold the shortcut anywhere, speak, release, and polished text lands at the
 //! cursor. The Rust side owns the whole pipeline; the webview is only ever a
@@ -32,8 +32,8 @@ use pipeline::{Pipeline, Status, StatusSink};
 use settings::Settings;
 
 /// Event names the overlay listens on.
-pub const STATUS_EVENT: &str = "flowtype://status";
-pub const LEVEL_EVENT: &str = "flowtype://level";
+pub const STATUS_EVENT: &str = "telekey://status";
+pub const LEVEL_EVENT: &str = "telekey://level";
 
 /// How often the input level is pushed to the overlay while recording.
 /// 30 Hz is smooth to the eye and cheap over IPC.
@@ -67,7 +67,7 @@ impl StatusSink for TauriSink {
 /// Push the input level to the overlay while a dictation is running.
 fn spawn_level_ticker(app: AppHandle, pipeline: Arc<Pipeline>) {
     std::thread::Builder::new()
-        .name("flowtype-level".into())
+        .name("telekey-level".into())
         .spawn(move || loop {
             std::thread::sleep(LEVEL_INTERVAL);
             if pipeline.is_recording() {
@@ -162,7 +162,7 @@ pub fn run() {
                     "Accessibility permission not granted — pasting will silently fail. \
                      Prompting for it now."
                 );
-                // Registers Flowtype in the Accessibility list and offers the
+                // Registers TeleKey in the Accessibility list and offers the
                 // user a direct route there. Shown at most once per launch.
                 permissions::prompt_for_accessibility();
             }
@@ -177,22 +177,22 @@ pub fn run() {
 
             let worker = Arc::clone(&pipeline);
             std::thread::Builder::new()
-                .name("flowtype-pipeline".into())
+                .name("telekey-pipeline".into())
                 .spawn(move || worker.run(trigger_rx))?;
 
             app.manage(pipeline);
 
-            tracing::info!(shortcut = %loaded.shortcut, "flowtype ready");
+            tracing::info!(shortcut = %loaded.shortcut, "telekey ready");
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running flowtype");
+        .expect("error while running telekey");
 }
 
 pub const SETTINGS_LABEL: &str = "settings";
 
 /// Event telling the window which tab to show.
-pub const TAB_EVENT: &str = "flowtype://tab";
+pub const TAB_EVENT: &str = "telekey://tab";
 
 /// Open the main window on `tab`, or bring it forward if it already exists.
 ///
@@ -211,7 +211,7 @@ pub fn open_main_window(app: &AppHandle, tab: &str) -> tauri::Result<()> {
         SETTINGS_LABEL,
         tauri::WebviewUrl::App(format!("index.html?tab={tab}").into()),
     )
-    .title("Flowtype")
+    .title("TeleKey")
     .inner_size(540.0, 680.0)
     .min_inner_size(460.0, 520.0)
     .resizable(true)
@@ -227,12 +227,12 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let usage_item = MenuItem::with_id(app, "usage", "Usage…", true, None::<&str>)?;
     let settings_item =
         MenuItem::with_id(app, "settings", "Settings…", true, Some("CmdOrCtrl+,"))?;
-    let quit = MenuItem::with_id(app, "quit", "Quit Flowtype", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit TeleKey", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&history_item, &usage_item, &settings_item, &quit])?;
 
-    let mut tray = TrayIconBuilder::with_id("flowtype")
+    let mut tray = TrayIconBuilder::with_id("telekey")
         .menu(&menu)
-        .tooltip("Flowtype — hold to dictate")
+        .tooltip("TeleKey — hold to dictate")
         .on_menu_event(|app, event| match event.id().as_ref() {
             id @ ("settings" | "history" | "usage") => {
                 if let Err(err) = open_main_window(app, id) {
@@ -277,8 +277,8 @@ fn load_settings() -> Settings {
 fn init_tracing() {
     use tracing_subscriber::{fmt, EnvFilter};
 
-    let filter = EnvFilter::try_from_env("FLOWTYPE_LOG")
-        .unwrap_or_else(|_| EnvFilter::new("flowtype=info,warn"));
+    let filter = EnvFilter::try_from_env("TELEKEY_LOG")
+        .unwrap_or_else(|_| EnvFilter::new("telekey=info,warn"));
 
     let _ = fmt().with_env_filter(filter).try_init();
 }

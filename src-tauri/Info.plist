@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Flowtype records your voice while you hold the dictation shortcut, and sends it to OpenAI for transcription. Audio is never saved to disk.</string>
+  <string>TeleKey records your voice while you hold the dictation shortcut, and sends it to OpenAI for transcription. Audio is never saved to disk.</string>
   <key>LSUIElement</key>
   <true/>
 </dict>

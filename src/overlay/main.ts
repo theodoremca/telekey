@@ -1,5 +1,5 @@
 /**
- * Flowtype recording overlay.
+ * TeleKey recording overlay.
  *
  * The waveform is the point: it is a genuine right-to-left record of the
  * amplitude the microphone captured, not a decorative equaliser. Mid-sentence,
@@ -16,8 +16,8 @@ type Status =
   | { kind: "inserted"; text: string }
   | { kind: "failed"; message: string };
 
-const STATUS_EVENT = "flowtype://status";
-const LEVEL_EVENT = "flowtype://level";
+const STATUS_EVENT = "telekey://status";
+const LEVEL_EVENT = "telekey://level";
 
 /** Roughly three seconds of history at the 30 Hz the backend emits. */
 const TRACE_SAMPLES = 88;
@@ -195,11 +195,11 @@ start();
 // Exposed so the overlay can be exercised without the backend running.
 declare global {
   interface Window {
-    __flowtypeOverlay?: {
+    __telekeyOverlay?: {
       setState: (status: Status) => void;
       pushSample: (level: number) => void;
     };
   }
 }
 
-window.__flowtypeOverlay = { setState, pushSample };
+window.__telekeyOverlay = { setState, pushSample };

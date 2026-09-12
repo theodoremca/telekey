@@ -2,7 +2,7 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "flowtype-ui",
+      "name": "telekey-ui",
       "runtimeExecutable": "bun",
       "runtimeArgs": ["run", "dev"],
       "port": 1420

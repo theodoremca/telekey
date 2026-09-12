@@ -1,4 +1,4 @@
-# Building and shipping Flowtype
+# Building and shipping TeleKey
 
 ## Build
 
@@ -10,7 +10,7 @@ Output lands in `src-tauri/target/release/bundle/`. The `.app` is about 17 MB.
 
 ## Grant permissions once, not every build
 
-Flowtype needs **Accessibility** to paste, and **Microphone** to hear you. Both
+TeleKey needs **Accessibility** to paste, and **Microphone** to hear you. Both
 are granted in System Settings, and the app's Settings window links straight to
 the right panes.
 
@@ -25,7 +25,7 @@ dictation stops pasting until you notice and re-grant.
 Verify what you have:
 
 ```bash
-codesign -dv --verbose=2 src-tauri/target/release/bundle/macos/flowtype.app
+codesign -dv --verbose=2 src-tauri/target/release/bundle/macos/TeleKey.app
 ```
 
 `Signature=adhoc` means permissions will reset on the next build.
@@ -35,7 +35,7 @@ codesign -dv --verbose=2 src-tauri/target/release/bundle/macos/flowtype.app
 Sign with any code-signing certificate. `scripts/dev-sign.sh` picks the best
 one on your Mac automatically — Developer ID, Apple Development, or a
 self-signed one. List what you have with `security find-identity -v -p
-codesigning`, and override the choice with `FLOWTYPE_DEV_IDENTITY`.
+codesigning`, and override the choice with `TELEKEY_DEV_IDENTITY`.
 
 After every build:
 
@@ -47,7 +47,7 @@ Why this works — compare the designated requirements:
 
 ```
 ad-hoc      identifier "..." and cdhash H"a1b2…"     ← changes every build
-Apple cert  identifier "com.theodoremca.flowtype" and anchor apple generic
+Apple cert  identifier "com.theodoremca.telekey" and anchor apple generic
             and certificate leaf[subject.CN] = "<your certificate>"
 ```
 
@@ -131,8 +131,8 @@ setting up.
 The API key is read in this order:
 
 1. `OPENAI_API_KEY` in the environment
-2. a `.env` file — `$FLOWTYPE_ENV_FILE`, `./.env`, `../.env`, then
-   `~/Library/Application Support/flowtype/.env`
+2. a `.env` file — `$TELEKEY_ENV_FILE`, `./.env`, `../.env`, then
+   `~/Library/Application Support/telekey/.env`
 3. the Keychain
 
 Only the last two work for an installed `.app`, whose working directory is not

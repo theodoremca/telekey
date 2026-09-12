@@ -1,12 +1,12 @@
 [package]
-name = "flowtype"
-version = "0.1.1"
+name = "telekey"
+version = "0.2.0"
 description = "Push-to-talk dictation for macOS"
 authors = ["Theodore"]
 edition = "2021"
 
 [lib]
-name = "flowtype_lib"
+name = "telekey_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

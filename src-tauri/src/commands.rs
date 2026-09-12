@@ -149,7 +149,7 @@ pub fn permissions_status() -> Permissions {
 }
 
 /// Whether this build's signature can hold a permission grant.
-/// Ask macOS for Input Monitoring, which registers Flowtype in the list.
+/// Ask macOS for Input Monitoring, which registers TeleKey in the list.
 #[tauri::command]
 pub fn request_input_monitoring() -> bool {
     crate::fn_key::request_input_monitoring()
@@ -162,7 +162,7 @@ pub fn signing_status() -> Signing {
 
 #[tauri::command]
 pub fn open_permission_settings(pane: SettingsPane) -> Result<(), String> {
-    // For Accessibility, ask macOS to prompt first: that registers Flowtype in
+    // For Accessibility, ask macOS to prompt first: that registers TeleKey in
     // the list, so the user only has to flip a switch that is already there
     // rather than find the right bundle with the + button.
     if matches!(pane, SettingsPane::Accessibility) {

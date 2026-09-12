@@ -19,7 +19,7 @@ const PERIODS: Array<{ id: Period; label: string }> = [
 const CHART_DAYS = 30;
 
 /**
- * What Flowtype has cost, and how long has been spent dictating.
+ * What TeleKey has cost, and how long has been spent dictating.
  *
  * Minutes sit beside the money rather than beneath it. Duration is what OpenAI
  * actually billed and is stored directly; money is derived from it at the rates

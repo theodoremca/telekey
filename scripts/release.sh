@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build, sign and notarise Flowtype for distribution.
+# Build, sign and notarise TeleKey for distribution.
 #
 # Everything here needs your own Apple credentials, which is why it is a script
 # you run rather than something the build does automatically.
@@ -61,7 +61,7 @@ fi
 echo "Building…"
 bun tauri build --bundles app,dmg
 
-APP="$ROOT/src-tauri/target/release/bundle/macos/flowtype.app"
+APP="$ROOT/src-tauri/target/release/bundle/macos/TeleKey.app"
 
 echo
 echo "Verifying the signature…"

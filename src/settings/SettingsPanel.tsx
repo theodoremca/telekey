@@ -35,7 +35,7 @@ export function SettingsPanel({
       <Section title="Setup">
         <PermissionRow
           label="Accessibility"
-          hint="Lets Flowtype paste into other apps."
+          hint="Lets TeleKey paste into other apps."
           state={permissions?.accessibility ?? "unknown"}
           onOpen={() => api.openPermissionSettings("accessibility")}
         />
@@ -75,13 +75,13 @@ export function SettingsPanel({
           label="Also hold Fn"
           hint={
             settings.fnTrigger
-              ? "Quit and reopen Flowtype to start it. Also set 🌐 to “Do Nothing” in Keyboard settings, or dictating will switch your input source."
+              ? "Quit and reopen TeleKey to start it. Also set 🌐 to “Do Nothing” in Keyboard settings, or dictating will switch your input source."
               : "One key instead of a chord. Needs Input Monitoring, and a restart."
           }
           checked={settings.fnTrigger}
           onChange={(fnTrigger) => {
             // Ask for the permission as it is switched on: this registers
-            // Flowtype in the list, which is where people otherwise get stuck.
+            // TeleKey in the list, which is where people otherwise get stuck.
             if (fnTrigger) void api.requestInputMonitoring().catch(() => {});
             void onSave({ ...settings, fnTrigger });
           }}
@@ -90,7 +90,7 @@ export function SettingsPanel({
         {settings.fnTrigger && (
           <PermissionRow
             label="Input Monitoring"
-            hint="Lets Flowtype see the Fn key. Restart Flowtype after granting."
+            hint="Lets TeleKey see the Fn key. Restart TeleKey after granting."
             state={permissions?.inputMonitoring ?? "unknown"}
             onOpen={() => api.openPermissionSettings("inputMonitoring")}
           />

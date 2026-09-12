@@ -61,7 +61,7 @@ impl AudioEngine {
         let thread_level = Arc::clone(&level);
 
         std::thread::Builder::new()
-            .name("flowtype-audio".into())
+            .name("telekey-audio".into())
             .spawn(move || audio_thread(rx, thread_level))
             .expect("failed to spawn audio thread");
 

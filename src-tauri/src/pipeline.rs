@@ -358,7 +358,7 @@ impl Pipeline {
         }
 
         let key = settings::load_api_key()?
-            .context("No OpenAI API key set — add one in Flowtype's settings")?;
+            .context("No OpenAI API key set — add one in TeleKey's settings")?;
 
         let transcriber: Arc<dyn Transcriber> = Arc::new(OpenAiTranscriber::new(key)?);
         *cached = Some(Arc::clone(&transcriber));

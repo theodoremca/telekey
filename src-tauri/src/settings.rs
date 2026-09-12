@@ -12,8 +12,16 @@ use serde::{Deserialize, Serialize};
 use crate::polish::AppProfile;
 use crate::usage::Rates;
 
-const KEYCHAIN_SERVICE: &str = "flowtype";
+const KEYCHAIN_SERVICE: &str = "telekey";
 const KEYCHAIN_ACCOUNT: &str = "openai-api-key";
+
+/// The directory and Keychain service the app used when it was called Flowtype.
+/// Both are read once, on first launch after the rename, so an existing install
+/// keeps its settings, history, usage counters and stored API key. Delete these
+/// two constants and the migrations below once no 0.1.x install is left.
+const DIR_NAME: &str = "telekey";
+const LEGACY_DIR_NAME: &str = "flowtype";
+const LEGACY_KEYCHAIN_SERVICE: &str = "flowtype";
 
 /// Deliberately not `Alt+Space`: that is ChatGPT desktop's launcher.
 pub const DEFAULT_SHORTCUT: &str = "Ctrl+Alt+Space";
@@ -131,16 +139,58 @@ impl Settings {
     }
 }
 
-/// Where settings live, e.g. `~/Library/Application Support/flowtype`.
+/// Where settings live, e.g. `~/Library/Application Support/telekey`.
+///
+/// The pre-rename directory is adopted here rather than at startup, because
+/// this is the one place every caller goes through — a migration wired into
+/// `lib.rs` would be skipped by the CLI subcommands.
 pub fn config_dir() -> Result<PathBuf> {
     let base = dirs::config_dir().context("could not locate the user config directory")?;
-    Ok(base.join("flowtype"))
+
+    static MIGRATED: std::sync::Once = std::sync::Once::new();
+    MIGRATED.call_once(|| {
+        if let Err(err) = adopt_legacy_dir(&base) {
+            tracing::warn!("could not migrate the pre-rename settings directory: {err:#}");
+        }
+    });
+
+    Ok(base.join(DIR_NAME))
+}
+
+/// Move the Flowtype directory to the TeleKey one, once.
+///
+/// Settings, history and usage are conveniences, so this never fails a caller:
+/// the worst case is that the old directory stays where it is and the app
+/// starts fresh, which is recoverable by hand. Both no-op cases — nothing to
+/// migrate, or a new directory that already exists — are the normal ones.
+fn adopt_legacy_dir(base: &Path) -> Result<()> {
+    let legacy = base.join(LEGACY_DIR_NAME);
+    let current = base.join(DIR_NAME);
+
+    if current.exists() || !legacy.is_dir() {
+        return Ok(());
+    }
+
+    std::fs::rename(&legacy, &current).with_context(|| {
+        format!(
+            "could not move {} to {}",
+            legacy.display(),
+            current.display()
+        )
+    })?;
+    tracing::info!(
+        "moved settings from {} to {} after the rename",
+        legacy.display(),
+        current.display()
+    );
+
+    Ok(())
 }
 
 /// The environment variable, and the key inside a `.env` file.
 pub const API_KEY_VAR: &str = "OPENAI_API_KEY";
 
-/// Where a resolved API key came from. Reported by `flowtype check` so a key
+/// Where a resolved API key came from. Reported by `telekey check` so a key
 /// coming from an unexpected place is easy to spot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApiKeySource {
@@ -170,7 +220,7 @@ impl std::fmt::Display for ApiKeySource {
 fn env_file_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
-    if let Ok(explicit) = std::env::var("FLOWTYPE_ENV_FILE") {
+    if let Ok(explicit) = std::env::var("TELEKEY_ENV_FILE") {
         candidates.push(PathBuf::from(explicit));
     }
     candidates.push(PathBuf::from(".env"));
@@ -224,9 +274,39 @@ pub fn resolve_api_key() -> Result<Option<(String, ApiKeySource)>> {
 
     match entry.get_password() {
         Ok(key) => Ok(Some((key, ApiKeySource::Keychain))),
-        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(keyring::Error::NoEntry) => {
+            Ok(adopt_legacy_key()?.map(|key| (key, ApiKeySource::Keychain)))
+        }
         Err(err) => Err(anyhow::Error::new(err).context("could not read the API key")),
     }
+}
+
+/// The API key stored under the old service name, copied across on first use.
+///
+/// Without this, the rename would silently look like a lost API key and every
+/// existing user would have to paste theirs again. The old entry is left in
+/// place: deleting it is a separate Keychain write that can fail on its own,
+/// and an orphaned entry costs nothing. A failed copy is warned about but not
+/// returned as an error — the key itself is still good, and refusing to
+/// dictate over a bookkeeping failure would be the wrong trade.
+fn adopt_legacy_key() -> Result<Option<String>> {
+    let legacy = keyring::Entry::new(LEGACY_KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)
+        .context("could not open the pre-rename Keychain entry")?;
+
+    let key = match legacy.get_password() {
+        Ok(key) => key,
+        Err(keyring::Error::NoEntry) => return Ok(None),
+        Err(err) => {
+            return Err(anyhow::Error::new(err).context("could not read the pre-rename API key"))
+        }
+    };
+
+    match store_api_key(&key) {
+        Ok(()) => tracing::info!("copied the stored API key across after the rename"),
+        Err(err) => tracing::warn!("could not copy the stored API key after the rename: {err:#}"),
+    }
+
+    Ok(Some(key))
 }
 
 /// The API key, wherever it lives. `Ok(None)` is a normal first-run state.
@@ -404,7 +484,7 @@ mod tests {
     #[test]
     fn env_file_tolerates_comments_quotes_blanks_and_other_keys() {
         let (_dir, path) = write_env(
-            "# Flowtype config\n\
+            "# TeleKey config\n\
              \n\
              SOME_OTHER=value\n\
              OPENAI_API_KEY=\"sk-quoted-456\"\n\
@@ -447,7 +527,7 @@ mod tests {
         let candidates = env_file_candidates();
         assert!(candidates.contains(&PathBuf::from(".env")));
         assert!(
-            candidates.iter().any(|p| p.ends_with("flowtype/.env")),
+            candidates.iter().any(|p| p.ends_with("telekey/.env")),
             "the config dir must be searched so the bundled app finds a key"
         );
     }
@@ -472,5 +552,57 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(settings.keywords().len(), MAX_KEYWORDS);
+    }
+
+    #[test]
+    fn the_pre_rename_directory_is_adopted() {
+        let base = tempfile::tempdir().unwrap();
+        let legacy = base.path().join(LEGACY_DIR_NAME);
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("settings.json"), r#"{"shortcut":"Cmd+Shift+D"}"#).unwrap();
+        std::fs::write(legacy.join("history.json"), "[]").unwrap();
+
+        adopt_legacy_dir(base.path()).unwrap();
+
+        let current = base.path().join(DIR_NAME);
+        assert!(!legacy.exists(), "the old directory should have moved");
+        assert!(current.join("history.json").exists());
+        let settings = Settings::load(&current).unwrap();
+        assert_eq!(
+            settings.shortcut, "Cmd+Shift+D",
+            "settings must survive the rename"
+        );
+    }
+
+    #[test]
+    fn an_existing_directory_is_never_clobbered() {
+        let base = tempfile::tempdir().unwrap();
+        let legacy = base.path().join(LEGACY_DIR_NAME);
+        let current = base.path().join(DIR_NAME);
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::create_dir_all(&current).unwrap();
+        std::fs::write(legacy.join("settings.json"), r#"{"shortcut":"Cmd+Shift+D"}"#).unwrap();
+        std::fs::write(current.join("settings.json"), r#"{"shortcut":"Ctrl+Alt+Space"}"#).unwrap();
+
+        adopt_legacy_dir(base.path()).unwrap();
+
+        assert_eq!(
+            Settings::load(&current).unwrap().shortcut,
+            "Ctrl+Alt+Space",
+            "a directory already in place wins over the pre-rename one"
+        );
+        assert!(legacy.exists(), "and the old one is left alone, not deleted");
+    }
+
+    #[test]
+    fn nothing_to_migrate_is_not_an_error() {
+        let base = tempfile::tempdir().unwrap();
+
+        adopt_legacy_dir(base.path()).unwrap();
+
+        assert!(
+            !base.path().join(DIR_NAME).exists(),
+            "a fresh install should not have a directory created for it here"
+        );
     }
 }

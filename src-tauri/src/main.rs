@@ -6,15 +6,15 @@ fn main() {
     let command = std::env::args().nth(1);
 
     let result = match command.as_deref() {
-        Some("set-api-key") => flowtype_lib::cli::set_api_key(),
-        Some("clear-api-key") => flowtype_lib::cli::clear_api_key(),
-        Some("check") => flowtype_lib::cli::check(),
+        Some("set-api-key") => telekey_lib::cli::set_api_key(),
+        Some("clear-api-key") => telekey_lib::cli::clear_api_key(),
+        Some("check") => telekey_lib::cli::check(),
         Some(other) => {
             eprintln!("unknown command '{other}'");
-            eprintln!("usage: flowtype [set-api-key | clear-api-key | check]");
+            eprintln!("usage: telekey [set-api-key | clear-api-key | check]");
             std::process::exit(2);
         }
-        None => return flowtype_lib::run(),
+        None => return telekey_lib::run(),
     };
 
     if let Err(err) = result {

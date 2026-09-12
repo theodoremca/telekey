@@ -1334,43 +1334,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "flowtype"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "arboard",
- "chrono",
- "cpal",
- "dirs",
- "dotenvy",
- "enigo",
- "hound",
- "keyring",
- "objc2",
- "objc2-app-kit",
- "objc2-av-foundation",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-foundation",
- "parking_lot",
- "reqwest",
- "rubato",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-global-shortcut",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "windows-sys 0.61.2",
- "wiremock",
- "zeroize",
-]
-
-[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4819,6 +4782,43 @@ dependencies = [
  "dunce",
  "embed-resource",
  "toml 1.1.4+spec-1.1.0",
+]
+
+[[package]]
+name = "telekey"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "chrono",
+ "cpal",
+ "dirs",
+ "dotenvy",
+ "enigo",
+ "hound",
+ "keyring",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-av-foundation",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation",
+ "parking_lot",
+ "reqwest",
+ "rubato",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-global-shortcut",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "windows-sys 0.61.2",
+ "wiremock",
+ "zeroize",
 ]
 
 [[package]]

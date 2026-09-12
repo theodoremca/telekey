@@ -1,4 +1,4 @@
-# Flowtype
+# TeleKey
 
 Push-to-talk dictation for macOS. Hold a shortcut anywhere, speak, release, and
 polished text lands at your cursor — in Mail, Slack, a browser, a terminal.
@@ -16,15 +16,15 @@ OpenAI account.
 ## Install
 
 Download the latest `.dmg` from [Releases](../../releases), open it, and drag
-**Flowtype** onto **Applications**.
+**TeleKey** onto **Applications**.
 
-> **If macOS says "flowtype is damaged and can't be opened"**
+> **If macOS says "TeleKey is damaged and can’t be opened"**
 >
 > It is not damaged. macOS quarantines apps downloaded from the internet unless
 > they are notarised by Apple. Clear the flag:
 >
 > ```bash
-> xattr -dr com.apple.quarantine /Applications/flowtype.app
+> xattr -dr com.apple.quarantine /Applications/TeleKey.app
 > ```
 >
 > Then open it normally. If the release is notarised this will not happen.
@@ -33,7 +33,7 @@ Then work through **Setup** below.
 
 ## Setup
 
-Flowtype needs three things. Its Settings window (menubar icon → Settings…)
+TeleKey needs three things. Its Settings window (menubar icon → Settings…)
 links to each and shows a status dot for all of them.
 
 ### 1. OpenAI API key
@@ -45,7 +45,7 @@ Paste it into **Settings → OpenAI key**, where it is stored in your Keychain.
 Or from the terminal:
 
 ```bash
-/Applications/flowtype.app/Contents/MacOS/flowtype set-api-key
+/Applications/TeleKey.app/Contents/MacOS/TeleKey set-api-key
 ```
 
 That reads the key from stdin, so it never lands in your shell history.
@@ -56,16 +56,16 @@ Prompted on your first dictation. Accept it.
 
 ### 3. Accessibility
 
-Required to paste into other apps. Flowtype prompts on launch; take the prompt,
+Required to paste into other apps. TeleKey prompts on launch; take the prompt,
 then switch it on in **System Settings › Privacy & Security › Accessibility**,
-and quit and reopen Flowtype so it re-reads the permission.
+and quit and reopen TeleKey so it re-reads the permission.
 
 Without it, everything works right up to the paste and then nothing appears.
 
 ### Check everything at once
 
 ```bash
-/Applications/flowtype.app/Contents/MacOS/flowtype check
+/Applications/TeleKey.app/Contents/MacOS/TeleKey check
 ```
 
 ```
@@ -83,7 +83,7 @@ Hold **⌃⌥Space**, speak, release. A capsule appears at the bottom of the scr
 with a live waveform of what the microphone is actually hearing, so you can tell
 at a glance whether it caught you.
 
-Everything below is optional — Flowtype works with none of it configured.
+Everything below is optional — TeleKey works with none of it configured.
 
 | | |
 |---|---|
@@ -115,7 +115,7 @@ toolchain, and Xcode Command Line Tools.
 
 ```bash
 git clone <this repo>
-cd flowtype
+cd telekey
 bun install
 ./scripts/run.sh
 ```
@@ -129,7 +129,7 @@ installer. Run it from the repository root in PowerShell:
 
 ```powershell
 git clone <this repo>
-cd flowtype
+cd telekey
 .\scripts\windows-setup.ps1
 ```
 
@@ -170,8 +170,8 @@ With a certificate, the designated requirement names your bundle id and
 certificate rather than a `cdhash`, so the grant survives rebuilds. Without one
 you re-grant after every build.
 
-Flowtype detects this itself and tells you — in the startup log, in
-`flowtype check`, and as a warning row in Settings.
+TeleKey detects this itself and tells you — in the startup log, in
+`TeleKey check`, and as a warning row in Settings.
 
 ### Commands
 

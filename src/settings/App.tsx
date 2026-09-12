@@ -17,7 +17,7 @@ import { toGlyphs } from "./shortcut";
 
 type Tab = "settings" | "history" | "usage";
 
-const TAB_EVENT = "flowtype://tab";
+const TAB_EVENT = "telekey://tab";
 
 /** The tray can open this window straight onto either tab. */
 function initialTab(): Tab {
@@ -110,7 +110,7 @@ export function App() {
   return (
     <main className="page">
       <header className="masthead">
-        <h1>Flowtype</h1>
+        <h1>TeleKey</h1>
         <p className={ready ? "verdict ready" : "verdict"}>
           {ready ? "Ready to dictate" : "Setup incomplete"}
         </p>

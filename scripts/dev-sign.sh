@@ -11,12 +11,12 @@
 # cdhash, so the grant survives every rebuild.
 #
 # Any code-signing certificate works, including a free self-signed one. This
-# picks the best one available; override with FLOWTYPE_DEV_IDENTITY.
+# picks the best one available; override with TELEKEY_DEV_IDENTITY.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP="${1:-$ROOT/src-tauri/target/release/bundle/macos/flowtype.app}"
+APP="${1:-$ROOT/src-tauri/target/release/bundle/macos/TeleKey.app}"
 
 if [[ ! -d "$APP" ]]; then
   echo "No app bundle at: $APP" >&2
@@ -31,7 +31,7 @@ pick_identity() {
   available="$(security find-identity -v -p codesigning 2>/dev/null || true)"
 
   local preferred
-  for preferred in "${FLOWTYPE_DEV_IDENTITY:-}" "${APPLE_SIGNING_IDENTITY:-}"; do
+  for preferred in "${TELEKEY_DEV_IDENTITY:-}" "${APPLE_SIGNING_IDENTITY:-}"; do
     if [[ -n "$preferred" ]] && grep -qF -- "$preferred" <<<"$available"; then
       printf '%s' "$preferred"
       return
@@ -48,7 +48,7 @@ pick_identity() {
     fi
   done
 
-  # Any remaining certificate, e.g. a self-signed "Flowtype Dev".
+  # Any remaining certificate, e.g. a self-signed "TeleKey Dev".
   sed -n 's/.*"\([^"]*\)".*/\1/p' <<<"$available" | head -1
 }
 
@@ -59,7 +59,7 @@ if [[ -z "$IDENTITY" ]]; then
   cat >&2 <<'EOF'
 No code-signing certificate found — falling back to ad-hoc.
 
-Flowtype will run, but macOS forgets its Accessibility permission every time you
+TeleKey will run, but macOS forgets its Accessibility permission every time you
 rebuild, and dictation stops pasting until you grant it again.
 
 To fix that permanently, create a certificate once. It is free, local-only, and
@@ -67,7 +67,7 @@ needs no Apple Developer account:
 
   1. Open Keychain Access
   2. Keychain Access › Certificate Assistant › Create a Certificate…
-  3. Name: anything, e.g. "Flowtype Dev"
+  3. Name: anything, e.g. "TeleKey Dev"
      Identity Type:    Self Signed Root
      Certificate Type: Code Signing
   4. Create, then re-run this script.
@@ -98,5 +98,5 @@ else
   echo "future rebuilds."
 fi
 echo
-echo "If macOS still shows a stale grant, remove Flowtype from"
+echo "If macOS still shows a stale grant, remove TeleKey from"
 echo "System Settings › Privacy & Security › Accessibility and add it once more."

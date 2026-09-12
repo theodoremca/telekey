@@ -25,7 +25,7 @@ const ROWS: Array<{
     label: "Failed — long message wraps to two lines",
     state: "failed",
     message:
-      "Flowtype needs Accessibility permission to paste. Grant it in System Settings › Privacy & Security › Accessibility.",
+      "TeleKey needs Accessibility permission to paste. Grant it in System Settings › Privacy & Security › Accessibility.",
   },
 ];
 

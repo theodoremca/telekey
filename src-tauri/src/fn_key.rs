@@ -62,7 +62,7 @@ pub fn spawn(tx: mpsc::Sender<TriggerEvent>) -> Result<()> {
     // The tap needs a thread with its own run loop, and that thread owns it for
     // the life of the process.
     std::thread::Builder::new()
-        .name("flowtype-fn-tap".into())
+        .name("telekey-fn-tap".into())
         .spawn(move || run_tap(tx, ready_tx))
         .map_err(|err| anyhow::anyhow!("could not spawn the Fn watcher: {err}"))?;
 

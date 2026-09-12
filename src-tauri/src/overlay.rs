@@ -125,7 +125,7 @@ fn build_window(app: &AppHandle) -> Result<WebviewWindow> {
         OVERLAY_LABEL,
         WebviewUrl::App("overlay.html".into()),
     )
-    .title("Flowtype")
+    .title("TeleKey")
     .inner_size(panel::OVERLAY_WIDTH, panel::OVERLAY_HEIGHT)
     .decorations(false)
     .transparent(true)
