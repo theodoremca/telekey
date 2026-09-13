@@ -232,6 +232,11 @@ reports its own billing units and those are what get recorded.
 
 ### Conventions
 
+- **Commit messages end at the last line of prose.** No `Co-Authored-By`
+  trailers, no "generated with" lines, in commits or PR descriptions. Theodore
+  is the author of this project; an attribution trailer also puts a second name
+  in GitHub's contributor list, which is wrong for a repository under his name.
+
 - **Platform code is `cfg`-gated per OS with a real implementation each.** A
   stub that silently does nothing is worse than a missing feature — say what is
   missing in a comment.
