@@ -191,17 +191,46 @@ pub fn run() {
             // in front of the user. Without this the app looks installed and
             // simply does nothing when the shortcut is held, which is the worst
             // failure this app has — silent, and indistinguishable from a bug.
-            let outstanding = setup::evaluate(
-                permissions_at_launch,
-                permissions::current(),
-                commands::ApiKeyStatus::read().is_set,
-                loaded.fn_trigger,
-            );
-            if !outstanding.complete {
-                if let Err(err) = open_setup_window(app.handle()) {
-                    tracing::warn!("could not open the setup window: {err:#}");
+            //
+            // On a worker thread, because deciding means reading the key, and
+            // reading the key can touch the Keychain — which is entitled to put
+            // an authorisation dialog on screen, and did: doing this inline
+            // stalled startup for as long as the dialog went unanswered. Only
+            // the window itself goes back to the main thread, where AppKit
+            // requires it (see rule 1 in CLAUDE.md).
+            let handle = app.handle().clone();
+            let fn_trigger = loaded.fn_trigger;
+            std::thread::spawn(move || {
+                let outstanding = setup::evaluate(
+                    permissions_at_launch,
+                    permissions::current(),
+                    commands::ApiKeyStatus::read().is_set,
+                    fn_trigger,
+                );
+                // Worth a line either way: "the setup window did not appear" and
+                // "the setup window appeared when it should not have" are both
+                // bug reports, and neither is diagnosable from silence.
+                let missing = outstanding
+                    .requirements
+                    .iter()
+                    .filter(|row| !row.is_done())
+                    .count();
+                if outstanding.complete {
+                    tracing::info!("setup is complete, nothing to prompt for");
+                    return;
                 }
-            }
+                tracing::info!(missing, "opening the setup window");
+
+                let opener = handle.clone();
+                let queued = handle.run_on_main_thread(move || {
+                    if let Err(err) = open_setup_window(&opener) {
+                        tracing::warn!("could not open the setup window: {err:#}");
+                    }
+                });
+                if let Err(err) = queued {
+                    tracing::warn!("could not reach the main thread for setup: {err:#}");
+                }
+            });
 
             let worker = Arc::clone(&pipeline);
             std::thread::Builder::new()
