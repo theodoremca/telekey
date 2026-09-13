@@ -9,13 +9,15 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react()],
 
-  // Two entry points: the always-on-top recording overlay, and the settings /
-  // history window.
+  // One entry per window: the settings / history window, the always-on-top
+  // recording overlay, the first-run setup checklist, and a browser-only page
+  // showing every overlay state at once.
   build: {
     rollupOptions: {
       input: {
         main: resolve(__dirname, "index.html"),
         overlay: resolve(__dirname, "overlay.html"),
+        setup: resolve(__dirname, "setup.html"),
         preview: resolve(__dirname, "preview.html"),
       },
     },

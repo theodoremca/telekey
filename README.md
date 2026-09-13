@@ -33,8 +33,14 @@ Then work through **Setup** below.
 
 ## Setup
 
-TeleKey needs three things. Its Settings window (menubar icon → Settings…)
-links to each and shows a status dot for all of them.
+TeleKey needs three things, and it walks you through them: a **Setup** window
+opens on first launch listing each one, with a button that takes you straight to
+the right pane of System Settings. It re-checks as you go, so a row turns green
+the moment you come back, and it asks you to restart only when a permission
+genuinely needs it. You can reopen it any time from the menubar icon → Setup…
+
+The rest of this section is the same ground, if you would rather read it than
+click through it.
 
 ### 1. OpenAI API key
 

@@ -1,6 +1,7 @@
 /** Typed wrappers around the Rust commands. */
 
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export interface Settings {
   shortcut: string;
@@ -22,6 +23,30 @@ export interface Permissions {
   microphone: Permission;
   /** Only needed for the hold-Fn trigger. */
   inputMonitoring: Permission;
+}
+
+/** A row of the setup window. Mirrors `Step` in setup.rs. */
+export type SetupStep =
+  | "apiKey"
+  | "microphone"
+  | "accessibility"
+  | "inputMonitoring";
+
+/** Mirrors `StepState`: the API key is not a permission, but reads like one. */
+export type StepState = "done" | "missing" | "asksOnFirstUse" | "unknown";
+
+export interface Requirement {
+  step: SetupStep;
+  state: StepState;
+  /** Granted, but not in force until TeleKey is restarted. */
+  needsRestart: boolean;
+}
+
+export interface SetupState {
+  requirements: Requirement[];
+  /** Nothing left for the user to do — a pending restart still counts. */
+  complete: boolean;
+  restartPending: boolean;
 }
 
 export type Style =
@@ -114,7 +139,17 @@ const previewState: {
   settings: Settings;
   key: ApiKeyStatus;
   history: HistoryEntry[];
+  setup: SetupState;
 } = {
+  setup: {
+    requirements: [
+      { step: "apiKey", state: "missing", needsRestart: false },
+      { step: "microphone", state: "asksOnFirstUse", needsRestart: false },
+      { step: "accessibility", state: "missing", needsRestart: false },
+    ],
+    complete: false,
+    restartPending: false,
+  },
   settings: {
     shortcut: "Ctrl+Alt+Space",
     vocabulary: ["Hordanso", "NativeWind", "Zustand"],
@@ -164,6 +199,26 @@ const previewState: {
   ],
 };
 
+/**
+ * Mark a setup step done in the preview, the way granting it really would.
+ *
+ * A static stub would leave the setup window unworkable in a browser — every
+ * dot stuck red, no way to see the green state or the restart banner without
+ * building the app. So the preview grants what you click, and reproduces the
+ * one rule that matters: Accessibility and Input Monitoring are read at launch,
+ * so granting them here leaves a restart pending.
+ */
+function grantInPreview(step: SetupStep) {
+  const setup = previewState.setup;
+  const row = setup.requirements.find((candidate) => candidate.step === step);
+  if (!row) return;
+
+  row.state = "done";
+  row.needsRestart = step === "accessibility" || step === "inputMonitoring";
+  setup.complete = setup.requirements.every((r) => r.state === "done");
+  setup.restartPending = setup.requirements.some((r) => r.needsRestart);
+}
+
 const preview = {
   loadSettings: async () => previewState.settings,
   saveSettings: async (settings: Settings) => {
@@ -178,6 +233,7 @@ const preview = {
       source: "Keychain",
       keychainIsEffective: true,
     };
+    grantInPreview("apiKey");
     return previewState.key;
   },
   clearApiKey: async () => {
@@ -190,7 +246,20 @@ const preview = {
     inputMonitoring: "denied",
   }),
   requestInputMonitoring: async () => false,
-  openPermissionSettings: async () => undefined,
+  openPermissionSettings: async (
+    pane: "accessibility" | "microphone" | "inputMonitoring",
+  ) => {
+    grantInPreview(pane);
+  },
+  // A copy, not the object itself: `invoke` deserialises a fresh value every
+  // time, and React bails out of re-rendering when the reference is unchanged.
+  // Returning the live object would leave the preview looking frozen.
+  setupState: async () => structuredClone(previewState.setup),
+  promptForMicrophone: async () => {
+    grantInPreview("microphone");
+  },
+  restartApp: async () => undefined,
+  closeWindow: async () => undefined,
   inputDevice: async () => "coreaudio:BuiltInMicrophoneDevice",
   historyEntries: async () => previewState.history,
   deleteHistoryEntry: async (id: number) => {
@@ -268,6 +337,10 @@ const live = {
     pane: "accessibility" | "microphone" | "inputMonitoring",
   ) => invoke<void>("open_permission_settings", { pane }),
   requestInputMonitoring: () => invoke<boolean>("request_input_monitoring"),
+  setupState: () => invoke<SetupState>("setup_state"),
+  promptForMicrophone: () => invoke<void>("prompt_for_microphone"),
+  restartApp: () => invoke<void>("restart_app"),
+  closeWindow: () => getCurrentWindow().close(),
   inputDevice: () => invoke<string | null>("input_device"),
   historyEntries: () => invoke<HistoryEntry[]>("history_entries"),
   deleteHistoryEntry: (id: number) =>

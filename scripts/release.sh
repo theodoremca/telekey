@@ -19,6 +19,10 @@
 #
 # Without the notarisation variables the app is still signed, but macOS will
 # warn on first launch on any other Mac.
+#
+# Usage:
+#   ./scripts/release.sh              Apple Silicon only
+#   ./scripts/release.sh universal    also runs on Intel Macs
 
 set -euo pipefail
 
@@ -58,10 +62,20 @@ if [[ "$notarising" == false ]]; then
   echo "         but not notarised, and other Macs will warn on first launch." >&2
 fi
 
-echo "Building…"
-bun tauri build --bundles app,dmg
+# `./scripts/release.sh universal` also runs on Intel. It is not the default
+# because it compiles everything twice for a shrinking audience.
+target_args=()
+BUNDLE="$ROOT/src-tauri/target/release/bundle"
+if [[ "${1:-}" == "universal" ]]; then
+  target_args=(--target universal-apple-darwin)
+  BUNDLE="$ROOT/src-tauri/target/universal-apple-darwin/release/bundle"
+fi
 
-APP="$ROOT/src-tauri/target/release/bundle/macos/TeleKey.app"
+echo "Building…"
+bun tauri build --bundles app,dmg "${target_args[@]}"
+
+APP="$BUNDLE/macos/TeleKey.app"
+DMG="$(find "$BUNDLE/dmg" -maxdepth 1 -name '*.dmg' -print -quit 2>/dev/null || true)"
 
 echo
 echo "Verifying the signature…"
@@ -71,15 +85,49 @@ echo
 echo "Checking the hardened runtime and entitlements…"
 codesign --display --entitlements - --verbose=4 "$APP" 2>&1 | sed -n '1,40p'
 
+# Tauri notarises the .app and staples it, but never the .dmg — and the .dmg is
+# what people download. Gatekeeper refuses an unnotarised disk image on open
+# ("source=Unnotarized Developer ID") even when the app sealed inside it is
+# perfectly notarised, so the image needs its own submission and its own ticket.
+if [[ "$notarising" == true && -n "$DMG" ]]; then
+  echo
+  echo "Notarising the disk image…"
+  if [[ -n "${APPLE_API_KEY_PATH:-}" ]]; then
+    xcrun notarytool submit "$DMG" \
+      --key "$APPLE_API_KEY_PATH" \
+      --key-id "$APPLE_API_KEY" \
+      --issuer "$APPLE_API_ISSUER" \
+      --wait
+  else
+    xcrun notarytool submit "$DMG" \
+      --apple-id "$APPLE_ID" \
+      --password "$APPLE_PASSWORD" \
+      --team-id "$APPLE_TEAM_ID" \
+      --wait
+  fi
+  xcrun stapler staple "$DMG"
+fi
+
 echo
 echo "Asking Gatekeeper what it thinks…"
 # Fails until the app is notarised and stapled; that is expected mid-setup.
 if spctl --assess --type exec --verbose=4 "$APP"; then
-  echo "Gatekeeper accepts this build."
+  echo "Gatekeeper accepts the app."
 else
-  echo "Gatekeeper rejected it — usually means notarisation has not completed." >&2
+  echo "Gatekeeper rejected the app — usually means notarisation has not completed." >&2
+fi
+
+# A disk image is opened rather than executed, so it is assessed against its own
+# signature with a different type. Assessing it as `exec` silently passes and
+# tells you nothing about what a downloader will see.
+if [[ -n "$DMG" ]]; then
+  if spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG"; then
+    echo "Gatekeeper accepts the disk image."
+  else
+    echo "Gatekeeper rejected the disk image — downloaders will be warned." >&2
+  fi
 fi
 
 echo
 echo "Artifacts:"
-find "$ROOT/src-tauri/target/release/bundle" -maxdepth 2 -name "*.app" -o -maxdepth 2 -name "*.dmg" | sed 's/^/  /'
+find "$BUNDLE" -maxdepth 2 \( -name "*.app" -o -name "*.dmg" \) | sed 's/^/  /'

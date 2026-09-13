@@ -52,6 +52,7 @@ permissions silently never stick. See rule 2 below.
 ```bash
 bun run dev                                    # Vite on :1420
 open http://localhost:1420/index.html          # settings window, with preview stub data
+open http://localhost:1420/setup.html          # first-run permission checklist
 open http://localhost:1420/preview.html        # every overlay state on one page
 ```
 
@@ -211,6 +212,19 @@ fn_key.rs   (Fn)    ─┴─► mpsc ─► pipeline.rs (worker thread)
                                     │  history.rs / usage.rs
                                     └─► StatusSink ─► overlay.rs ─► panel.rs (NSPanel)
 ```
+
+Three windows, each its own Vite entry: `index.html` (settings, history, usage),
+`overlay.html` (the recording HUD, an `NSPanel`), and `setup.html` (the
+first-run permission checklist, opened by `lib.rs` when `setup::evaluate`
+reports anything outstanding). `preview.html` is browser-only.
+
+`setup.rs` is worth knowing about before touching permissions UI: it decides
+what is still missing and, crucially, **whether a restart is needed** — which
+is not a property of a permission but of *when* it was granted. Accessibility
+and the Fn tap are read at launch, so `lib.rs` snapshots permissions at startup
+and the comparison against the current ones is what distinguishes "granted and
+working" from "granted, but not until you relaunch". The logic is pure and
+tested; nothing in it touches Tauri or macOS.
 
 Both triggers feed the same channel, so losing one never costs dictation.
 `Transcriber` and `Polisher` return text **plus** `usage::Units`; OpenAI

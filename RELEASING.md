@@ -87,8 +87,29 @@ export APPLE_API_KEY_PATH="..."
 `APPLE_PASSWORD` must be an **app-specific password** from
 [appleid.apple.com](https://appleid.apple.com), never your account password.
 
-`scripts/release.sh` builds, verifies the signature and entitlements, and asks
-Gatekeeper for its verdict. Find your identities with:
+`scripts/release.sh` builds, verifies the signature and entitlements, notarises
+the disk image, and asks Gatekeeper for its verdict on both the app and the
+image.
+
+That second notarisation is not redundant. Tauri notarises the `.app` and
+staples a ticket to it, but leaves the `.dmg` alone — and the `.dmg` is what
+people download. Gatekeeper refuses an unnotarised disk image when it is
+*opened*, reporting `source=Unnotarized Developer ID`, even though the app
+sealed inside it is perfectly notarised. So the image is submitted separately
+and gets its own stapled ticket. Note the two verdicts are fetched differently:
+an app is assessed with `--type exec`, an image with `--type open`, and
+assessing an image as `exec` passes silently while telling you nothing.
+
+Add `universal` to build for Intel Macs as well:
+
+```bash
+./scripts/release.sh universal
+```
+
+That needs `rustup target add x86_64-apple-darwin`, compiles everything twice,
+and writes to `src-tauri/target/universal-apple-darwin/release/bundle/`.
+
+Find your identities with:
 
 ```bash
 security find-identity -v -p codesigning

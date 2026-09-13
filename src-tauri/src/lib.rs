@@ -17,6 +17,7 @@ pub mod permissions;
 pub mod pipeline;
 pub mod polish;
 pub mod settings;
+pub mod setup;
 pub mod signing;
 pub mod transcribe;
 pub mod usage;
@@ -113,11 +114,22 @@ pub fn run() {
             commands::usage_daily,
             commands::clear_usage,
             commands::request_input_monitoring,
+            commands::setup_state,
+            commands::prompt_for_microphone,
+            commands::restart_app,
         ])
         .setup(move |app| {
             // A menubar app, not a dock app.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            // Snapshot the permissions before anything can change them. This is
+            // the only chance: once granted mid-session, a permission reads as
+            // trusted while the process still behaves as though it is not, and
+            // the setup window needs to know the difference to ask for the one
+            // restart that fixes it.
+            let permissions_at_launch = permissions::current();
+            app.manage(commands::LaunchPermissions(permissions_at_launch));
 
             let overlay = overlay::Overlay::create(app.handle())?;
             match panel::can_become_key(overlay.window()) {
@@ -175,6 +187,22 @@ pub fn run() {
 
             build_tray(app.handle())?;
 
+            // First run, or something revoked since the last one: put the work
+            // in front of the user. Without this the app looks installed and
+            // simply does nothing when the shortcut is held, which is the worst
+            // failure this app has — silent, and indistinguishable from a bug.
+            let outstanding = setup::evaluate(
+                permissions_at_launch,
+                permissions::current(),
+                commands::ApiKeyStatus::read().is_set,
+                loaded.fn_trigger,
+            );
+            if !outstanding.complete {
+                if let Err(err) = open_setup_window(app.handle()) {
+                    tracing::warn!("could not open the setup window: {err:#}");
+                }
+            }
+
             let worker = Arc::clone(&pipeline);
             std::thread::Builder::new()
                 .name("telekey-pipeline".into())
@@ -222,13 +250,57 @@ pub fn open_main_window(app: &AppHandle, tab: &str) -> tauri::Result<()> {
     Ok(())
 }
 
+pub const SETUP_LABEL: &str = "setup";
+
+/// Open the setup window, or bring it forward if it is already up.
+///
+/// A window of its own rather than a tab of Settings: it is the first thing a
+/// new user sees, it has exactly one job — turn every dot green — and a
+/// settings window full of vocabulary lists and rate tables would bury it. It
+/// is fixed-size for the same reason.
+pub fn open_setup_window(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(existing) = app.get_webview_window(SETUP_LABEL) {
+        existing.show()?;
+        existing.set_focus()?;
+        return Ok(());
+    }
+
+    let window = tauri::WebviewWindowBuilder::new(
+        app,
+        SETUP_LABEL,
+        tauri::WebviewUrl::App("setup.html".into()),
+    )
+    .title("TeleKey Setup")
+    // Tall enough for the worst case — four rows and the restart banner —
+    // because a checklist that scrolls hides the item you have not done yet.
+    .inner_size(460.0, 700.0)
+    .resizable(false)
+    .center()
+    .build()?;
+
+    window.set_focus()?;
+    Ok(())
+}
+
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let history_item = MenuItem::with_id(app, "history", "History…", true, None::<&str>)?;
     let usage_item = MenuItem::with_id(app, "usage", "Usage…", true, None::<&str>)?;
     let settings_item =
         MenuItem::with_id(app, "settings", "Settings…", true, Some("CmdOrCtrl+,"))?;
+    // Reachable after the first run too: permissions can be revoked, and a
+    // macOS update has been known to drop them on its own.
+    let setup_item = MenuItem::with_id(app, "setup", "Setup…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit TeleKey", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&history_item, &usage_item, &settings_item, &quit])?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &history_item,
+            &usage_item,
+            &settings_item,
+            &setup_item,
+            &quit,
+        ],
+    )?;
 
     let mut tray = TrayIconBuilder::with_id("telekey")
         .menu(&menu)
@@ -237,6 +309,11 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             id @ ("settings" | "history" | "usage") => {
                 if let Err(err) = open_main_window(app, id) {
                     tracing::error!("could not open the {id} window: {err}");
+                }
+            }
+            "setup" => {
+                if let Err(err) = open_setup_window(app) {
+                    tracing::error!("could not open the setup window: {err}");
                 }
             }
             "quit" => app.exit(0),

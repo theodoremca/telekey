@@ -14,6 +14,7 @@ use crate::history::Entry;
 use crate::permissions::{self, Permissions, SettingsPane};
 use crate::pipeline::Pipeline;
 use crate::settings::{self, ApiKeySource, Settings};
+use crate::setup::{self, SetupState};
 use crate::signing::{self, Signing};
 use crate::usage::{Cost, DailyPoint, Units};
 use crate::trigger;
@@ -36,7 +37,7 @@ pub struct ApiKeyStatus {
 }
 
 impl ApiKeyStatus {
-    fn read() -> Self {
+    pub fn read() -> Self {
         match settings::resolve_api_key() {
             Ok(Some((_, source))) => Self {
                 is_set: true,
@@ -146,6 +147,48 @@ pub fn clear_api_key(pipeline: State<'_, Arc<Pipeline>>) -> Result<ApiKeyStatus,
 #[tauri::command]
 pub fn permissions_status() -> Permissions {
     permissions::current()
+}
+
+/// The permissions this process saw when it started.
+///
+/// Held for the setup window, which has to tell "granted, working" apart from
+/// "granted, but not until you relaunch" — a difference macOS gives no way to
+/// observe, since both read back as trusted. See [`setup::evaluate`].
+pub struct LaunchPermissions(pub Permissions);
+
+#[tauri::command]
+pub fn setup_state(
+    pipeline: State<'_, Arc<Pipeline>>,
+    at_launch: State<'_, LaunchPermissions>,
+) -> SetupState {
+    setup::evaluate(
+        at_launch.0,
+        permissions::current(),
+        ApiKeyStatus::read().is_set,
+        pipeline.settings().fn_trigger,
+    )
+}
+
+/// Trigger macOS's own microphone prompt.
+///
+/// Better than sending someone to System Settings for a permission that has
+/// never been asked for: the system dialog grants it in one click, whereas the
+/// pane makes them find the app in a list. Opening a stream is what makes macOS
+/// ask, so this borrows the warmup path — on its own thread, because the first
+/// open of the session costs a couple of seconds and this must not block the UI.
+#[tauri::command]
+pub fn prompt_for_microphone(pipeline: State<'_, Arc<Pipeline>>) {
+    let pipeline = Arc::clone(pipeline.inner());
+    std::thread::spawn(move || pipeline.warmup());
+}
+
+/// Quit and relaunch.
+///
+/// Accessibility trust and the Fn event tap are both read while the process
+/// starts, so for those two this is the only way to finish the job.
+#[tauri::command]
+pub fn restart_app(app: AppHandle) {
+    app.restart()
 }
 
 /// Whether this build's signature can hold a permission grant.

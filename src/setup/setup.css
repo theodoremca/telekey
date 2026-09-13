@@ -1,0 +1,77 @@
+/*
+ * Setup window.
+ *
+ * Deliberately thin: it borrows the settings window's tokens, rows, dots and
+ * buttons so the first screen a user sees and the one they return to later are
+ * recognisably the same app. Only the things a checklist needs that a settings
+ * page does not are defined here.
+ */
+
+/* The settings page leaves room to scroll past the last section. This window is
+   a fixed-height checklist, so that space is just a gap above the footer. */
+.setupPage {
+  padding-top: 22px;
+  padding-bottom: 22px;
+}
+
+/* The rows carry more explanation than a settings row, and the button has to
+   stay beside the label rather than drifting to the vertical centre of a tall
+   block of text. */
+.setupRow {
+  align-items: flex-start;
+  padding: 14px;
+}
+
+.setupRow .dot {
+  /* Optically centred on the label's cap height, not the row. */
+  margin-top: 6px;
+}
+
+/* A settings row keeps its hint to one line and clips it. Here the hint is the
+   explanation of why a stranger is being asked for a system permission, so it
+   wraps in full — truncating it is what makes permission prompts feel shifty. */
+.setupRow .rowHint {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  max-width: 34ch;
+}
+
+.setupRow .rowValue {
+  padding-top: 1px;
+}
+
+.setupRow button {
+  margin-top: -1px;
+}
+
+.setupKey {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.setupKey .problem {
+  flex-basis: 100%;
+}
+
+/* The restart prompt is an action, not a remark, so it holds its own button. */
+.setupBanner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.setupBanner span {
+  flex: 1 1 auto;
+}
+
+.setupFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 20px;
+}
