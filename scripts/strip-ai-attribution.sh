@@ -25,9 +25,15 @@ if [[ -n "$(git status --porcelain)" ]]; then
   exit 1
 fi
 
+# Only local branches and tags. `--all` would be wrong here: after the rewrite
+# it also walks the refs/original/ backups and the stale remote-tracking refs,
+# so every "before" number would be compared against itself plus the old
+# history, and all three checks would report a failure that had not happened.
+branches() { git for-each-ref --format='%(refname)' refs/heads refs/tags; }
+
 before_tree="$(git rev-parse HEAD^{tree})"
-before_authors="$(git log --all --format='%an <%ae> %s' | sort)"
-before_count="$(git rev-list --count --all)"
+before_authors="$(git log $(branches) --format='%an <%ae> %s' | sort)"
+before_count="$(git rev-list --count $(branches))"
 
 filter="$(mktemp)"
 trap 'rm -f "$filter"' EXIT
@@ -55,10 +61,10 @@ FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch -f \
 echo
 echo "Verifying…"
 
-remaining="$(git log --all --format='%B' | grep -c '^Co-Authored-By: Claude' || true)"
+remaining="$(git log $(branches) --format='%B' | grep -c '^Co-Authored-By: Claude' || true)"
 after_tree="$(git rev-parse HEAD^{tree})"
-after_authors="$(git log --all --format='%an <%ae> %s' | sort)"
-after_count="$(git rev-list --count --all)"
+after_authors="$(git log $(branches) --format='%an <%ae> %s' | sort)"
+after_count="$(git rev-list --count $(branches))"
 
 fail=0
 [[ "$remaining" == "0" ]] || { echo "  ✗ $remaining trailer(s) still present" >&2; fail=1; }
@@ -79,6 +85,11 @@ echo "  ✓ still $after_count commits"
 echo
 echo "Nothing has been pushed. When you are ready:"
 echo
+# The fetch is not optional. filter-branch rewrites refs/remotes/origin/* too,
+# so git now believes the remote already holds the new history; --force-with-lease
+# compares against that belief and would refuse the push as stale. Fetching puts
+# the true remote position back, which is also what makes the lease meaningful.
+echo "  git fetch origin"
 echo "  git push --force-with-lease origin main"
 echo "  git push --force origin v0.1.0 v0.1.1"
 echo
