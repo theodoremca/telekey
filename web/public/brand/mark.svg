@@ -1,0 +1,11 @@
+<!-- TeleKey mark: a telegraph key in profile. The knob is the T. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect x="13.5" y="40" width="7" height="9" rx="2" fill="#f5b324"/>
+  <rect x="4" y="48" width="56" height="8" rx="4" fill="#17161d"/>
+  <rect x="42" y="36" width="10" height="14" rx="3" fill="#17161d"/>
+  <g transform="rotate(8 47 36.5)">
+    <rect x="6" y="33" width="52" height="7" rx="3.5" fill="#17161d"/>
+    <rect x="14" y="17" width="6" height="17" rx="2" fill="#f5b324"/>
+    <rect x="4" y="10" width="26" height="9" rx="4.5" fill="#f5b324"/>
+  </g>
+</svg>

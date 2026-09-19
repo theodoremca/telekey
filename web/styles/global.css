@@ -1,141 +1,265 @@
-:root {
-  --paper: #fbfafc;
-  --surface: #ffffff;
-  --line: #e8e5ec;
-  --ink: #17161d;
-  --muted: #6c6879;
-  --voice: #b57d0a;
-  --voice-wash: #fdf5e3;
-  --bad: #dc2626;
-  --radius: 14px;
+/*
+ * TeleKey website.
+ *
+ * The page is an operator's desk: a key you hold, a needle that moves when you
+ * speak, and a message that arrives on paper. Colours are the desktop app's own
+ * (see src/overlay/overlay.css and src/settings/settings.css) and are named
+ * after that desk, not after roles, so the palette does not drift.
+ */
+@import "tailwindcss";
+
+@theme {
+  --color-graphite: #15141b; /* the desk: hero, header, footer */
+  --color-graphite-lift: #211f2b;
+  --color-keybed: #2b2937; /* a dark key's face */
+  --color-edge: #0b0a0f; /* the side of a dark key */
+  --color-paper: #fbfafc; /* where the message arrives */
+  --color-sheet: #ffffff;
+  --color-line: #e8e5ec;
+  --color-line-strong: #d8d4de;
+  --color-ink: #17161d;
+  --color-ink-soft: #6c6879;
+  --color-voice: #f5b324; /* the amber lamp: live, warm, unalarming */
+  --color-voice-deep: #b57d0a; /* the same hue with contrast on paper */
+  --color-voice-edge: #9a6a05;
+  --color-voice-wash: #fdf5e3;
+  --color-settled: #4ade80; /* text has landed */
+  --color-settled-deep: #16a34a;
+  --color-glow: #f2f0f7; /* text on graphite */
+  --color-dim: rgba(242, 240, 247, 0.56);
+  --color-hair: rgba(255, 255, 255, 0.1);
+  --color-bad: #dc2626;
+
+  --font-display: var(--font-display-face), system-ui, sans-serif;
+  --font-body: var(--font-body-face), system-ui, sans-serif;
+  --font-mono: var(--font-label-face), ui-monospace, monospace;
+
+  /* The key's spring is the overlay's own enter curve; everything else is exact. */
+  --ease-spring: cubic-bezier(0.22, 1.4, 0.36, 1);
+  --ease-exact: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-* {
-  box-sizing: border-box;
+@layer base {
+  html {
+    scroll-behavior: auto;
+    overflow-x: hidden;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-graphite);
+    color: var(--color-ink);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  ::selection {
+    background: rgba(245, 179, 36, 0.38);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-voice);
+    outline-offset: 3px;
+  }
 }
 
-html,
-body {
-  margin: 0;
-  background: var(--paper);
-  color: var(--ink);
-  font-family:
-    -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-  line-height: 1.5;
+@layer components {
+  /*
+   * Keycap: the brand's shape. A button here is a key you press, so it is built
+   * like one: a fixed base that shows as the key's side, and a cap that travels
+   * down onto it. Only the cap's transform changes, so hover and press never
+   * repaint a shadow.
+   */
+  .keycap {
+    --keycap-face: var(--color-voice);
+    --keycap-side: var(--color-voice-edge);
+    --keycap-ink: var(--color-graphite);
+    --keycap-shine: rgba(255, 255, 255, 0.5);
+    --keycap-travel: 4px;
+
+    display: inline-flex;
+    padding: 0 0 var(--keycap-travel);
+    border: 0;
+    border-radius: 10px;
+    background: var(--keycap-side);
+    font: inherit;
+    text-decoration: none;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  .keycap > .cap {
+    display: inline-flex;
+    flex: 1;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 18px;
+    border-radius: 10px;
+    background: var(--keycap-face);
+    color: var(--keycap-ink);
+    box-shadow: inset 0 1px 0 var(--keycap-shine);
+    font-family: var(--font-body);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    /* Release springs back; the press below is quicker and has no overshoot. */
+    transition: transform 180ms var(--ease-spring);
+  }
+
+  .keycap:hover > .cap {
+    transform: translateY(1px);
+  }
+
+  .keycap:active > .cap,
+  .keycap[data-down="true"] > .cap {
+    transform: translateY(var(--keycap-travel));
+    transition: transform 90ms ease-out;
+  }
+
+  .keycap:disabled,
+  .keycap[aria-disabled="true"] {
+    cursor: default;
+    opacity: 0.55;
+  }
+
+  .keycap:disabled > .cap {
+    transform: none;
+  }
+
+  .keycap-dark {
+    --keycap-face: var(--color-keybed);
+    --keycap-side: var(--color-edge);
+    --keycap-ink: var(--color-glow);
+    --keycap-shine: rgba(255, 255, 255, 0.12);
+  }
+
+  .keycap-ink {
+    --keycap-face: var(--color-graphite-lift);
+    --keycap-side: #000;
+    --keycap-ink: var(--color-glow);
+    --keycap-shine: rgba(255, 255, 255, 0.14);
+  }
+
+  .keycap-paper {
+    --keycap-face: var(--color-sheet);
+    --keycap-side: var(--color-line-strong);
+    --keycap-ink: var(--color-ink);
+    --keycap-shine: transparent;
+  }
+
+  .keycap-paper > .cap {
+    box-shadow: inset 0 0 0 1px var(--color-line-strong);
+  }
+
+  /* The header's copy of the primary action: same key, lower profile. */
+  .keycap-sm {
+    --keycap-travel: 3px;
+    border-radius: 8px;
+  }
+
+  .keycap-sm > .cap {
+    padding: 8px 13px;
+    border-radius: 8px;
+    font-size: 13px;
+  }
+
+  /* The demo keys in the hero: same construction, mono legend, lit when held. */
+  .keycap-legend > .cap {
+    min-width: 46px;
+    height: 40px;
+    padding: 0 12px;
+    border-radius: 8px;
+    color: var(--color-dim);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .keycap-legend {
+    border-radius: 8px;
+  }
+
+  .keycap-legend[data-down="true"] > .cap {
+    color: var(--color-voice);
+  }
+
+  /* The mark is a key too: the lever rests raised and goes down under the
+     pointer, on the same spring as every keycap. */
+  .mark-lever {
+    transform-box: view-box;
+    transform-origin: 47px 36.5px;
+    transform: rotate(8deg);
+    transition: transform 180ms var(--ease-spring);
+  }
+
+  a:hover > .mark .mark-lever,
+  a:focus-visible > .mark .mark-lever,
+  a:active > .mark .mark-lever {
+    transform: rotate(0deg);
+    transition: transform 90ms ease-out;
+  }
+
+  /* Text that has just landed: the wash is its own box, faded by opacity. */
+  .landed {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .landed-wash {
+    position: absolute;
+    z-index: -1;
+    inset: 56% -0.08em 4% -0.08em;
+    border-radius: 2px;
+    background: rgba(245, 179, 36, 0.38);
+    pointer-events: none;
+  }
+
+  .caret {
+    display: inline-block;
+    width: 2px;
+    height: 1.05em;
+    margin-left: 2px;
+    background: var(--color-voice);
+    vertical-align: -0.15em;
+    animation: caret-blink 1s steps(1) infinite;
+  }
 }
 
-a {
-  color: inherit;
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
 }
 
-.shell {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 28px 20px 80px;
+@keyframes capsule-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
 }
 
-.nav {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 48px;
+@media (prefers-reduced-motion: reduce) {
+  .caret {
+    animation: none;
+  }
+
+  .keycap > .cap,
+  .mark-lever {
+    transition: none;
+  }
 }
 
-.brand {
-  font-weight: 650;
-  letter-spacing: -0.03em;
-  text-decoration: none;
-  font-size: 18px;
-}
-
-.nav a:not(.brand) {
-  color: var(--muted);
-  text-decoration: none;
-  font-size: 14px;
-}
-
-h1 {
-  font-size: 40px;
-  letter-spacing: -0.04em;
-  line-height: 1.1;
-  margin: 0 0 12px;
-}
-
-.lede {
-  color: var(--muted);
-  font-size: 18px;
-  max-width: 42ch;
-}
-
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 28px;
-}
-
-.primary,
-.ghost,
-.danger {
-  font: inherit;
-  font-size: 14px;
-  font-weight: 550;
-  padding: 10px 16px;
-  border-radius: 10px;
-  cursor: pointer;
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-}
-
-.primary {
-  background: var(--ink);
-  color: var(--surface);
-  border: 0;
-}
-
-.ghost {
-  background: transparent;
-  color: var(--ink);
-  border: 1px solid var(--line);
-}
-
-.card {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 20px;
-}
-
-.field {
-  width: 100%;
-  font: inherit;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  margin: 8px 0 14px;
-}
-
-.problem {
-  color: var(--bad);
-  font-size: 14px;
-}
-
-.muted {
-  color: var(--muted);
-  font-size: 14px;
-}
-
-.balance {
-  font-size: 36px;
-  letter-spacing: -0.04em;
-  font-variant-numeric: tabular-nums;
-}
-
-.packs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 16px;
+/* Pre-paint hide for the reveal engine (lib/sectionReveal.ts). Visibility only:
+   an opacity or transform here would leave content hidden for good. `wipe` never
+   changes visibility, so it is left out. pages/_document.tsx adds the class and
+   takes it away again after four seconds whatever happens. */
+html.motion-ok [data-reveal]:not([data-reveal="wipe"]) {
+  visibility: hidden;
 }

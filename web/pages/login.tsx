@@ -10,6 +10,8 @@ import {
   type User,
 } from "firebase/auth";
 
+import { KeycapButton } from "@/components/Keycap";
+
 import { firebaseAuth, isConfigured } from "../lib/firebase";
 import { handoffToApp, rememberDesktop, wantsDesktop } from "../lib/handoff";
 
@@ -86,7 +88,7 @@ export default function Login() {
   };
 
   if (!isConfigured()) {
-    return <p className="muted">Sign-in is not configured in this build.</p>;
+    return <p className="m-0 text-[15px] text-ink-soft">Sign-in is not configured in this build.</p>;
   }
 
   return (
@@ -94,37 +96,56 @@ export default function Login() {
       <Head>
         <title>Sign in — TeleKey</title>
       </Head>
-      <h1>{desktop ? "Sign in to TeleKey" : "Sign in"}</h1>
-      <p className="lede">
+      <h1 className="m-0 font-display text-[clamp(2.25rem,6vw,3.25rem)] font-bold leading-none tracking-[-0.035em]">
+        {desktop ? "Sign in to TeleKey" : "Sign in"}
+      </h1>
+      <p className="mt-4 mb-0 max-w-[42ch] text-[17px] leading-relaxed text-ink-soft">
         {desktop
           ? "This browser signs you in, then hands the session to the app."
           : "Google, or a magic link. No password."}
       </p>
 
-      <div className="card" style={{ marginTop: 28, maxWidth: 420 }}>
-        <button className="primary" disabled={busy} onClick={() => void google()}>
+      <div className="mt-9 rounded-[14px] border border-line bg-sheet p-6 sm:p-7">
+        <KeycapButton variant="ink" className="w-full" disabled={busy} onClick={() => void google()}>
           Continue with Google
-        </button>
-        <p className="muted">or</p>
+        </KeycapButton>
+
+        <div className="my-6 flex items-center gap-3 font-mono text-xs text-ink-soft">
+          <span className="h-px flex-1 bg-line" />
+          or
+          <span className="h-px flex-1 bg-line" />
+        </div>
+
         <form onSubmit={(event) => void magic(event)}>
-          <label className="muted" htmlFor="email">
+          <label className="text-sm font-medium" htmlFor="email">
             Email
           </label>
           <input
             id="email"
-            className="field"
+            className="mt-2 mb-4 block w-full rounded-[10px] border border-line-strong bg-paper px-3.5 py-3 text-[15px] text-ink outline-none transition-colors placeholder:text-ink-soft/60 focus:border-voice-deep"
             type="email"
             autoComplete="email"
+            placeholder="you@example.com"
             required
             value={email}
             onChange={(event) => setEmail(event.target.value)}
           />
-          <button className="ghost" disabled={busy} type="submit">
+          <KeycapButton variant="paper" className="w-full" disabled={busy} type="submit">
             Email me a link
-          </button>
+          </KeycapButton>
         </form>
-        {status && <p className="muted">{status}</p>}
-        {problem && <p className="problem">{problem}</p>}
+
+        {status && (
+          <p role="status" className="mt-5 mb-0 flex gap-3 text-sm leading-relaxed text-ink-soft">
+            <span className="mt-[7px] size-2 flex-none rounded-full bg-settled-deep" />
+            {status}
+          </p>
+        )}
+        {problem && (
+          <p role="alert" className="mt-5 mb-0 text-sm leading-relaxed text-bad">
+            {problem}
+          </p>
+        )}
       </div>
     </>
   );

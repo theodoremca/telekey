@@ -60,6 +60,27 @@ open http://localhost:1420/preview.html        # every overlay state on one page
 microphone usage string and no bundle identity. Use it for the settings/history
 UI only.
 
+### Website (`web/`)
+
+```bash
+cd web && bun install
+bun run dev              # Next.js on :3000
+bun run build            # must pass, along with `bun run tsc --noEmit`
+```
+
+Next.js Pages Router, Tailwind 4, GSAP. Pages are thin; the landing page is
+`web/screens/landing/`. Every word, link and figure is in `web/data/site.ts`,
+and each claim there traces back to `README.md` or to code — the credits rate is
+derived from `MARKUP` and `TRANSCRIBE_PER_MINUTE` in `functions/src/index.ts`,
+so re-check it when either changes.
+
+Scroll reveals are declarative (`data-reveal="land|key|capsule|lamp|rise|wipe"`,
+see `web/lib/sectionReveal.ts`). Content is pre-hidden with `visibility` only,
+under a class an inline script adds and removes again after four seconds. Never
+pre-hide with `opacity` or a CSS `transform`, and never `gsap.from()` on
+pre-hidden content: both leave the page blank with a clean console. The hero
+demo never touches a microphone; its trace is drawn, and the page says so.
+
 ### Tests — run all three before claiming anything works
 
 ```bash
@@ -210,6 +231,22 @@ experimental. Linux is X11-only until that changes.
 off by default and only the model-backed styles (Terse/Formal/Custom) make a
 second request. `Literal` is local rules. Cached tokens bill at 10% — see
 `usage.rs`.
+
+**13. The menubar icon is a blank rounded square.**
+A template image is drawn from alpha alone, and the app icon is a filled tile,
+so the tile's silhouette is all macOS has to draw. The menubar has its own glyph,
+`icons/tray.png`, loaded in `build_tray`; Windows and Linux keep the tile, which
+they show in colour. The mark's sources are `icons/icon.svg` and `icons/tray.svg`
+(the heavier cut, for 32 px and under). To regenerate the set, render `icon.svg`
+to a 1024 px PNG and run `bun tauri icon <png> -o <scratch dir>`, then copy over
+only the files already in `src-tauri/icons/` — the command also writes `ios/` and
+`android/` folders this project does not ship. The website draws the same mark
+inline (`web/components/Mark.tsx`).
+
+**14. The website dev server starts returning 500 with "Cannot find module
+'./chunks/vendor-chunks/next.js'".**
+`next build` and `next dev` both write to `web/.next`, so building while the dev
+server runs wrecks it. Stop the dev server, build, then start it again.
 
 ---
 
