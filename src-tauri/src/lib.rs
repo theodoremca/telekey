@@ -449,9 +449,18 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             _ => {}
         });
 
+    // The menubar gets its own glyph. A template image is drawn from alpha alone
+    // so it can follow the menubar's light/dark state, and the app icon is a
+    // filled tile: used here it would be a blank rounded square.
+    #[cfg(target_os = "macos")]
+    {
+        let glyph = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?;
+        tray = tray.icon(glyph).icon_as_template(true);
+    }
+    // Windows and Linux trays show the icon in colour, so the tile is right there.
+    #[cfg(not(target_os = "macos"))]
     if let Some(icon) = app.default_window_icon() {
-        // Template rendering makes the icon follow the menubar's light/dark state.
-        tray = tray.icon(icon.clone()).icon_as_template(true);
+        tray = tray.icon(icon.clone());
     }
 
     tray.build(app)?;
