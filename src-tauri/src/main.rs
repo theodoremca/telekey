@@ -9,6 +9,9 @@ fn main() {
         Some("set-api-key") => telekey_lib::cli::set_api_key(),
         Some("clear-api-key") => telekey_lib::cli::clear_api_key(),
         Some("check") => telekey_lib::cli::check(),
+        // Windows/Linux deliver `telekey://auth?…` as argv[1] when the app is
+        // launched from a deep link. That is not a CLI command.
+        Some(other) if other.starts_with("telekey:") => return telekey_lib::run(),
         Some(other) => {
             eprintln!("unknown command '{other}'");
             eprintln!("usage: telekey [set-api-key | clear-api-key | check]");

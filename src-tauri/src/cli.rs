@@ -66,19 +66,27 @@ pub fn check() -> Result<()> {
         Some((_, source)) => println!("  API key          yes  (from {source})"),
         None => println!("  API key          NO"),
     }
+
+    let hosted = crate::session::status();
+    match (&hosted.signed_in, &hosted.email) {
+        (true, Some(email)) => println!("  hosted account   yes  ({email})"),
+        (true, None) => println!("  hosted account   yes"),
+        (false, _) => println!("  hosted account   no"),
+    }
+
     println!("  accessibility    {}", yes_no(accessibility_granted()));
     println!("  signature        {}", describe_signing());
     println!("  input device     {}", describe_input_device());
 
-    let ready = key_set && accessibility_granted() && loaded.is_ok();
+    let ready = (key_set || hosted.signed_in) && accessibility_granted() && loaded.is_ok();
     println!();
     if ready {
         println!("Ready to dictate.");
     } else {
         println!("Not ready yet:");
-        if !key_set {
+        if !key_set && !hosted.signed_in {
             println!("  - run `{} set-api-key`", invocation());
-            println!("    (or set OPENAI_API_KEY in the project's .env file)");
+            println!("    (or sign in from Settings, or set OPENAI_API_KEY in .env)");
         }
         if !accessibility_granted() {
             println!(

@@ -5,11 +5,11 @@
 //! simplicity is worth more than concurrency we would never use.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use parking_lot::Mutex;
 use zeroize::Zeroize;
 
@@ -17,7 +17,9 @@ use crate::audio::{AudioEngine, Clip};
 use crate::frontmost::{frontmost_app, TargetApp};
 use crate::history::History;
 use crate::inject::{self, PASTE_SETTLE_DELAY};
+use crate::hosted::{HostedPolisher, HostedTranscriber};
 use crate::polish::{OpenAiPolisher, Polisher};
+use crate::session;
 use crate::usage::{Units, Usage};
 use crate::settings::{self, Settings};
 use crate::transcribe::{OpenAiTranscriber, TranscriptionContext, Transcriber};
@@ -32,6 +34,8 @@ pub enum Status {
     Transcribing,
     Inserted { text: String },
     Failed { message: String },
+    /// Recording discarded, or transcription abandoned. Nothing was pasted.
+    Cancelled,
 }
 
 /// Anything that wants to know what the pipeline is doing — in the app, the
@@ -58,6 +62,11 @@ pub struct Pipeline {
     usage: Arc<Usage>,
     /// Read by the level ticker so it only emits while there is audio to show.
     recording: AtomicBool,
+    /// Set as soon as the user cancels, so the transcribe worker will not paste
+    /// even if the pipeline thread has not yet drained the Cancel event.
+    cancelled: AtomicBool,
+    /// True only while Recording or Transcribing — Escape is a no-op otherwise.
+    escape_arm: crate::escape::Arm,
 }
 
 impl Pipeline {
@@ -77,6 +86,8 @@ impl Pipeline {
             history,
             usage,
             recording: AtomicBool::new(false),
+            cancelled: AtomicBool::new(false),
+            escape_arm: crate::escape::new_arm(),
         }
     }
 
@@ -144,25 +155,185 @@ impl Pipeline {
         self.recording.load(Ordering::Relaxed)
     }
 
+    pub fn escape_arm(&self) -> crate::escape::Arm {
+        Arc::clone(&self.escape_arm)
+    }
+
+    /// Latch cancel immediately. The matching [`TriggerEvent::Cancel`] still
+    /// has to arrive so the event loop can discard audio or drop the worker.
+    pub fn mark_cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    fn announce(&self, status: Status) {
+        let live = matches!(status, Status::Recording | Status::Transcribing);
+        self.escape_arm.store(live, Ordering::SeqCst);
+        self.sink.publish(status);
+    }
+
     /// Consume trigger events until the channel closes. Blocks; call on its own thread.
-    pub fn run(&self, events: Receiver<TriggerEvent>) {
+    pub fn run(self: &Arc<Self>, events: Receiver<TriggerEvent>) {
         // Tracks our own view of the state. The audio engine ignores repeated
         // starts on its own, but key-repeat would otherwise re-capture the
         // target app many times per press.
         let mut recording = false;
+        let mut work: Option<Receiver<Result<Option<String>, String>>> = None;
 
-        for event in events {
-            match event {
-                TriggerEvent::Start if !recording => {
+        loop {
+            if work.is_some() {
+                self.pump_transcribe(&events, &mut work);
+                continue;
+            }
+
+            match events.recv() {
+                Ok(TriggerEvent::Start) if !recording => {
+                    self.cancelled.store(false, Ordering::SeqCst);
                     recording = true;
                     self.begin();
                 }
-                TriggerEvent::Start => {}
-                TriggerEvent::Stop if recording => {
+                Ok(TriggerEvent::Start) => {}
+                Ok(TriggerEvent::Stop) if recording => {
                     recording = false;
-                    self.finish();
+                    work = self.begin_transcribe();
                 }
-                TriggerEvent::Stop => {}
+                Ok(TriggerEvent::Stop) => {}
+                Ok(TriggerEvent::Cancel) if recording => {
+                    recording = false;
+                    self.abort_recording();
+                }
+                Ok(TriggerEvent::Cancel) => {
+                    // Idle: Escape and the overlay button must not flash Cancelled.
+                }
+                Err(_) => return,
+            }
+        }
+    }
+
+    /// Prefer Cancel over completion so a late cancel still wins the race.
+    fn pump_transcribe(
+        &self,
+        events: &Receiver<TriggerEvent>,
+        work: &mut Option<Receiver<Result<Option<String>, String>>>,
+    ) {
+        match events.try_recv() {
+            Ok(TriggerEvent::Cancel) => {
+                self.cancelled.store(true, Ordering::SeqCst);
+                self.announce_cancelled();
+                *work = None;
+                return;
+            }
+            Ok(_) => {}
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => {
+                *work = None;
+                return;
+            }
+        }
+
+        let Some(rx) = work.as_ref() else {
+            return;
+        };
+
+        match rx.try_recv() {
+            Ok(outcome) => {
+                *work = None;
+                self.settle_transcribe(outcome);
+                return;
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => {
+                *work = None;
+                self.fail("transcription stopped unexpectedly".into());
+                return;
+            }
+        }
+
+        match events.recv_timeout(Duration::from_millis(25)) {
+            Ok(TriggerEvent::Cancel) => {
+                self.cancelled.store(true, Ordering::SeqCst);
+                self.announce_cancelled();
+                *work = None;
+            }
+            Ok(_) => {}
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => {
+                *work = None;
+            }
+        }
+    }
+
+    fn announce_cancelled(&self) {
+        self.recording.store(false, Ordering::Relaxed);
+        self.announce(Status::Cancelled);
+    }
+
+    fn abort_recording(&self) {
+        self.recording.store(false, Ordering::Relaxed);
+        match self.engine.stop() {
+            Ok(mut clip) => clip.samples.zeroize(),
+            Err(err) => tracing::debug!("nothing to discard: {err:#}"),
+        }
+        self.announce(Status::Cancelled);
+    }
+
+    fn begin_transcribe(self: &Arc<Self>) -> Option<Receiver<Result<Option<String>, String>>> {
+        let started = Instant::now();
+        self.recording.store(false, Ordering::Relaxed);
+
+        let clip = match self.engine.stop() {
+            Ok(clip) => clip,
+            Err(err) => {
+                tracing::error!("could not stop recording: {err:#}");
+                self.fail(format!("Recording failed: {err}"));
+                return None;
+            }
+        };
+
+        let duration = clip.duration_secs();
+        self.announce(Status::Transcribing);
+
+        let (tx, rx) = mpsc::channel();
+        let me = Arc::clone(self);
+        let spawned = std::thread::Builder::new()
+            .name("telekey-transcribe".into())
+            .spawn(move || {
+                let result = me
+                    .transcribe_and_insert(clip)
+                    .map_err(|err| format!("{err:#}"));
+                if let Ok(Some(text)) = &result {
+                    tracing::info!(
+                        audio_secs = duration,
+                        total_ms = started.elapsed().as_millis() as u64,
+                        chars = text.len(),
+                        "dictation complete"
+                    );
+                }
+                let _ = tx.send(result);
+            });
+
+        if let Err(err) = spawned {
+            self.fail(format!("Could not transcribe: {err}"));
+            return None;
+        }
+
+        Some(rx)
+    }
+
+    fn settle_transcribe(&self, outcome: Result<Option<String>, String>) {
+        if self.cancelled.load(Ordering::SeqCst) {
+            self.announce_cancelled();
+            return;
+        }
+
+        match outcome {
+            Ok(Some(text)) => {
+                self.remember(&text);
+                self.announce(Status::Inserted { text });
+            }
+            Ok(None) => self.announce_cancelled(),
+            Err(message) => {
+                tracing::error!("dictation failed: {message}");
+                self.fail(message);
             }
         }
     }
@@ -170,7 +341,7 @@ impl Pipeline {
     fn begin(&self) {
         // Capture the target app before anything else can steal focus.
         let target = frontmost_app();
-        tracing::debug!(target = target.profile_key(), "dictation started");
+        tracing::info!(target = target.profile_key(), "dictation started");
         *self.target.lock() = target;
 
         // Blocks until the stream is actually live. Announcing "recording"
@@ -183,48 +354,19 @@ impl Pipeline {
         }
 
         self.recording.store(true, Ordering::Relaxed);
-        self.sink.publish(Status::Recording);
+        self.announce(Status::Recording);
     }
 
-    fn finish(&self) {
-        let started = Instant::now();
-        self.recording.store(false, Ordering::Relaxed);
-
-        let clip = match self.engine.stop() {
-            Ok(clip) => clip,
-            Err(err) => {
-                tracing::error!("could not stop recording: {err:#}");
-                self.fail(format!("Recording failed: {err}"));
-                return;
-            }
-        };
-
-        let duration = clip.duration_secs();
-        self.sink.publish(Status::Transcribing);
-
-        match self.transcribe_and_insert(clip) {
-            Ok(text) => {
-                tracing::info!(
-                    audio_secs = duration,
-                    total_ms = started.elapsed().as_millis() as u64,
-                    chars = text.len(),
-                    "dictation complete"
-                );
-                self.remember(&text);
-                self.sink.publish(Status::Inserted { text });
-            }
-            Err(err) => {
-                tracing::error!("dictation failed: {err:#}");
-                self.fail(format!("{err:#}"));
-            }
-        }
-    }
-
-    fn transcribe_and_insert(&self, mut clip: Clip) -> Result<String> {
+    fn transcribe_and_insert(&self, mut clip: Clip) -> Result<Option<String>> {
         let transcriber = self.transcriber()?;
         let context = self.context();
 
         let upload_started = Instant::now();
+        if self.cancelled.load(Ordering::SeqCst) {
+            clip.samples.zeroize();
+            return Ok(None);
+        }
+
         let result = transcriber.transcribe(&clip, &context);
 
         // The audio has served its purpose; wipe it whether or not the call
@@ -232,6 +374,10 @@ impl Pipeline {
         clip.samples.zeroize();
 
         let transcription = result?;
+        if self.cancelled.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
+
         tracing::debug!(
             api_ms = upload_started.elapsed().as_millis() as u64,
             billed_seconds = transcription.units.transcribe_seconds,
@@ -244,7 +390,15 @@ impl Pipeline {
             anyhow::bail!("nothing was transcribed — try speaking a little longer");
         }
 
+        if self.cancelled.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
+
         let text = self.format_for_target(text);
+
+        if self.cancelled.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
 
         let insert_started = Instant::now();
         self.insert(&text)?;
@@ -253,7 +407,7 @@ impl Pipeline {
             "text inserted"
         );
 
-        Ok(text)
+        Ok(Some(text))
     }
 
     /// Apply the target app's formatting profile, if it has one.
@@ -301,10 +455,20 @@ impl Pipeline {
             return Ok(Arc::clone(existing));
         }
 
-        let key = settings::load_api_key()?.context("No OpenAI API key set")?;
-        let polisher: Arc<dyn Polisher> = Arc::new(OpenAiPolisher::new(key)?);
-        *cached = Some(Arc::clone(&polisher));
-        Ok(polisher)
+        if session::is_signed_in() {
+            let polisher: Arc<dyn Polisher> = Arc::new(HostedPolisher::new()?);
+            *cached = Some(Arc::clone(&polisher));
+            return Ok(polisher);
+        }
+
+        let key = settings::load_api_key()?;
+        if let Some(key) = key {
+            let polisher: Arc<dyn Polisher> = Arc::new(OpenAiPolisher::new(key)?);
+            *cached = Some(Arc::clone(&polisher));
+            return Ok(polisher);
+        }
+
+        anyhow::bail!("No OpenAI API key set")
     }
 
     /// Append to history, if the user keeps it. Never fatal: the text is
@@ -357,23 +521,34 @@ impl Pipeline {
             return Ok(Arc::clone(existing));
         }
 
-        let key = settings::load_api_key()?
-            .context("No OpenAI API key set — add one in TeleKey's settings")?;
+        // Signed-in credits take precedence. A leftover BYOK key used to hide
+        // the hosted path, which made "I signed in" look broken.
+        if session::is_signed_in() {
+            let transcriber: Arc<dyn Transcriber> = Arc::new(HostedTranscriber::new()?);
+            *cached = Some(Arc::clone(&transcriber));
+            return Ok(transcriber);
+        }
 
-        let transcriber: Arc<dyn Transcriber> = Arc::new(OpenAiTranscriber::new(key)?);
-        *cached = Some(Arc::clone(&transcriber));
-        Ok(transcriber)
+        let key = settings::load_api_key()?;
+        if let Some(key) = key {
+            let transcriber: Arc<dyn Transcriber> = Arc::new(OpenAiTranscriber::new(key)?);
+            *cached = Some(Arc::clone(&transcriber));
+            return Ok(transcriber);
+        }
+
+        anyhow::bail!("No OpenAI API key set — add one in TeleKey's settings, or sign in")
     }
 
     fn fail(&self, message: String) {
         self.recording.store(false, Ordering::Relaxed);
-        self.sink.publish(Status::Failed { message });
+        self.announce(Status::Failed { message });
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::TARGET_SAMPLE_RATE;
 
     fn test_usage() -> Arc<Usage> {
         let dir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
@@ -459,5 +634,155 @@ mod tests {
         });
 
         assert_eq!(pipeline.context().keywords, vec!["Zustand".to_string()]);
+    }
+
+    fn inject(pipeline: &Pipeline, transcriber: Arc<dyn Transcriber>) {
+        *pipeline.transcriber.lock() = Some(transcriber);
+    }
+
+    fn silent_clip() -> Clip {
+        Clip {
+            samples: vec![0.01; TARGET_SAMPLE_RATE as usize / 5],
+        }
+    }
+
+    struct ScriptedTranscriber {
+        text: String,
+        units: Units,
+        state: std::sync::Mutex<Gate>,
+        cv: std::sync::Condvar,
+    }
+
+    #[derive(Default)]
+    struct Gate {
+        started: bool,
+        blocked: bool,
+    }
+
+    impl ScriptedTranscriber {
+        fn immediate(text: &str, units: Units) -> Arc<Self> {
+            Arc::new(Self {
+                text: text.into(),
+                units,
+                state: std::sync::Mutex::new(Gate::default()),
+                cv: std::sync::Condvar::new(),
+            })
+        }
+
+        fn gated(text: &str, units: Units) -> Arc<Self> {
+            Arc::new(Self {
+                text: text.into(),
+                units,
+                state: std::sync::Mutex::new(Gate {
+                    started: false,
+                    blocked: true,
+                }),
+                cv: std::sync::Condvar::new(),
+            })
+        }
+
+        fn wait_until_started(&self) {
+            let mut gate = self.state.lock().unwrap();
+            while !gate.started {
+                gate = self.cv.wait(gate).unwrap();
+            }
+        }
+
+        fn release(&self) {
+            let mut gate = self.state.lock().unwrap();
+            gate.blocked = false;
+            self.cv.notify_all();
+        }
+    }
+
+    impl Transcriber for ScriptedTranscriber {
+        fn transcribe(
+            &self,
+            _clip: &Clip,
+            _context: &TranscriptionContext,
+        ) -> Result<crate::transcribe::Transcription> {
+            let mut gate = self.state.lock().unwrap();
+            gate.started = true;
+            self.cv.notify_all();
+            while gate.blocked {
+                gate = self.cv.wait(gate).unwrap();
+            }
+            Ok(crate::transcribe::Transcription {
+                text: self.text.clone(),
+                units: self.units,
+            })
+        }
+    }
+
+    #[test]
+    fn cancelled_status_serialises_for_the_overlay() {
+        let json = serde_json::to_value(Status::Cancelled).unwrap();
+        assert_eq!(json, serde_json::json!({ "kind": "cancelled" }));
+    }
+
+    #[test]
+    fn cancel_before_upload_skips_transcription_and_does_not_meter() {
+        let pipeline = Pipeline::new(
+            Settings::default(),
+            Arc::new(NullSink),
+            test_history(),
+            test_usage(),
+        );
+        inject(
+            &pipeline,
+            ScriptedTranscriber::immediate("should not run", Units::transcription(3)),
+        );
+        pipeline.mark_cancel();
+
+        let result = pipeline.transcribe_and_insert(silent_clip()).unwrap();
+        assert!(result.is_none());
+        assert_eq!(pipeline.usage().today().dictations, 0);
+    }
+
+    #[test]
+    fn cancel_during_upload_does_not_paste_or_meter() {
+        let pipeline = Arc::new(Pipeline::new(
+            Settings::default(),
+            Arc::new(NullSink),
+            test_history(),
+            test_usage(),
+        ));
+        let transcriber = ScriptedTranscriber::gated("hello", Units::transcription(3));
+        inject(&pipeline, Arc::clone(&transcriber) as Arc<dyn Transcriber>);
+
+        let worker = Arc::clone(&pipeline);
+        let handle = std::thread::spawn(move || worker.transcribe_and_insert(silent_clip()));
+
+        transcriber.wait_until_started();
+        pipeline.mark_cancel();
+        transcriber.release();
+
+        let result = handle.join().unwrap().unwrap();
+        assert!(result.is_none());
+        assert_eq!(pipeline.usage().today().dictations, 0);
+    }
+
+    #[test]
+    fn cancel_while_idle_does_not_publish_cancelled() {
+        let sink = Arc::new(RecordingSink::default());
+        let pipeline = Arc::new(Pipeline::new(
+            Settings::default(),
+            Arc::clone(&sink) as Arc<dyn StatusSink>,
+            test_history(),
+            test_usage(),
+        ));
+        let (tx, rx) = mpsc::channel();
+        let worker = Arc::clone(&pipeline);
+        let thread = std::thread::spawn(move || worker.run(rx));
+
+        tx.send(TriggerEvent::Cancel).unwrap();
+        drop(tx);
+        thread.join().unwrap();
+
+        assert!(
+            !sink.seen.lock().iter().any(|s| *s == Status::Cancelled),
+            "idle cancel leaked a status: {:?}",
+            sink.seen.lock()
+        );
     }
 }

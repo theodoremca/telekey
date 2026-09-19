@@ -16,7 +16,7 @@ use std::sync::mpsc;
 
 use anyhow::{bail, Result};
 
-use crate::trigger::TriggerEvent;
+use crate::trigger::{Bus, TriggerEvent};
 
 /// `kCGEventFlagMaskSecondaryFn`. Fn shows up here and nowhere else.
 #[cfg(target_os = "macos")]
@@ -52,7 +52,7 @@ pub fn request_input_monitoring() -> bool {
 
 /// Start watching for Fn. Returns once the tap is installed and running.
 #[cfg(target_os = "macos")]
-pub fn spawn(tx: mpsc::Sender<TriggerEvent>) -> Result<()> {
+pub fn spawn(bus: Bus) -> Result<()> {
     if !input_monitoring_granted() {
         bail!("Input Monitoring permission is not granted");
     }
@@ -63,7 +63,7 @@ pub fn spawn(tx: mpsc::Sender<TriggerEvent>) -> Result<()> {
     // the life of the process.
     std::thread::Builder::new()
         .name("telekey-fn-tap".into())
-        .spawn(move || run_tap(tx, ready_tx))
+        .spawn(move || run_tap(bus, ready_tx))
         .map_err(|err| anyhow::anyhow!("could not spawn the Fn watcher: {err}"))?;
 
     match ready_rx.recv() {
@@ -77,14 +77,14 @@ pub fn spawn(tx: mpsc::Sender<TriggerEvent>) -> Result<()> {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn spawn(_tx: mpsc::Sender<TriggerEvent>) -> Result<()> {
+pub fn spawn(_bus: Bus) -> Result<()> {
     bail!("hold-Fn is only available on macOS")
 }
 
 /// Shared with the C callback through `user_info`.
 #[cfg(target_os = "macos")]
 struct TapState {
-    tx: mpsc::Sender<TriggerEvent>,
+    bus: Bus,
     /// Whether Fn was down at the previous flag change. `FlagsChanged` fires for
     /// every modifier, so the edge has to be derived rather than assumed.
     fn_was_down: bool,
@@ -93,7 +93,7 @@ struct TapState {
 }
 
 #[cfg(target_os = "macos")]
-fn run_tap(tx: mpsc::Sender<TriggerEvent>, ready: mpsc::Sender<Result<(), String>>) {
+fn run_tap(bus: Bus, ready: mpsc::Sender<Result<(), String>>) {
     use objc2_core_foundation::{kCFRunLoopCommonModes, CFMachPort, CFRunLoop};
     use objc2_core_graphics::{CGEvent, CGEventMask, CGEventTapLocation, CGEventTapOptions,
                               CGEventTapPlacement, CGEventType};
@@ -101,7 +101,7 @@ fn run_tap(tx: mpsc::Sender<TriggerEvent>, ready: mpsc::Sender<Result<(), String
     // Leaked on purpose: the callback holds this pointer for the life of the
     // process, and the thread never unwinds in normal operation.
     let state = Box::leak(Box::new(TapState {
-        tx,
+        bus,
         fn_was_down: false,
         tap: None,
     }));
@@ -187,17 +187,15 @@ unsafe extern "C-unwind" fn on_event(
     let fn_down = flags.0 & FN_FLAG != 0;
 
     // FlagsChanged fires for every modifier, so only act on a Fn edge.
-    if fn_down != state.fn_was_down {
-        state.fn_was_down = fn_down;
-        let trigger = if fn_down {
-            TriggerEvent::Start
-        } else {
-            TriggerEvent::Stop
-        };
-        if state.tx.send(trigger).is_err() {
-            tracing::error!("trigger receiver is gone; dropping {trigger:?}");
+        if fn_down != state.fn_was_down {
+            state.fn_was_down = fn_down;
+            let trigger = if fn_down {
+                TriggerEvent::Start
+            } else {
+                TriggerEvent::Stop
+            };
+            state.bus.emit(trigger);
         }
-    }
 
     event_ptr
 }
@@ -237,7 +235,7 @@ mod tests {
         // must report why, not leave the user pressing a key that does nothing.
         if !input_monitoring_granted() {
             let (tx, _rx) = mpsc::channel();
-            let err = spawn(tx).unwrap_err();
+            let err = spawn(crate::trigger::Bus::new(tx)).unwrap_err();
             assert!(
                 err.to_string().contains("Input Monitoring"),
                 "unhelpful message: {err}"

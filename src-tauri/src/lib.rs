@@ -7,9 +7,11 @@
 pub mod audio;
 pub mod cli;
 pub mod commands;
+pub mod escape;
 pub mod fn_key;
 pub mod frontmost;
 pub mod history;
+pub mod hosted;
 pub mod inject;
 pub mod overlay;
 pub mod panel;
@@ -18,6 +20,7 @@ pub mod pipeline;
 pub mod polish;
 pub mod settings;
 pub mod setup;
+pub mod session;
 pub mod signing;
 pub mod transcribe;
 pub mod usage;
@@ -35,6 +38,7 @@ use settings::Settings;
 /// Event names the overlay listens on.
 pub const STATUS_EVENT: &str = "telekey://status";
 pub const LEVEL_EVENT: &str = "telekey://level";
+pub const SESSION_EVENT: &str = "telekey://session";
 
 /// How often the input level is pushed to the overlay while recording.
 /// 30 Hz is smooth to the eye and cheap over IPC.
@@ -52,11 +56,33 @@ impl StatusSink for TauriSink {
         // The overlay has to be visible before it can render the state, so show
         // first and emit second.
         match &status {
-            Status::Recording => self.overlay.show(),
-            Status::Transcribing => {}
-            Status::Inserted { .. } => self.overlay.linger_after_success(),
-            Status::Failed { .. } => self.overlay.linger_after_failure(),
-            Status::Idle => self.overlay.hide(),
+            Status::Recording => {
+                self.overlay.set_clickable(true);
+                self.overlay.show();
+            }
+            Status::Transcribing => self.overlay.set_clickable(true),
+            Status::Inserted { .. } => {
+                self.overlay.set_clickable(false);
+                self.overlay.linger_after_success();
+            }
+            Status::Failed { message } => {
+                let buy = message.to_ascii_lowercase().contains("credit");
+                self.overlay.set_clickable(buy);
+                self.overlay.linger_after_failure();
+                if buy {
+                    if let Err(err) = open_main_window(&self.app, "usage") {
+                        tracing::warn!("could not open credits: {err}");
+                    }
+                }
+            }
+            Status::Cancelled => {
+                self.overlay.set_clickable(false);
+                self.overlay.linger_after_cancel();
+            }
+            Status::Idle => {
+                self.overlay.set_clickable(false);
+                self.overlay.hide();
+            }
         }
 
         if let Err(err) = self.app.emit(STATUS_EVENT, &status) {
@@ -81,6 +107,7 @@ fn spawn_level_ticker(app: AppHandle, pipeline: Arc<Pipeline>) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     init_tracing();
+    session::hydrate_env();
 
     let config_dir = settings::config_dir().unwrap_or_else(|err| {
         tracing::error!("could not locate the config directory: {err:#}");
@@ -88,12 +115,15 @@ pub fn run() {
     });
     let loaded = load_settings();
     let (trigger_tx, trigger_rx) = mpsc::channel();
+    let trigger_bus = trigger::Bus::new(trigger_tx);
     // The Fn tap feeds the same channel as the accelerator, so both triggers
     // are live at once and losing one does not cost the other.
-    let fn_tx = trigger_tx.clone();
+    let fn_bus = trigger_bus.clone();
+    let escape_bus = trigger_bus.clone();
 
     tauri::Builder::default()
-        .plugin(trigger::plugin(trigger_tx))
+        .plugin(trigger::plugin(trigger_bus.clone()))
+        .plugin(tauri_plugin_deep_link::init())
         .invoke_handler(tauri::generate_handler![
             commands::load_settings,
             commands::save_settings,
@@ -117,6 +147,15 @@ pub fn run() {
             commands::setup_state,
             commands::prompt_for_microphone,
             commands::restart_app,
+            commands::cancel_dictation,
+            commands::session_status,
+            commands::set_session,
+            commands::clear_session,
+            commands::open_hosted_login,
+            commands::open_hosted_account,
+            commands::hosted_account,
+            commands::create_checkout,
+            commands::open_credits,
         ])
         .setup(move |app| {
             // A menubar app, not a dock app.
@@ -154,14 +193,26 @@ pub fn run() {
 
             spawn_level_ticker(app.handle().clone(), Arc::clone(&pipeline));
 
+            tracing::info!(
+                api = session::api_base().as_deref(),
+                site = session::site_url().as_deref(),
+                shortcut = %loaded.shortcut,
+                fn_trigger = loaded.fn_trigger,
+                "hosted endpoints"
+            );
+
             if let Err(err) = trigger::rebind(app.handle(), &loaded.shortcut) {
                 tracing::error!("could not bind the push-to-talk shortcut: {err:#}");
             }
 
             if loaded.fn_trigger {
+                if !fn_key::input_monitoring_granted() {
+                    tracing::info!("asking for Input Monitoring so hold-Fn can work");
+                    let _ = fn_key::request_input_monitoring();
+                }
                 // Failing here is not fatal: the shortcut above still works, so
                 // the user loses the nicer gesture rather than dictation.
-                if let Err(err) = fn_key::spawn(fn_tx) {
+                if let Err(err) = fn_key::spawn(fn_bus) {
                     tracing::warn!(
                         "hold-Fn is enabled but could not start ({err:#}); \
                          the keyboard shortcut still works"
@@ -204,7 +255,7 @@ pub fn run() {
                 let outstanding = setup::evaluate(
                     permissions_at_launch,
                     permissions::current(),
-                    commands::ApiKeyStatus::read().is_set,
+                    commands::credentials_ready(),
                     fn_trigger,
                 );
                 // Worth a line either way: "the setup window did not appear" and
@@ -233,13 +284,23 @@ pub fn run() {
             });
 
             let worker = Arc::clone(&pipeline);
+            if let Err(err) = escape::spawn(escape_bus, pipeline.escape_arm()) {
+                tracing::warn!("Escape-to-cancel is unavailable ({err:#}); the overlay button still works");
+            }
+
             std::thread::Builder::new()
                 .name("telekey-pipeline".into())
                 .spawn(move || worker.run(trigger_rx))?;
 
-            app.manage(pipeline);
+            app.manage(trigger_bus);
+            app.manage(Arc::clone(&pipeline));
+            listen_for_hosted_session(app.handle(), Arc::clone(&pipeline));
 
-            tracing::info!(shortcut = %loaded.shortcut, "telekey ready");
+            tracing::info!(
+                shortcut = %loaded.shortcut,
+                fn_trigger = loaded.fn_trigger,
+                "telekey ready"
+            );
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -302,13 +363,52 @@ pub fn open_setup_window(app: &AppHandle) -> tauri::Result<()> {
     .title("TeleKey Setup")
     // Tall enough for the worst case — four rows and the restart banner —
     // because a checklist that scrolls hides the item you have not done yet.
-    .inner_size(460.0, 700.0)
+    .inner_size(460.0, 760.0)
     .resizable(false)
     .center()
     .build()?;
 
     window.set_focus()?;
     Ok(())
+}
+
+/// `telekey://auth?…` lands the Firebase session in the Keychain.
+fn listen_for_hosted_session(app: &AppHandle, pipeline: Arc<Pipeline>) {
+    use tauri_plugin_deep_link::DeepLinkExt;
+
+    let handle = app.clone();
+    let pipe = Arc::clone(&pipeline);
+    app.deep_link().on_open_url(move |event| {
+        apply_auth_urls(&handle, &pipe, event.urls());
+    });
+
+    match app.deep_link().get_current() {
+        Ok(Some(urls)) => apply_auth_urls(app, &pipeline, urls),
+        Ok(None) => {}
+        Err(err) => tracing::debug!("no launch URL: {err}"),
+    }
+}
+
+fn apply_auth_urls(app: &AppHandle, pipeline: &Pipeline, urls: Vec<url::Url>) {
+    for url in urls {
+        match session::session_from_callback_url(url.as_str()) {
+            Ok(next) => {
+                if let Err(err) = session::store(&next) {
+                    tracing::warn!("could not store the hosted session: {err:#}");
+                    continue;
+                }
+                pipeline.invalidate_transcriber();
+                if let Err(err) = app.emit(SESSION_EVENT, session::status()) {
+                    tracing::warn!("could not emit session: {err}");
+                }
+                tracing::info!("hosted session stored");
+                if let Err(err) = open_main_window(app, "usage") {
+                    tracing::warn!("could not open credits after sign-in: {err}");
+                }
+            }
+            Err(err) => tracing::debug!("ignored URL: {err:#}"),
+        }
+    }
 }
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {

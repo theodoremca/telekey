@@ -152,9 +152,14 @@ setting up.
 The API key is read in this order:
 
 1. `OPENAI_API_KEY` in the environment
-2. a `.env` file — `$TELEKEY_ENV_FILE`, `./.env`, `../.env`, then
+2. a `.env` file — `./.env`, `../.env`, then
    `~/Library/Application Support/telekey/.env`
 3. the Keychain
+
+Hosted URLs (`TELEKEY_API_BASE`, `TELEKEY_SITE_URL`) come from `.env` plus
+`.env.staging` or `.env.production`, chosen by `TELEKEY_STAGE` in `.env`
+(`staging` is the daily default). `$TELEKEY_ENV_FILE` replaces that stage
+overlay. Stripe never belongs in these files.
 
 Only the last two work for an installed `.app`, whose working directory is not
 the project. For distribution, the Keychain is the right answer — the settings

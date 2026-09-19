@@ -11,7 +11,7 @@
 //! Monitoring permission.
 
 use std::str::FromStr;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 
 use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
@@ -25,6 +25,32 @@ pub enum TriggerEvent {
     Start,
     /// Key came up — stop capturing and transcribe.
     Stop,
+    /// Discard the recording or abandon an in-flight transcription. Never paste.
+    Cancel,
+}
+
+/// Fan-in for every trigger: the chord, hold-Fn, Escape, and the overlay button.
+///
+/// `mpsc::Sender` is `Send` but not `Sync`, so the mutex is what lets the
+/// shortcut plugin, the event taps, and a Tauri command all share one channel.
+#[derive(Clone)]
+pub struct Bus {
+    tx: Arc<Mutex<mpsc::Sender<TriggerEvent>>>,
+}
+
+impl Bus {
+    pub fn new(tx: mpsc::Sender<TriggerEvent>) -> Self {
+        Self {
+            tx: Arc::new(Mutex::new(tx)),
+        }
+    }
+
+    pub fn emit(&self, event: TriggerEvent) {
+        let tx = self.tx.lock().clone();
+        if tx.send(event).is_err() {
+            tracing::error!("trigger receiver is gone; dropping {event:?}");
+        }
+    }
 }
 
 /// Parse a Tauri accelerator string such as `Ctrl+Alt+Space`.
@@ -33,23 +59,15 @@ pub fn parse_accelerator(accelerator: &str) -> Result<Shortcut> {
         .map_err(|err| anyhow!("'{accelerator}' is not a valid shortcut: {err}"))
 }
 
-/// Build the plugin, forwarding press/release to `tx`.
-///
-/// The handler must be `Send + Sync`, and `mpsc::Sender` is only `Send`, hence
-/// the mutex.
-pub fn plugin<R: Runtime>(tx: mpsc::Sender<TriggerEvent>) -> TauriPlugin<R> {
-    let tx = Mutex::new(tx);
-
+/// Build the plugin, forwarding press/release onto the shared bus.
+pub fn plugin<R: Runtime>(bus: Bus) -> TauriPlugin<R> {
     tauri_plugin_global_shortcut::Builder::new()
         .with_handler(move |_app, _shortcut, event| {
             let trigger = match event.state {
                 ShortcutState::Pressed => TriggerEvent::Start,
                 ShortcutState::Released => TriggerEvent::Stop,
             };
-
-            if tx.lock().send(trigger).is_err() {
-                tracing::error!("trigger receiver is gone; dropping {trigger:?}");
-            }
+            bus.emit(trigger);
         })
         .build()
 }
@@ -114,5 +132,12 @@ mod tests {
         // Documents the design limitation: hold-Fn style triggers need an event
         // tap, not an accelerator.
         assert!(parse_accelerator("Alt").is_err());
+    }
+
+    #[test]
+    fn the_bus_delivers_cancel() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        Bus::new(tx).emit(TriggerEvent::Cancel);
+        assert_eq!(rx.recv().unwrap(), TriggerEvent::Cancel);
     }
 }

@@ -102,8 +102,10 @@ body {
   color: var(--bad);
 }
 
-.verdict.ready {
-  color: var(--ok);
+.mastheadActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .banner {
@@ -695,4 +697,11 @@ select.input {
   margin-top: 10px;
   font-size: 12px;
   color: var(--faint);
+}
+
+.packRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 14px 12px;
 }

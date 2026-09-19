@@ -164,9 +164,64 @@ pub fn setup_state(
     setup::evaluate(
         at_launch.0,
         permissions::current(),
-        ApiKeyStatus::read().is_set,
+        credentials_ready(),
         pipeline.settings().fn_trigger,
     )
+}
+
+pub fn credentials_ready() -> bool {
+    ApiKeyStatus::read().is_set || crate::session::is_signed_in()
+}
+
+#[tauri::command]
+pub fn session_status() -> crate::session::SessionStatus {
+    crate::session::status()
+}
+
+#[tauri::command]
+pub fn set_session(
+    pipeline: State<'_, Arc<Pipeline>>,
+    session: crate::session::Session,
+) -> Result<crate::session::SessionStatus, String> {
+    crate::session::store(&session).map_err(to_message)?;
+    pipeline.invalidate_transcriber();
+    Ok(crate::session::status())
+}
+
+#[tauri::command]
+pub fn clear_session(
+    pipeline: State<'_, Arc<Pipeline>>,
+) -> Result<crate::session::SessionStatus, String> {
+    crate::session::clear().map_err(to_message)?;
+    pipeline.invalidate_transcriber();
+    Ok(crate::session::status())
+}
+
+#[tauri::command]
+pub fn open_hosted_login() -> Result<(), String> {
+    crate::session::open_hosted_login().map_err(to_message)
+}
+
+#[tauri::command]
+pub fn open_hosted_account() -> Result<(), String> {
+    crate::session::open_hosted_account().map_err(to_message)
+}
+
+#[tauri::command]
+pub fn hosted_account() -> Result<crate::hosted::HostedAccount, String> {
+    crate::hosted::fetch_account().map_err(to_message)
+}
+
+/// Start Stripe Checkout in the browser. The webhook credits the ledger.
+#[tauri::command]
+pub fn create_checkout(pack_id: String) -> Result<(), String> {
+    let url = crate::hosted::create_checkout(&pack_id).map_err(to_message)?;
+    crate::session::open_in_browser(&url).map_err(to_message)
+}
+
+#[tauri::command]
+pub fn open_credits(app: tauri::AppHandle) -> Result<(), String> {
+    crate::open_main_window(&app, "usage").map_err(|err| err.to_string())
 }
 
 /// Trigger macOS's own microphone prompt.
@@ -189,6 +244,16 @@ pub fn prompt_for_microphone(pipeline: State<'_, Arc<Pipeline>>) {
 #[tauri::command]
 pub fn restart_app(app: AppHandle) {
     app.restart()
+}
+
+/// Discard an in-flight recording or abandon transcription. Never pastes.
+#[tauri::command]
+pub fn cancel_dictation(
+    pipeline: State<'_, Arc<Pipeline>>,
+    bus: State<'_, crate::trigger::Bus>,
+) {
+    pipeline.mark_cancel();
+    bus.emit(crate::trigger::TriggerEvent::Cancel);
 }
 
 /// Whether this build's signature can hold a permission grant.
@@ -351,5 +416,21 @@ mod tests {
         let message = to_message(err);
         assert!(message.contains("outer context"), "got: {message}");
         assert!(message.contains("root cause"), "got: {message}");
+    }
+
+    #[test]
+    fn hosted_account_serialises_camel_case() {
+        let json = serde_json::to_value(crate::hosted::HostedAccount {
+            email: Some("you@example.com".into()),
+            balance_cents: 500,
+            packs: vec![crate::hosted::CreditPack {
+                id: "starter".into(),
+                name: "$5".into(),
+                cents: 500,
+            }],
+        })
+        .unwrap();
+        let keys: Vec<_> = json.as_object().unwrap().keys().cloned().collect();
+        assert_eq!(keys, vec!["balanceCents", "email", "packs"]);
     }
 }

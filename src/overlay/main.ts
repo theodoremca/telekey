@@ -8,13 +8,15 @@
  */
 
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 
 type Status =
   | { kind: "idle" }
   | { kind: "recording" }
   | { kind: "transcribing" }
   | { kind: "inserted"; text: string }
-  | { kind: "failed"; message: string };
+  | { kind: "failed"; message: string }
+  | { kind: "cancelled" };
 
 const STATUS_EVENT = "telekey://status";
 const LEVEL_EVENT = "telekey://level";
@@ -30,6 +32,7 @@ const canvas = document.getElementById("trace") as HTMLCanvasElement;
 const timerEl = document.getElementById("timer") as HTMLElement;
 const messageEl = document.getElementById("message") as HTMLElement;
 const liveEl = document.getElementById("live") as HTMLElement;
+const cancelEl = document.getElementById("cancel") as HTMLButtonElement;
 
 const context = canvas.getContext("2d");
 
@@ -157,6 +160,11 @@ function setState(next: Status) {
       messageEl.textContent = next.message;
       announce(next.message);
       break;
+
+    case "cancelled":
+      messageEl.textContent = "Cancelled";
+      announce("Cancelled");
+      break;
   }
 }
 
@@ -173,6 +181,23 @@ function start() {
   resizeCanvas();
   window.addEventListener("resize", resizeCanvas);
   frame = requestAnimationFrame(tick);
+
+  cancelEl.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    invoke("cancel_dictation").catch((error: unknown) => {
+      console.warn("could not cancel dictation", error);
+    });
+  });
+
+  capsule.addEventListener("click", () => {
+    if (state !== "failed") return;
+    const text = messageEl.textContent ?? "";
+    if (!text.toLowerCase().includes("credit")) return;
+    invoke("open_credits").catch((error: unknown) => {
+      console.warn("could not open credits", error);
+    });
+  });
 
   // Outside the Tauri runtime (previewing the overlay in a browser) there is no
   // event bus; the panel should still render so the design can be checked.

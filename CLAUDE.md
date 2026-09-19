@@ -13,7 +13,7 @@ not obvious from the code. `README.md` is for users, `RELEASING.md` for shipping
 ## Commands
 
 All from the repo root unless stated.
-
+:
 ### Daily loop (macOS)
 
 ```bash
@@ -93,6 +93,7 @@ next rebuild. `stable` means they survive.
 | Transcript history | `…/telekey/history.json` (`0600`) |
 | Usage counters | `…/telekey/usage.json` (`0600`, tiered rollup) |
 | API key | Keychain, service `telekey`, account `openai-api-key` — or `OPENAI_API_KEY` env / a `.env` file, which win over the Keychain |
+| Hosted session | Keychain, service `telekey`, account `hosted-session` (Firebase refresh + ID token). Arrives over `telekey://auth` after the website signs in. |
 | Logs | `~/Library/Logs/telekey.log` when launched by `run.sh`; otherwise stdout |
 | Built app | `src-tauri/target/release/bundle/macos/TeleKey.app` |
 | Installed app | `/Applications/TeleKey.app` — **TCC keys on this path**, so test the installed copy |
@@ -110,15 +111,28 @@ ever reports losing settings or their key on upgrade, `adopt_legacy_dir` and
 
 ### Environment variables
 
-| Variable | Effect |
-|---|---|
-| `APPLE_SIGNING_IDENTITY` | Tauri signs the bundle with this; also honoured by `dev-sign.sh` |
-| `TELEKEY_DEV_IDENTITY` | Overrides the certificate `dev-sign.sh` picks |
-| `TELEKEY_LOG` | `tracing` filter, e.g. `telekey=debug` (default `telekey=info,warn`) |
-| `TELEKEY_LOG_FILE` | Where `run.sh` sends output |
-| `TELEKEY_ENV_FILE` | Explicit `.env` path, checked first |
-| `OPENAI_API_KEY` | Highest-priority key source |
-| `APPLE_ID` `APPLE_PASSWORD` `APPLE_TEAM_ID` / `APPLE_API_KEY` `APPLE_API_ISSUER` `APPLE_API_KEY_PATH` | Notarisation, `release.sh` |
+Desktop loads **`.env` then `.env.staging` or `.env.production`**, chosen by `TELEKEY_STAGE` in `.env` (`staging` is the daily default). A shell `TELEKEY_STAGE` still wins. `TELEKEY_ENV_FILE` replaces the stage overlay. Stripe and TeleKey’s OpenAI key never go in these files.
+
+| Variable | Where | Effect |
+|---|---|---|
+| `APPLE_SIGNING_IDENTITY` | shell | Tauri signs the bundle; also honoured by `dev-sign.sh` |
+| `TELEKEY_DEV_IDENTITY` | shell | Overrides the certificate `dev-sign.sh` picks |
+| `TELEKEY_LOG` | shell | `tracing` filter, e.g. `telekey=debug` |
+| `TELEKEY_LOG_FILE` | shell | Where `run.sh` sends output |
+| `TELEKEY_STAGE` | desktop `.env` (or shell) | `staging` (daily default) or `production`. Picks `.env.staging` / `.env.production` |
+| `TELEKEY_ENV_FILE` | shell | Explicit overlay env path, instead of `.env.staging` / `.env.production` |
+| `OPENAI_API_KEY` | desktop `.env` / Keychain | Optional BYOK. Not TeleKey’s hosted key |
+| `TELEKEY_FIREBASE_API_KEY` | desktop `.env` | Firebase **web** API key, for ID-token refresh |
+| `TELEKEY_API_BASE` | `.env.staging` / `.env.production` | Functions origin, e.g. `…cloudfunctions.net/staging` |
+| `TELEKEY_SITE_URL` | `.env.staging` / `.env.production` | Live website origin for Sign in (`https://telekey-staging.vercel.app` / `https://telekey.vercel.app`) |
+| `NEXT_PUBLIC_TELEKEY_API_BASE` | `web/.env.development` or `web/.env.production` | Same Functions origin for the website |
+| Functions secrets | `functions/.env` | `OPENAI_API_KEY`, `STRIPE_SECRET_KEY_STAGING`, `STRIPE_SECRET_KEY_PRODUCTION`, `STRIPE_WEBHOOK_SECRET_STAGING`, `STRIPE_WEBHOOK_SECRET_PRODUCTION`. Gitignored; `firebase deploy` reads it from disk. Copy `functions/.env.example`. |
+| `TELEKEY_SITE_URL_STAGING` / `_PRODUCTION` | `functions/.env` | Checkout return URLs |
+| `APPLE_ID` `APPLE_PASSWORD` `APPLE_TEAM_ID` / `APPLE_API_KEY` `APPLE_API_ISSUER` `APPLE_API_KEY_PATH` | shell | Notarisation, `release.sh` |
+
+Firestore: `staging-users` / `production-users`, `staging-packs` / `production-packs`.
+
+Webhooks: `…/staging/stripeWebhook` (test) and `…/api/stripeWebhook` (live).
 
 ---
 
@@ -203,15 +217,23 @@ second request. `Literal` is local rules. Cached tokens bill at 10% — see
 
 ```
 trigger.rs (chord)  ─┐
-fn_key.rs   (Fn)    ─┴─► mpsc ─► pipeline.rs (worker thread)
+fn_key.rs   (Fn)     │
+escape.rs   (Esc)    ┴─► mpsc ─► pipeline.rs (worker thread)
                                     │  frontmost.rs   which app to paste into
                                     │  audio.rs       cpal → 16 kHz mono → WAV in memory
                                     │  transcribe.rs  Transcriber trait → OpenAI
+                                    │  hosted.rs      same traits, via Cloud Functions
                                     │  polish.rs      Polisher trait, optional
                                     │  inject.rs      clipboard save → ⌘V → restore
                                     │  history.rs / usage.rs
                                     └─► StatusSink ─► overlay.rs ─► panel.rs (NSPanel)
 ```
+
+An OpenAI key in the Keychain still talks to OpenAI directly. A hosted session
+talks to `TELEKEY_API_BASE` (`…/staging` or `…/api`). Sign-in happens in the
+system browser (`web/`); `telekey://auth` stores the session. Cloud Functions
+hold the shared OpenAI key (from `functions/.env`) and the Firestore credit
+ledger, with `staging-` / `production-` collection prefixes.
 
 Three windows, each its own Vite entry: `index.html` (settings, history, usage),
 `overlay.html` (the recording HUD, an `NSPanel`), and `setup.html` (the

@@ -5,8 +5,10 @@ import {
   api,
   messageFrom,
   type ApiKeyStatus,
+  type HostedAccount,
   type Permissions,
   type Rates,
+  type SessionStatus,
   type Settings,
   type Signing,
 } from "./api";
@@ -30,17 +32,30 @@ export function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [permissions, setPermissions] = useState<Permissions | null>(null);
   const [keyStatus, setKeyStatus] = useState<ApiKeyStatus | null>(null);
+  const [session, setSession] = useState<SessionStatus | null>(null);
+  const [account, setAccount] = useState<HostedAccount | null>(null);
   const [device, setDevice] = useState<string | null>(null);
   const [signing, setSigning] = useState<Signing>("unknown");
   const [error, setError] = useState<string | null>(null);
 
   const refreshStatus = useCallback(async () => {
-    const [perms, key] = await Promise.all([
+    const [perms, key, nextSession] = await Promise.all([
       api.permissions(),
       api.apiKeyStatus(),
+      api.sessionStatus(),
     ]);
     setPermissions(perms);
     setKeyStatus(key);
+    setSession(nextSession);
+    if (nextSession.signedIn) {
+      try {
+        setAccount(await api.hostedAccount());
+      } catch {
+        setAccount(null);
+      }
+    } else {
+      setAccount(null);
+    }
   }, []);
 
   useEffect(() => {
@@ -85,6 +100,18 @@ export function App() {
     return () => stop?.();
   }, []);
 
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    listen("telekey://session", () => {
+      void refreshStatus().catch(() => {});
+    })
+      .then((unlisten) => {
+        stop = unlisten;
+      })
+      .catch(() => {});
+    return () => stop?.();
+  }, [refreshStatus]);
+
   const save = useCallback(async (next: Settings) => {
     try {
       setSettings(await api.saveSettings(next));
@@ -105,15 +132,36 @@ export function App() {
   }
 
   const ready =
-    permissions?.accessibility === "granted" && Boolean(keyStatus?.isSet);
+    permissions?.accessibility === "granted" &&
+    (Boolean(keyStatus?.isSet) || Boolean(session?.signedIn));
 
   return (
     <main className="page">
       <header className="masthead">
-        <h1>TeleKey</h1>
-        <p className={ready ? "verdict ready" : "verdict"}>
-          {ready ? "Ready to dictate" : "Setup incomplete"}
-        </p>
+        <div>
+          <h1>TeleKey</h1>
+          {session?.signedIn && (
+            <p className="note" style={{ margin: "4px 0 0" }}>
+              {account
+                ? `$${(account.balanceCents / 100).toFixed(2)} credits left`
+                : "Signed in"}
+            </p>
+          )}
+        </div>
+        <div className="mastheadActions">
+          <p className={ready ? "verdict ready" : "verdict"}>
+            {ready ? "Ready to dictate" : "Setup incomplete"}
+          </p>
+          {session?.signedIn ? (
+            <button className="primary" onClick={() => setTab("usage")}>
+              Buy credits
+            </button>
+          ) : (
+            <button className="primary" onClick={() => setTab("settings")}>
+              Sign in
+            </button>
+          )}
+        </div>
       </header>
 
       <nav className="tabs" role="tablist">
@@ -145,16 +193,28 @@ export function App() {
           settings={settings}
           permissions={permissions}
           keyStatus={keyStatus}
+          session={session}
+          account={account}
           device={device}
           signing={signing}
           onSave={save}
           onKeyChanged={setKeyStatus}
+          onSessionChanged={refreshStatus}
         />
       ) : tab === "history" ? (
         <HistoryPanel shortcut={toGlyphs(settings.shortcut)} />
       ) : (
         <UsagePanel
           settings={settings}
+          hosted={
+            session?.signedIn
+              ? (account ?? {
+                  email: session.email,
+                  balanceCents: 0,
+                  packs: [],
+                })
+              : null
+          }
           onSaveRates={(rates: Rates) =>
             save({
               ...settings,

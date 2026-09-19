@@ -15,6 +15,7 @@ const ROWS: Array<{
   { label: "Recording", state: "recording" },
   { label: "Recording — over a dark app", state: "recording", dark: true },
   { label: "Transcribing", state: "transcribing" },
+  { label: "Cancelled", state: "cancelled", message: "Cancelled" },
   { label: "Inserted", state: "inserted", message: "23 words" },
   {
     label: "Failed",

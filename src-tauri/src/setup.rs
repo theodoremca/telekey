@@ -89,16 +89,19 @@ pub struct SetupState {
 }
 
 /// Work out what the setup window should show.
+///
+/// `credentials_ready` is true when there is an OpenAI key *or* a hosted
+/// session — either is enough to transcribe.
 pub fn evaluate(
     at_launch: Permissions,
     now: Permissions,
-    api_key_is_set: bool,
+    credentials_ready: bool,
     fn_trigger: bool,
 ) -> SetupState {
     let mut requirements = vec![
         Requirement {
             step: Step::ApiKey,
-            state: if api_key_is_set {
+            state: if credentials_ready {
                 StepState::Done
             } else {
                 StepState::Missing

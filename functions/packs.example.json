@@ -1,0 +1,42 @@
+{
+  "staging-packs": [
+    {
+      "id": "starter",
+      "name": "$5",
+      "cents": 500,
+      "stripePriceId": "price_test_starter"
+    },
+    {
+      "id": "plus",
+      "name": "$15",
+      "cents": 1500,
+      "stripePriceId": "price_test_plus"
+    },
+    {
+      "id": "pro",
+      "name": "$40",
+      "cents": 4000,
+      "stripePriceId": "price_test_pro"
+    }
+  ],
+  "production-packs": [
+    {
+      "id": "starter",
+      "name": "$5",
+      "cents": 500,
+      "stripePriceId": "price_live_starter"
+    },
+    {
+      "id": "plus",
+      "name": "$15",
+      "cents": 1500,
+      "stripePriceId": "price_live_plus"
+    },
+    {
+      "id": "pro",
+      "name": "$40",
+      "cents": 4000,
+      "stripePriceId": "price_live_pro"
+    }
+  ]
+}

@@ -66,8 +66,8 @@ pub struct Settings {
     pub rates_updated: String,
     /// Hold Fn to dictate, in addition to the shortcut above.
     ///
-    /// Off by default: it needs Input Monitoring, and turning it on unasked
-    /// would prompt for a permission the user never requested.
+    /// On by default: that is the gesture people try first. It needs Input
+    /// Monitoring, which the setup window asks for on first launch.
     #[serde(alias = "fn_trigger")]
     pub fn_trigger: bool,
 }
@@ -84,7 +84,7 @@ impl Default for Settings {
             profiles: Vec::new(),
             rates: Rates::default(),
             rates_updated: "2026-08-24".to_string(),
-            fn_trigger: false,
+            fn_trigger: true,
         }
     }
 }
@@ -217,7 +217,7 @@ impl std::fmt::Display for ApiKeySource {
 /// The config-dir entry is the one that works for an installed `.app`, whose
 /// working directory is not the project. The relative entries make `cargo run`
 /// and `bun tauri dev` both pick up a project-local file.
-fn env_file_candidates() -> Vec<PathBuf> {
+pub(crate) fn env_file_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
     if let Ok(explicit) = std::env::var("TELEKEY_ENV_FILE") {
@@ -229,6 +229,21 @@ fn env_file_candidates() -> Vec<PathBuf> {
         candidates.push(dir.join(".env"));
     }
 
+    candidates
+}
+
+/// `.env.staging` or `.env.production`, same search order as [env_file_candidates]
+/// minus `TELEKEY_ENV_FILE` (that file is an explicit overlay on its own).
+pub(crate) fn stage_env_file_candidates(stage: &str) -> Vec<PathBuf> {
+    let name = if stage.eq_ignore_ascii_case("production") {
+        ".env.production"
+    } else {
+        ".env.staging"
+    };
+    let mut candidates = vec![PathBuf::from(name), PathBuf::from(format!("../{name}"))];
+    if let Ok(dir) = config_dir() {
+        candidates.push(dir.join(name));
+    }
     candidates
 }
 
@@ -323,7 +338,16 @@ pub fn store_api_key(key: &str) -> Result<()> {
 }
 
 pub fn clear_api_key() -> Result<()> {
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)
+    delete_keychain_entry(KEYCHAIN_SERVICE)?;
+    // The rename copies this once when the new service is empty. Leaving it
+    // behind made every clear look like a no-op: the next read adopted it
+    // again and wrote it back under `telekey`.
+    delete_keychain_entry(LEGACY_KEYCHAIN_SERVICE)?;
+    Ok(())
+}
+
+fn delete_keychain_entry(service: &str) -> Result<()> {
+    let entry = keyring::Entry::new(service, KEYCHAIN_ACCOUNT)
         .context("could not open the Keychain entry")?;
     match entry.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
@@ -530,6 +554,14 @@ mod tests {
             candidates.iter().any(|p| p.ends_with("telekey/.env")),
             "the config dir must be searched so the bundled app finds a key"
         );
+    }
+
+    #[test]
+    fn stage_env_files_follow_the_same_search_order() {
+        let staging = stage_env_file_candidates("staging");
+        assert!(staging.contains(&PathBuf::from(".env.staging")));
+        let production = stage_env_file_candidates("production");
+        assert!(production.contains(&PathBuf::from(".env.production")));
     }
 
     #[test]

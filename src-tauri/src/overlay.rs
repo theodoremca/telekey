@@ -22,6 +22,9 @@ const SUCCESS_LINGER: Duration = Duration::from_millis(1_600);
 /// Failures stay longer — they carry something the user has to act on.
 const FAILURE_LINGER: Duration = Duration::from_millis(4_500);
 
+/// A cancel is just confirmation that nothing happened — keep it brief.
+const CANCEL_LINGER: Duration = Duration::from_millis(700);
+
 pub struct Overlay {
     app: AppHandle,
     window: WebviewWindow,
@@ -39,6 +42,11 @@ impl Overlay {
 
         panel::make_nonactivating(&window)
             .context("could not make the overlay non-activating")?;
+
+        // Click-through until a dictation is live and the cancel control exists.
+        if let Err(err) = window.set_ignore_cursor_events(true) {
+            tracing::warn!("could not make the overlay click-through: {err}");
+        }
 
         position(&window)?;
 
@@ -112,6 +120,19 @@ impl Overlay {
 
     pub fn linger_after_failure(self: &Arc<Self>) {
         self.hide_after(FAILURE_LINGER);
+    }
+
+    pub fn linger_after_cancel(self: &Arc<Self>) {
+        self.hide_after(CANCEL_LINGER);
+    }
+
+    /// The overlay is click-through except while a dictation can be cancelled.
+    pub fn set_clickable(&self, clickable: bool) {
+        self.on_main(move |window| {
+            if let Err(err) = window.set_ignore_cursor_events(!clickable) {
+                tracing::warn!("could not update overlay click-through: {err}");
+            }
+        });
     }
 
     pub fn window(&self) -> &WebviewWindow {

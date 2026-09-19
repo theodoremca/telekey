@@ -122,6 +122,24 @@ export interface ApiKeyStatus {
   keychainIsEffective: boolean;
 }
 
+export interface SessionStatus {
+  signedIn: boolean;
+  email: string | null;
+  uid: string | null;
+}
+
+export interface CreditPack {
+  id: string;
+  name: string;
+  cents: number;
+}
+
+export interface HostedAccount {
+  email: string | null;
+  balanceCents: number;
+  packs: CreditPack[];
+}
+
 /** Matches `MAX_KEYWORDS` in settings.rs. */
 export const MAX_VOCABULARY = 100;
 
@@ -138,6 +156,8 @@ const inTauri = () =>
 const previewState: {
   settings: Settings;
   key: ApiKeyStatus;
+  session: SessionStatus;
+  account: HostedAccount;
   history: HistoryEntry[];
   setup: SetupState;
 } = {
@@ -163,7 +183,7 @@ const previewState: {
       polishOutputPerMillion: 1.2,
     },
     ratesUpdated: "2026-08-24",
-    fnTrigger: false,
+    fnTrigger: true,
     profiles: [
       { app: "com.tinyspeck.slackmacgap", label: "Slack", style: { kind: "terse" } },
       { app: "com.apple.Terminal", label: "Terminal", style: { kind: "literal" } },
@@ -173,6 +193,20 @@ const previewState: {
     isSet: false,
     source: null,
     keychainIsEffective: true,
+  },
+  session: {
+    signedIn: false,
+    email: null,
+    uid: null,
+  },
+  account: {
+    email: "you@example.com",
+    balanceCents: 500,
+    packs: [
+      { id: "starter", name: "$5", cents: 500 },
+      { id: "plus", name: "$15", cents: 1500 },
+      { id: "pro", name: "$40", cents: 4000 },
+    ],
   },
   history: [
     {
@@ -240,6 +274,22 @@ const preview = {
     previewState.key = { isSet: false, source: null, keychainIsEffective: true };
     return previewState.key;
   },
+  sessionStatus: async () => structuredClone(previewState.session),
+  openHostedLogin: async () => {
+    previewState.session = {
+      signedIn: true,
+      email: "you@example.com",
+      uid: "preview",
+    };
+    grantInPreview("apiKey");
+  },
+  openHostedAccount: async () => undefined,
+  clearSession: async () => {
+    previewState.session = { signedIn: false, email: null, uid: null };
+    return previewState.session;
+  },
+  hostedAccount: async () => structuredClone(previewState.account),
+  createCheckout: async () => undefined,
   permissions: async (): Promise<Permissions> => ({
     accessibility: "denied",
     microphone: "notAsked",
@@ -332,6 +382,12 @@ const live = {
   apiKeyStatus: () => invoke<ApiKeyStatus>("api_key_status"),
   setApiKey: (key: string) => invoke<ApiKeyStatus>("set_api_key", { key }),
   clearApiKey: () => invoke<ApiKeyStatus>("clear_api_key"),
+  sessionStatus: () => invoke<SessionStatus>("session_status"),
+  openHostedLogin: () => invoke<void>("open_hosted_login"),
+  openHostedAccount: () => invoke<void>("open_hosted_account"),
+  clearSession: () => invoke<SessionStatus>("clear_session"),
+  hostedAccount: () => invoke<HostedAccount>("hosted_account"),
+  createCheckout: (packId: string) => invoke<void>("create_checkout", { packId }),
   permissions: () => invoke<Permissions>("permissions_status"),
   openPermissionSettings: (
     pane: "accessibility" | "microphone" | "inputMonitoring",

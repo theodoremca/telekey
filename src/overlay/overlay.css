@@ -135,6 +135,10 @@ body {
   background: var(--alert);
 }
 
+[data-state="cancelled"] .indicator {
+  background: var(--text-dim);
+}
+
 /* ---- the trace ------------------------------------------------------- */
 
 .trace {
@@ -185,7 +189,8 @@ body {
 /* Only the waveform is meaningful while recording; once the audio is gone the
    trace has nothing left to say, so a message takes its place. */
 [data-state="inserted"] .trace,
-[data-state="failed"] .trace {
+[data-state="failed"] .trace,
+[data-state="cancelled"] .trace {
   display: none;
 }
 
@@ -202,7 +207,8 @@ body {
 }
 
 [data-state="inserted"] .timer,
-[data-state="failed"] .timer {
+[data-state="failed"] .timer,
+[data-state="cancelled"] .timer {
   display: none;
 }
 
@@ -220,7 +226,8 @@ body {
 }
 
 [data-state="inserted"] .message,
-[data-state="failed"] .message {
+[data-state="failed"] .message,
+[data-state="cancelled"] .message {
   display: -webkit-box;
 }
 
@@ -228,6 +235,11 @@ body {
   flex: none;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
+}
+
+[data-state="cancelled"] .message {
+  flex: none;
+  color: var(--text-dim);
 }
 
 [data-state="failed"] .message {
@@ -245,6 +257,43 @@ body {
 
 [data-state="failed"] .indicator {
   margin-top: 5px;
+}
+
+/* ---- cancel ---------------------------------------------------------- */
+
+.cancel {
+  display: none;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-right: -4px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-dim);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  /* The rest of the panel stays click-through; only this control eats clicks. */
+  pointer-events: auto;
+}
+
+.cancel span {
+  display: block;
+  margin-top: -1px;
+}
+
+.cancel:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--text);
+}
+
+[data-state="recording"] .cancel,
+[data-state="transcribing"] .cancel {
+  display: flex;
 }
 
 /* ---- accessibility --------------------------------------------------- */

@@ -4,6 +4,7 @@ import {
   api,
   messageFrom,
   type DailyPoint,
+  type HostedAccount,
   type Period,
   type Rates,
   type Settings,
@@ -28,9 +29,11 @@ const CHART_DAYS = 30;
  */
 export function UsagePanel({
   settings,
+  hosted,
   onSaveRates,
 }: {
   settings: Settings;
+  hosted: HostedAccount | null;
   onSaveRates: (rates: Rates) => Promise<boolean>;
 }) {
   const [period, setPeriod] = useState<Period>("today");
@@ -102,6 +105,43 @@ export function UsagePanel({
         </p>
       )}
 
+      {hosted && (
+        <div className="card usageSummary">
+          <div className="headline">
+            <div>
+              <span className="figure">{money(hosted.balanceCents / 100)}</span>
+              <span className="figureLabel">credits left</span>
+            </div>
+            <div>
+              <span className="figure">{hosted.email ?? "Signed in"}</span>
+              <span className="figureLabel">TeleKey account</span>
+            </div>
+          </div>
+          {hosted.packs.length > 0 ? (
+            <div className="packRow">
+              {hosted.packs.map((pack) => (
+                <button
+                  key={pack.id}
+                  className="primary"
+                  onClick={() => void api.createCheckout(pack.id).catch((err) => setError(messageFrom(err)))}
+                >
+                  Buy {pack.name}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="packRow">
+              <button
+                className="primary"
+                onClick={() => void api.openHostedAccount().catch((err) => setError(messageFrom(err)))}
+              >
+                Buy credits
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="card usageSummary">
         <div className="headline">
           <div>
@@ -152,11 +192,13 @@ export function UsagePanel({
         </div>
       </section>
 
-      <RatesEditor
-        rates={settings.rates}
-        updated={settings.ratesUpdated}
-        onSave={onSaveRates}
-      />
+      {!hosted && (
+        <RatesEditor
+          rates={settings.rates}
+          updated={settings.ratesUpdated}
+          onSave={onSaveRates}
+        />
+      )}
 
       <section className="section">
         <div className="card">
@@ -185,8 +227,10 @@ export function UsagePanel({
         </div>
         <p className="note footnote">
           Totals start from when usage tracking was added — earlier dictations
-          were not recorded. Figures are OpenAI's reported units priced at the
-          rates above, not your invoice.
+          were not recorded.
+          {hosted
+            ? " Credits are the server ledger; minutes below are what this Mac has dictated."
+            : " Figures are OpenAI's reported units priced at the rates above, not your invoice."}
         </p>
       </section>
     </>

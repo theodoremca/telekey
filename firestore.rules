@@ -1,0 +1,27 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{col}/{docId} {
+      function isUserCol() {
+        return col.matches('^(staging|production)-users$');
+      }
+      function isPackCol() {
+        return col.matches('^(staging|production)-packs$');
+      }
+
+      allow read: if isPackCol()
+        || (isUserCol() && request.auth != null && request.auth.uid == docId);
+      allow write: if false;
+
+      match /usage/{id} {
+        allow read: if isUserCol() && request.auth != null && request.auth.uid == docId;
+        allow write: if false;
+      }
+
+      match /purchases/{id} {
+        allow read: if isUserCol() && request.auth != null && request.auth.uid == docId;
+        allow write: if false;
+      }
+    }
+  }
+}

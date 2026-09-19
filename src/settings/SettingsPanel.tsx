@@ -5,8 +5,11 @@ import {
   messageFrom,
   MAX_VOCABULARY,
   type ApiKeyStatus,
+  type CreditPack,
+  type HostedAccount,
   type Permission,
   type Permissions,
+  type SessionStatus,
   type Settings,
   type Signing,
 } from "./api";
@@ -17,18 +20,24 @@ export function SettingsPanel({
   settings,
   permissions,
   keyStatus,
+  session,
+  account,
   device,
   signing,
   onSave,
   onKeyChanged,
+  onSessionChanged,
 }: {
   settings: Settings;
   permissions: Permissions | null;
   keyStatus: ApiKeyStatus | null;
+  session: SessionStatus | null;
+  account: HostedAccount | null;
   device: string | null;
   signing: Signing;
   onSave: (next: Settings) => Promise<boolean>;
   onKeyChanged: (status: ApiKeyStatus) => void;
+  onSessionChanged: () => Promise<void>;
 }) {
   return (
     <>
@@ -44,6 +53,12 @@ export function SettingsPanel({
           hint={device ?? "No input device found."}
           state={permissions?.microphone ?? "unknown"}
           onOpen={() => api.openPermissionSettings("microphone")}
+        />
+        <AccountRow
+          session={session}
+          account={account}
+          usingOwnKey={Boolean(keyStatus?.isSet)}
+          onChanged={onSessionChanged}
         />
         <ApiKeyRow status={keyStatus} onChanged={onKeyChanged} />
         {/* Only shown when it is a problem: an ad-hoc build silently loses its
@@ -64,7 +79,7 @@ export function SettingsPanel({
 
       <Section
         title="Shortcut"
-        note="Hold to record. Release and the text lands at your cursor."
+        note={`Hold ${toGlyphs(settings.shortcut)} to record, then release. Fn is a second trigger if you enable it below.`}
       >
         <ShortcutRecorder
           value={settings.shortcut}
@@ -284,7 +299,7 @@ function ApiKeyRow({
         <span className="rowHint">
           {status?.isSet
             ? `From ${status.source}`
-            : "Needed to transcribe anything."}
+            : "Optional — sign in above to use TeleKey credits instead."}
         </span>
       </div>
       <button className="ghost" onClick={() => setEditing(true)}>
@@ -292,6 +307,128 @@ function ApiKeyRow({
       </button>
     </div>
   );
+}
+
+function AccountRow({
+  session,
+  account,
+  usingOwnKey,
+  onChanged,
+}: {
+  session: SessionStatus | null;
+  account: HostedAccount | null;
+  usingOwnKey: boolean;
+  onChanged: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const signIn = async () => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      await api.openHostedLogin();
+    } catch (err) {
+      setProblem(messageFrom(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const signOut = async () => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      await api.clearSession();
+      await onChanged();
+    } catch (err) {
+      setProblem(messageFrom(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const buy = async (pack: CreditPack) => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      await api.createCheckout(pack.id);
+    } catch (err) {
+      setProblem(messageFrom(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (session?.signedIn) {
+    const credits = formatCents(account?.balanceCents ?? 0);
+    const packs = account?.packs ?? [];
+    return (
+      <div className="row column">
+        <div className="row tight">
+          <span className="dot ok" />
+          <div className="rowText">
+            <span className="rowLabel">TeleKey credits</span>
+            <span className="rowHint">
+              {session.email ?? "Signed in"} — {credits} left
+              {usingOwnKey ? ". Sign in uses TeleKey credits; your key is unused until you sign out." : "."}
+            </span>
+          </div>
+          <button className="ghost" disabled={busy} onClick={() => void signOut()}>
+            Sign out
+          </button>
+        </div>
+        {packs.length > 0 ? (
+          <div className="packRow">
+            {packs.map((pack) => (
+              <button
+                key={pack.id}
+                className="primary"
+                disabled={busy}
+                onClick={() => void buy(pack)}
+              >
+                Buy {pack.name}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="packRow">
+            <button
+              className="primary"
+              disabled={busy}
+              onClick={() => void api.openHostedAccount().catch((err) => setProblem(messageFrom(err)))}
+            >
+              Buy credits
+            </button>
+          </div>
+        )}
+        {problem && <p className="problem">{problem}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="row column">
+      <div className="row tight">
+        <span className="dot bad" />
+        <div className="rowText">
+          <span className="rowLabel">TeleKey account</span>
+          <span className="rowHint">
+            Sign in to use TeleKey's key and buy credits. Google or a magic link
+            in the browser.
+          </span>
+        </div>
+        <button className="primary" disabled={busy} onClick={() => void signIn()}>
+          {busy ? "Opening…" : "Sign in"}
+        </button>
+      </div>
+      {problem && <p className="problem">{problem}</p>}
+    </div>
+  );
+}
+
+function formatCents(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
 }
 
 function ShortcutRecorder({

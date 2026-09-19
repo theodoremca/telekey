@@ -20,11 +20,56 @@ cd "$ROOT"
 # binaries first so the real xattr wins.
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
-BUILT="$ROOT/src-tauri/target/release/bundle/macos/TeleKey.app"
+# Always the in-repo target. Agent/sandbox shells sometimes export a cache
+# CARGO_TARGET_DIR, which makes the bundle land somewhere run.sh cannot find.
+export CARGO_TARGET_DIR="$ROOT/src-tauri/target"
+BUILT="$CARGO_TARGET_DIR/release/bundle/macos/TeleKey.app"
 INSTALLED="/Applications/TeleKey.app"
 LOG="${TELEKEY_LOG_FILE:-$HOME/Library/Logs/telekey.log}"
 
-echo "▸ Building…"
+dotenv_get() {
+  local file="$1" key="$2"
+  [[ -f "$file" ]] || return 0
+  local line val
+  line="$(grep -E "^${key}=" "$file" | tail -1 || true)"
+  [[ -n "${line}" ]] || return 0
+  val="${line#*=}"
+  val="${val%$'\r'}"
+  val="${val#\"}"
+  val="${val%\"}"
+  printf '%s' "${val}"
+}
+
+if [[ -z "${TELEKEY_STAGE:-}" ]]; then
+  TELEKEY_STAGE="$(dotenv_get "$ROOT/.env" TELEKEY_STAGE)"
+fi
+export TELEKEY_STAGE="${TELEKEY_STAGE:-staging}"
+
+overlay="$ROOT/.env.staging"
+if [[ "${TELEKEY_STAGE}" == [Pp]roduction ]]; then
+  overlay="$ROOT/.env.production"
+fi
+
+export_from_files() {
+  local key="$1"
+  if [[ -n "${!key:-}" ]]; then
+    return 0
+  fi
+  local val
+  val="$(dotenv_get "$ROOT/.env" "$key")"
+  if [[ -z "${val}" ]]; then
+    val="$(dotenv_get "$overlay" "$key")"
+  fi
+  if [[ -n "${val}" ]]; then
+    export "${key}=${val}"
+  fi
+}
+
+export_from_files TELEKEY_FIREBASE_API_KEY
+export_from_files TELEKEY_API_BASE
+export_from_files TELEKEY_SITE_URL
+
+echo "▸ Building… (TELEKEY_STAGE=${TELEKEY_STAGE})"
 bun tauri build --bundles app >/dev/null
 
 echo "▸ Signing…"
@@ -43,7 +88,14 @@ mkdir -p "$(dirname "$LOG")"
 : > "$LOG"
 # Launched via `open` so launchd owns the process. Started from a shell instead,
 # macOS attributes permission prompts to the terminal rather than to TeleKey.
-open -a "$INSTALLED" --stdout "$LOG" --stderr "$LOG" --env TELEKEY_LOG="${TELEKEY_LOG:-telekey=debug}"
+open_env=(
+  --env "TELEKEY_LOG=${TELEKEY_LOG:-telekey=debug}"
+  --env "TELEKEY_STAGE=${TELEKEY_STAGE}"
+)
+[[ -n "${TELEKEY_API_BASE:-}" ]] && open_env+=(--env "TELEKEY_API_BASE=${TELEKEY_API_BASE}")
+[[ -n "${TELEKEY_SITE_URL:-}" ]] && open_env+=(--env "TELEKEY_SITE_URL=${TELEKEY_SITE_URL}")
+[[ -n "${TELEKEY_FIREBASE_API_KEY:-}" ]] && open_env+=(--env "TELEKEY_FIREBASE_API_KEY=${TELEKEY_FIREBASE_API_KEY}")
+open -a "$INSTALLED" --stdout "$LOG" --stderr "$LOG" "${open_env[@]}"
 
 sleep 2
 echo

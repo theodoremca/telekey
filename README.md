@@ -42,11 +42,10 @@ genuinely needs it. You can reopen it any time from the menubar icon → Setup�
 The rest of this section is the same ground, if you would rather read it than
 click through it.
 
-### 1. OpenAI API key
+### 1. OpenAI API key, or a TeleKey account
 
-Get one from [platform.openai.com](https://platform.openai.com/api-keys). It
-needs credit on the account; dictation costs a fraction of a cent per sentence.
-
+**Your own key.** Get one from [platform.openai.com](https://platform.openai.com/api-keys).
+It needs credit on the account; dictation costs a fraction of a cent per sentence.
 Paste it into **Settings → OpenAI key**, where it is stored in your Keychain.
 Or from the terminal:
 
@@ -55,6 +54,10 @@ Or from the terminal:
 ```
 
 That reads the key from stdin, so it never lands in your shell history.
+
+**Or sign in.** Settings → Sign in opens the browser. Google or a magic link.
+TeleKey uses its own key and deducts prepaid credits. Buy packs from Settings
+or the website.
 
 ### 2. Microphone
 

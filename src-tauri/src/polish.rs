@@ -41,7 +41,7 @@ impl Style {
     }
 
     /// The instruction sent to the model, for styles that need one.
-    fn instruction(&self) -> Option<String> {
+    pub(crate) fn instruction(&self) -> Option<String> {
         let guidance = match self {
             Style::Literal => return None,
             Style::Terse => {

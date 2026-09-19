@@ -7,11 +7,14 @@ What to do, in what order, and why. Each phase says what "done" looks like.
 ## Where things stand today
 
 - The app works on your Mac. Dictation, overlay, history, usage, formatting.
+- **Cancel** is in: overlay ×, Escape, never pastes.
+- **Hosted credits** are in the repo (Firebase Auth + Firestore + Functions +
+  `web/`) but not deployed — needs your Firebase project, Stripe prices, and
+  the OpenAI key in `functions/.env`.
 - It is public on GitHub under MIT, with two releases.
 - Windows compiles in CI but nobody has run it. Linux has not been tried.
 - Hold-Fn is built. The settings bug that stopped it saving is fixed. **You have
-  not yet confirmed Fn actually triggers a recording** — that is the first thing
-  to test.
+  not yet confirmed Fn actually triggers a recording.**
 
 ## Decisions already made
 
@@ -20,8 +23,8 @@ These are settled so we do not re-argue them.
 | Decision | Choice |
 |---|---|
 | Open source or product? | **Both.** The free version stays open. A paid version comes later. |
-| What is the paid version? | **The same app with no setup.** You supply the API key; they pay you monthly. |
-| Monthly or credits? | **Monthly.** Users expect it, and your cost per user is too low to lose money. |
+| What is the paid version? | **The same app, no OpenAI key required.** Sign in, buy credits, we proxy `gpt-transcribe`. BYOK stays free. |
+| Monthly or credits? | **Credits (USD cents).** Packs via Stripe Checkout. Not a monthly sub for v1. |
 | Which platforms? | **macOS, Windows, Linux.** Not iOS — see below. |
 | Who makes the content? | You. |
 
@@ -228,23 +231,25 @@ download.
 
 ---
 
-## Phase 6 — Paid tier
+## Phase 6 — Hosted credits — **in the repo, not live**
 
-**Only after Phases 1–5, and only if people are actually downloading.**
+**What:** Sign in with Google or a magic link. TeleKey uses one shared OpenAI
+key in Cloud Functions. Firestore holds `{staging|production}-users/{uid}.balanceCents`.
+Stripe Checkout buys packs. BYOK still talks to OpenAI directly.
 
-**What it is:** the identical app, plus a *Sign in* option beside *Enter API
-key*. Signed-in users never see a key; requests go through a small server you
-run that holds the key and counts minutes against their subscription.
+**Done in code:** cancel overlay; `HostedTranscriber` / `HostedPolisher`;
+Keychain session via `telekey://auth`; Settings + Setup Sign in; `functions/`
+(`staging` + `api` exports) and `web/`.
 
-**What it needs:** a server (one endpoint, one database table), Stripe for the
-subscription, sign-in. About a week.
+**Still yours to do:** Blaze on project `telekey-app`; copy `functions/.env.example`
+to `functions/.env` and fill OpenAI + Stripe keys; write `staging-packs` /
+`production-packs` from `functions/packs.example.json`; point Stripe test/live
+webhooks at `…/staging/stripeWebhook` and `…/api/stripeWebhook`; deploy Functions
+and `web/`; fill desktop `.env` + `.env.staging` (public URLs only).
+`minInstances` stays 0.
 
-**What you charge:** around $8/month. A subscriber costs you $1–3 in API fees
-unless they dictate an hour a day, every day.
-
-**What free users keep:** everything. Bring-your-own-key and local models stay
-free, open, and unrestricted. The paid tier removes setup; it does not remove
-features.
+**What free users keep:** everything. Bring-your-own-key stays free, open, and
+unrestricted. Hosted mode is the paid convenience, not a feature gate.
 
 ---
 
@@ -258,7 +263,8 @@ features.
 | 3b. Local models | 4–5 days | — (models confirmed) |
 | 4. Windows + Linux | 3 days | Your Windows PC; a Linux machine or friend |
 | 5. Content | ongoing | You |
-| 6. Paid tier | 1 week | Only if people show up |
+| 6. Hosted credits | code in; deploy is yours | Firebase project, Stripe, OpenAI secret |
 
-**Start with Phase 1: choose the name.** Everything after it is easier once
-that is settled.
+**Start with a real hold-speak-release on the installed app, including cancel.
+Then deploy hosted credits when the Firebase project exists.** Everything else
+(Fn check, notarise, OpenRouter, local models) waits.

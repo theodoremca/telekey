@@ -16,6 +16,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 
 import {
   api,
@@ -30,8 +31,8 @@ const POLL_MS = 1000;
 
 const COPY: Record<SetupStep, { label: string; hint: string }> = {
   apiKey: {
-    label: "OpenAI API key",
-    hint: "Transcription is billed to your own OpenAI account — a fraction of a cent per sentence.",
+    label: "API key or account",
+    hint: "Use your own OpenAI key, or sign in and buy TeleKey credits.",
   },
   microphone: {
     label: "Microphone",
@@ -101,8 +102,8 @@ export function SetupWizard() {
 
       <p className="note">
         {state.complete
-          ? "Hold your shortcut anywhere, speak, and let go."
-          : "Each of these is granted in a different place. TeleKey checks as you go."}
+          ? "Hold Fn or your shortcut, speak, and let go."
+          : "Sign in for credits, then grant the permissions. TeleKey checks as you go."}
       </p>
 
       {state.restartPending && <RestartBanner />}
@@ -172,7 +173,7 @@ function StepRow({
       <div className="rowText">
         <span className="rowLabel">{label}</span>
         <span className="rowHint">{hint}</span>
-        {step === "apiKey" && !done && <ApiKeyField onSaved={onChanged} />}
+        {step === "apiKey" && !done && <CredentialsField onSaved={onChanged} />}
       </div>
       <span className="rowValue">
         {done ? (needsRestart ? "Restart to finish" : "Granted") : "Needed"}
@@ -225,20 +226,27 @@ function PermissionButton({
 }
 
 /**
- * The key is taken here rather than sending the user to the settings window.
- *
- * It is the only requirement that is not a permission, and bouncing someone
- * between two windows during their first minute with the app is exactly the
- * kind of seam this screen exists to remove.
+ * The key or a hosted session is taken here rather than bouncing to Settings.
  */
-function ApiKeyField({ onSaved }: { onSaved: () => Promise<void> }) {
+function CredentialsField({ onSaved }: { onSaved: () => Promise<void> }) {
   const [value, setValue] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [opening, setOpening] = useState(false);
   const input = useRef<HTMLInputElement>(null);
 
-  // A form rather than an input and a button: Enter submits for free, and a
-  // password field outside one is something browsers rightly complain about.
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    listen("telekey://session", () => {
+      void onSaved();
+    })
+      .then((unlisten) => {
+        stop = unlisten;
+      })
+      .catch(() => {});
+    return () => stop?.();
+  }, [onSaved]);
+
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
     setSaving(true);
@@ -255,22 +263,40 @@ function ApiKeyField({ onSaved }: { onSaved: () => Promise<void> }) {
     }
   };
 
+  const signIn = async () => {
+    setOpening(true);
+    setProblem(null);
+    try {
+      await api.openHostedLogin();
+    } catch (err) {
+      setProblem(messageFrom(err));
+    } finally {
+      setOpening(false);
+    }
+  };
+
   return (
-    <form className="setupKey" onSubmit={(event) => void save(event)}>
-      <input
-        ref={input}
-        className="input"
-        type="password"
-        placeholder="sk-…"
-        autoComplete="off"
-        spellCheck={false}
-        value={value}
-        onChange={(event) => setValue(event.target.value)}
-      />
-      <button className="primary" type="submit" disabled={saving || !value.trim()}>
-        Save
+    <div className="setupCredentials">
+      <button className="primary" type="button" disabled={opening} onClick={() => void signIn()}>
+        {opening ? "Opening…" : "Sign in to buy credits"}
       </button>
+      <p className="rowHint">Or paste your own OpenAI key.</p>
+      <form className="setupKey" onSubmit={(event) => void save(event)}>
+        <input
+          ref={input}
+          className="input"
+          type="password"
+          placeholder="sk-…"
+          autoComplete="off"
+          spellCheck={false}
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+        />
+        <button className="ghost" type="submit" disabled={saving || !value.trim()}>
+          Save
+        </button>
+      </form>
       {problem && <p className="problem">{problem}</p>}
-    </form>
+    </div>
   );
 }
