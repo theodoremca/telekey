@@ -22,6 +22,8 @@ export const PRIMARY_ACTION = {
 } as const;
 
 export const SIGN_IN = { label: "Sign in", href: "/login" } as const;
+export const ACCOUNT = { label: "Account", href: "/account" } as const;
+export const SIGN_OUT = { label: "Sign out" } as const;
 export const BUY_CREDITS = { label: "Buy credits", href: "/account" } as const;
 
 export const NAV_LINKS = [

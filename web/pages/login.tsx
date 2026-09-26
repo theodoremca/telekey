@@ -8,6 +8,7 @@ import {
   sendSignInLinkToEmail,
   signInWithEmailLink,
   signInWithPopup,
+  signOut,
   type User,
 } from "firebase/auth";
 
@@ -74,6 +75,19 @@ export default function Login() {
       }
     });
   }, [router.isReady, busy]);
+
+  // Signed in as someone else, or just not the account they meant: sign out
+  // and show the form. The first-callback guard has already fired, so the
+  // sign-out is not mistaken for a returning visitor.
+  const switchAccount = async () => {
+    setProblem(null);
+    try {
+      await signOut(firebaseAuth());
+      setContinueUser(null);
+    } catch (err) {
+      setProblem(err instanceof Error ? err.message : "Could not sign out");
+    }
+  };
 
   const afterAuth = async (user: User) => {
     if (wantsDesktop()) {
@@ -147,6 +161,13 @@ export default function Login() {
             onClick={() => void handoffToApp(continueUser)}
           >
             Open TeleKey
+          </KeycapButton>
+          <KeycapButton
+            variant="paper"
+            className="mt-3 w-full"
+            onClick={() => void switchAccount()}
+          >
+            Use a different account
           </KeycapButton>
         </div>
       ) : (
