@@ -12,6 +12,8 @@ import { handoffToApp, wantsDesktop } from "../lib/handoff";
 const title =
   "m-0 font-display text-[clamp(2.25rem,6vw,3.25rem)] font-bold leading-none tracking-[-0.035em]";
 
+const PAID_BANNER_DEFAULT = "Payment received. Credits appear in a few seconds.";
+
 export default function Account() {
   const router = useRouter();
   const paid = router.query.paid === "1";
@@ -19,6 +21,7 @@ export default function Account() {
   const [account, setAccount] = useState<HostedAccount | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [paidMessage, setPaidMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isConfigured()) return;
@@ -41,6 +44,58 @@ export default function Account() {
       void handoffToApp(user);
     }
   }, [user]);
+
+  // While Stripe's return URL still carries ?paid=1, poll for the credit
+  // balance to change, then drop the query so a reload doesn't restart it.
+  useEffect(() => {
+    if (!paid || !user) return;
+
+    let cancelled = false;
+    let firstBalance: number | null = null;
+
+    const finish = (changed: boolean) => {
+      if (cancelled) return;
+      cancelled = true;
+      clearInterval(intervalId);
+      clearTimeout(timeoutId);
+      setPaidMessage(
+        changed ? "Credits added." : "Still waiting for the payment to land — reload in a moment.",
+      );
+      void router.replace("/account");
+    };
+
+    const check = () => {
+      user
+        .getIdToken()
+        .then(fetchAccount)
+        .then((next) => {
+          if (cancelled) return;
+          setAccount(next);
+          if (firstBalance === null) {
+            firstBalance = next.balanceCents;
+            return;
+          }
+          if (next.balanceCents !== firstBalance) {
+            finish(true);
+          }
+        })
+        .catch(() => {
+          // a transient failure here shouldn't stop the poll loop
+        });
+    };
+
+    // Baseline now rather than three seconds from now, so a credit that lands
+    // in between still reads as a change.
+    check();
+    const intervalId = setInterval(check, 3000);
+    const timeoutId = setTimeout(() => finish(false), 30000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+      clearTimeout(timeoutId);
+    };
+  }, [paid, user]);
 
   const buy = async (packId: string) => {
     if (!user) return;
@@ -84,10 +139,12 @@ export default function Account() {
       <h1 className={title}>Credits</h1>
       <p className="mt-3 mb-0 font-mono text-[13px] text-ink-soft">{user.email}</p>
 
-      {paid && (
+      {/* Stays up on the final message too: finishing drops ?paid=1 from the
+          URL, and a banner keyed on it alone would vanish with its answer. */}
+      {(paid || paidMessage) && (
         <p role="status" className="mt-6 mb-0 flex gap-3 rounded-[10px] bg-voice-wash px-4 py-3 text-sm leading-relaxed">
           <span className="mt-[7px] size-2 flex-none rounded-full bg-settled-deep" />
-          Payment received. Credits appear in a few seconds.
+          {paidMessage ?? PAID_BANNER_DEFAULT}
         </p>
       )}
 

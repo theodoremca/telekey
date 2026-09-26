@@ -5,7 +5,7 @@
 // it describes; where a figure is derived from code, the comment says where,
 // so it can be re-checked when that code changes.
 
-const REPO = "https://github.com/theodoremca/flowtype";
+const REPO = "https://github.com/theodoremca/telekey";
 
 export const BRAND = {
   name: "TeleKey",
