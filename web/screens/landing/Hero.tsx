@@ -1,7 +1,7 @@
 import { useRef } from "react";
 
 import { KeycapLink } from "@/components/Keycap";
-import { HERO, PRIMARY_ACTION, SIGN_IN } from "@/data/site";
+import { COMPARE, HERO, PRIMARY_ACTION, SIGN_IN } from "@/data/site";
 import { gsap, useGSAP } from "@/lib/gsap";
 import { landPrepared } from "@/lib/sectionReveal";
 
@@ -116,7 +116,41 @@ export function Hero() {
               {SIGN_IN.label}
             </KeycapLink>
           </div>
+
           <DemoKeys demo={demo} data-reveal="rise" data-hero-copy="" className="mt-9" />
+
+          {/* The claim's receipt, last in the column: their price beside ours,
+              and where theirs was read. */}
+          <div
+            data-reveal="rise"
+            data-hero-copy=""
+            className="mt-10 grid max-w-[520px] overflow-hidden rounded-xl border border-hair sm:grid-cols-2"
+          >
+            <div className="bg-white/[0.04] px-4 py-3.5">
+              <p className="m-0 font-mono text-[11px] uppercase tracking-[0.08em] text-dim">{COMPARE.them.who}</p>
+              <p className="m-0 mt-1 font-display text-[26px] font-bold leading-none tracking-[-0.03em]">
+                {COMPARE.them.price}
+              </p>
+              <p className="m-0 mt-1.5 text-[13px] leading-relaxed text-dim">{COMPARE.them.how}</p>
+            </div>
+            <div className="border-t border-hair bg-voice/10 px-4 py-3.5 sm:border-t-0 sm:border-l">
+              <p className="m-0 font-mono text-[11px] uppercase tracking-[0.08em] text-dim">{COMPARE.us.who}</p>
+              <p className="m-0 mt-1 font-display text-[26px] font-bold leading-none tracking-[-0.03em] text-voice">
+                {COMPARE.us.price}
+              </p>
+              <p className="m-0 mt-1.5 text-[13px] leading-relaxed text-dim">{COMPARE.us.how}</p>
+            </div>
+          </div>
+          <p data-reveal="rise" data-hero-copy="" className="mt-2 mb-0 font-mono text-[11px] text-dim">
+            <a
+              href={COMPARE.source.href}
+              rel="noreferrer"
+              target="_blank"
+              className="text-dim no-underline transition-colors hover:text-glow"
+            >
+              {COMPARE.source.label}
+            </a>
+          </p>
         </div>
 
         <DemoStage demo={demo} data-reveal="rise" data-hero-stage="" />

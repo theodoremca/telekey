@@ -1,4 +1,5 @@
 import { Capsule, type CapsuleState } from "@/components/Capsule";
+import { KeyCard } from "@/components/KeyCard";
 import { HOW } from "@/data/site";
 import { useSectionReveal } from "@/lib/sectionReveal";
 
@@ -33,24 +34,27 @@ export function HowItWorks() {
             const at = String(index * 0.14);
             return (
               <li key={step.id} data-reveal-group="" className="flex">
-                <div
+                <KeyCard
                   data-reveal="capsule"
                   data-reveal-at={at}
-                  className="flex w-full flex-col rounded-[14px] border border-line bg-sheet p-6"
+                  tile={
+                    // The overlay on the desk it lives on: the same graphite as
+                    // the hero, so the capsule reads as the real thing.
+                    <div className="flex h-24 items-center justify-center bg-graphite">
+                      <Capsule
+                        state={capsule.state}
+                        timer={capsule.timer}
+                        message={capsule.message}
+                        stillSeed={capsule.seed}
+                        className="!w-[236px] scale-[0.92]"
+                        dotAttrs={{ "data-reveal": "lamp", "data-reveal-at": String(index * 0.14 + 0.45) }}
+                      />
+                    </div>
+                  }
                 >
-                  <div className="flex h-[76px] items-center justify-center rounded-[10px] bg-[#ece9f0]">
-                    <Capsule
-                      state={capsule.state}
-                      timer={capsule.timer}
-                      message={capsule.message}
-                      stillSeed={capsule.seed}
-                      className="!w-[236px] scale-[0.92]"
-                      dotAttrs={{ "data-reveal": "lamp", "data-reveal-at": String(index * 0.14 + 0.45) }}
-                    />
-                  </div>
-                  <h3 className="mt-6 mb-2 font-display text-2xl font-bold tracking-[-0.02em]">{step.name}</h3>
+                  <h3 className="m-0 mb-2 font-display text-2xl font-bold tracking-[-0.02em]">{step.name}</h3>
                   <p className="m-0 text-[15px] leading-relaxed text-ink-soft">{step.body}</p>
-                </div>
+                </KeyCard>
               </li>
             );
           })}

@@ -156,6 +156,65 @@
     box-shadow: inset 0 0 0 1px var(--color-line-strong);
   }
 
+  /*
+   * Keycard: a card built the way the button is. A fixed base shows as the
+   * card's side and a face sits on it, so the cards on the page come from the
+   * same hand as the keys. Hover presses the face down; only its transform
+   * changes, so nothing repaints.
+   */
+  .keycard {
+    --keycard-side: #cfcad6;
+    --keycard-face: var(--color-sheet);
+    --keycard-shine: rgba(255, 255, 255, 0.9);
+    --keycard-travel: 6px;
+
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    padding: 0 0 var(--keycard-travel);
+    border-radius: 14px;
+    background: var(--keycard-side);
+  }
+
+  .keycard > .face {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    overflow: hidden;
+    border-radius: 14px;
+    background: var(--keycard-face);
+    box-shadow: inset 0 1px 0 var(--keycard-shine);
+    transition: transform 180ms var(--ease-spring);
+  }
+
+  .keycard:hover > .face {
+    transform: translateY(2px);
+  }
+
+  /* The dark key: the paid plan, and anything that sits on graphite. */
+  .keycard-dark {
+    --keycard-side: var(--color-edge);
+    --keycard-face: var(--color-graphite-lift);
+    --keycard-shine: rgba(255, 255, 255, 0.12);
+  }
+
+  /* On the amber wash the side warms up to match. */
+  .keycard-warm {
+    --keycard-side: #e3cf9a;
+  }
+
+  /*
+   * Tape: the strip of app names. A CSS loop rather than a JS tween, because
+   * a perpetual transform composes better on iOS. Two identical groups and a
+   * half-width travel make the join invisible.
+   */
+  .tape-track {
+    display: inline-flex;
+    width: max-content;
+    will-change: transform;
+    animation: tape 46s linear infinite;
+  }
+
   /* The header's copy of the primary action: same key, lower profile. */
   .keycap-sm {
     --keycap-travel: 3px;
@@ -245,12 +304,20 @@
   }
 }
 
+@keyframes tape {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .caret {
+  .caret,
+  .tape-track {
     animation: none;
   }
 
   .keycap > .cap,
+  .keycard > .face,
   .mark-lever {
     transition: none;
   }

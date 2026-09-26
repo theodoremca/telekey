@@ -36,7 +36,10 @@ export const NAV_LINKS = [
 export const HERO = {
   /** The last line is set in amber. */
   titleLines: ["Hold a key.", "Speak.", "It's typed."],
-  lede: "Push-to-talk dictation for your Mac. Text lands at the cursor, in whatever app you're in.",
+  /** The claim. MIT licence: LICENSE; the rates: PRICING below. */
+  lede: "Free and open source with your own OpenAI key. Or pay per minute instead of per month.",
+  /** For search results and link previews, where the claim needs its subject. */
+  meta: "Push-to-talk dictation for your Mac. Free and open source with your own OpenAI key, or pay per minute instead of per month.",
   demo: {
     windowTitle: "New message",
     windowMeta: "To: Ada · Subject: Standup",
@@ -51,6 +54,105 @@ export const HERO = {
       "Can you send the contract over before lunch?",
     ],
   },
+} as const;
+
+/**
+ * The comparison under the hero. Their figures are quoted from their pricing
+ * page on the date in `source`; re-check and re-date it before repeating the
+ * claim. Ours: 1.35¢ a minute (see PRICING) × 60 = 81¢ an hour.
+ */
+export const COMPARE = {
+  them: {
+    who: "Wispr Flow Pro",
+    price: "$12 / month",
+    how: "Billed yearly; $15 month to month. The free plan stops at 2,000 words a week.",
+  },
+  us: {
+    who: "TeleKey credits",
+    price: "80¢ / hour",
+    how: "Of speech: about 1.4¢ a minute, prepaid. Nothing on the months you don't dictate.",
+  },
+  source: {
+    label: "Wispr Flow prices from wisprflow.ai/pricing, 26 Sep 2026.",
+    href: "https://wisprflow.ai/pricing",
+  },
+} as const;
+
+/**
+ * Four figures between the hero and the walkthrough. Each traces to a source:
+ * the paste time is the one quoted in HOW; the rate is PRICING's; audio on
+ * disk is README's privacy section and the zeroed buffer in audio.rs; the
+ * licence is LICENSE.
+ */
+export const NUMBERS = [
+  { value: "3–4 s", label: "from letting go to pasted text" },
+  { value: "1.4¢", label: "a minute of speech, on credits" },
+  { value: "0 bytes", label: "of audio ever written to disk" },
+  { value: "MIT", label: "licensed; the code is public" },
+] as const;
+
+/**
+ * The tape between the walkthrough and the formatting section. The claim is
+ * "anywhere you can type": the paste goes to whichever app is in front
+ * (frontmost.rs), so these are examples, not a support list.
+ */
+export const EVERYWHERE = {
+  lead: "Pastes anywhere you can type",
+  apps: [
+    "Mail",
+    "Slack",
+    "Notes",
+    "Messages",
+    "Safari",
+    "Chrome",
+    "Terminal",
+    "VS Code",
+    "Notion",
+    "Google Docs",
+    "Linear",
+    "Figma",
+  ],
+} as const;
+
+/**
+ * Answers, not marketing. The cost figures assume 20 minutes a day on 22
+ * working days = 440 minutes: 440 × 1.35¢ = $5.94 on credits, 440 × 0.45¢ =
+ * $1.98 at OpenAI's rate (functions/src/index.ts TRANSCRIBE_PER_MINUTE).
+ */
+export const FAQ = {
+  title: "Questions",
+  items: [
+    {
+      id: "offline",
+      q: "Does it work offline?",
+      a: "No. The audio goes to OpenAI for transcription and the text comes back. It is held in memory on the way and never written to disk, here or on our server.",
+    },
+    {
+      id: "cost",
+      q: "What does 20 minutes a day cost?",
+      a: "On credits, about $6 a month. With your own key, OpenAI bills you about $2. Either way, nothing on the months you don't dictate.",
+    },
+    {
+      id: "account",
+      q: "Do I need an account?",
+      a: "Not with your own OpenAI key: no sign-up, no email. Credits need a Google or magic-link sign-in, so there is somewhere to keep your balance.",
+    },
+    {
+      id: "languages",
+      q: "Which languages?",
+      a: "Any the model handles. Set the ones you speak in Settings so it knows what to expect, and add names and jargon to Vocabulary so they come back spelled right.",
+    },
+    {
+      id: "hold",
+      q: "Why hold a key instead of toggling?",
+      a: "So you always know when it is listening. The capsule shows a live trace while you hold, and letting go is the only way to send. Press Esc and nothing is pasted.",
+    },
+    {
+      id: "windows",
+      q: "Windows?",
+      a: "It compiles and the basics run, but it is newer and less tested than the Mac build. Linux is untried.",
+    },
+  ],
 } as const;
 
 export const HOW = {
@@ -170,7 +272,7 @@ export const PRICING = {
       // x MARKUP (3) = 1.35 cents a minute, MIN_CENTS = 1. Re-check this line
       // whenever either constant changes.
       price: "About 1.4¢ a minute",
-      detail: "Of speech, with a 1¢ minimum per dictation. Prepaid, no subscription.",
+      detail: "Of speech: around 80¢ an hour, with a 1¢ minimum per dictation. Prepaid, no subscription.",
       points: [
         "No OpenAI account or key",
         "Sign in with Google or an email link",
