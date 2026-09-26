@@ -39,3 +39,10 @@ functions/lib
 src-tauri/target/
 dist/
 *.dmg
+
+# TypeScript's incremental cache: rewritten on every type-check, so tracking it
+# only ever shows up as noise in `git status`.
+*.tsbuildinfo
+
+# Scratch output from the Playwright MCP browser tools.
+.playwright-mcp/
