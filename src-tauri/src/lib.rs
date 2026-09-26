@@ -13,6 +13,8 @@ pub mod frontmost;
 pub mod history;
 pub mod hosted;
 pub mod inject;
+pub mod input_device;
+pub mod output_mute;
 pub mod overlay;
 pub mod panel;
 pub mod permissions;
@@ -39,6 +41,11 @@ use settings::Settings;
 pub const STATUS_EVENT: &str = "telekey://status";
 pub const LEVEL_EVENT: &str = "telekey://level";
 pub const SESSION_EVENT: &str = "telekey://session";
+/// Settings were saved, by any window. Carries the saved `Settings`.
+pub const SETTINGS_EVENT: &str = "telekey://settings";
+/// The default microphone changed, or a device came or went. Carries the
+/// current default as an `Option<InputDevice>`.
+pub const INPUT_DEVICE_EVENT: &str = "telekey://input-device";
 
 /// How often the input level is pushed to the overlay while recording.
 /// 30 Hz is smooth to the eye and cheap over IPC.
@@ -66,12 +73,26 @@ impl StatusSink for TauriSink {
                 self.overlay.linger_after_success();
             }
             Status::Failed { message } => {
-                let buy = message.to_ascii_lowercase().contains("credit");
+                let lower = message.to_ascii_lowercase();
+                let buy = lower.contains("credit");
                 self.overlay.set_clickable(buy);
                 self.overlay.linger_after_failure();
                 if buy {
                     if let Err(err) = open_main_window(&self.app, "usage") {
                         tracing::warn!("could not open credits: {err}");
+                    }
+                }
+                // The key was held before the microphone was allowed. The
+                // message says "in Setup", so Setup had better be on screen.
+                if lower.contains("microphone") {
+                    let app = self.app.clone();
+                    let queued = self.app.run_on_main_thread(move || {
+                        if let Err(err) = open_setup_window(&app) {
+                            tracing::warn!("could not open setup: {err}");
+                        }
+                    });
+                    if let Err(err) = queued {
+                        tracing::warn!("could not reach the main thread for setup: {err}");
                     }
                 }
             }
@@ -82,6 +103,13 @@ impl StatusSink for TauriSink {
             Status::Idle => {
                 self.overlay.set_clickable(false);
                 self.overlay.hide();
+            }
+            // The overlay decides when a notice may take the capsule, and
+            // emits it itself at that moment — so not here, where it would
+            // land on top of whatever the capsule is showing.
+            Status::Notice { text } => {
+                self.overlay.notice(text.clone());
+                return;
             }
         }
 
@@ -127,13 +155,16 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::load_settings,
             commands::save_settings,
+            commands::set_fn_trigger,
             commands::validate_shortcut,
+            commands::can_mute_output,
             commands::api_key_status,
             commands::set_api_key,
             commands::clear_api_key,
             commands::permissions_status,
             commands::open_permission_settings,
             commands::input_device,
+            commands::input_devices,
             commands::history_entries,
             commands::delete_history_entry,
             commands::clear_history,
@@ -188,10 +219,47 @@ pub fn run() {
             let pipeline = Arc::new(Pipeline::new(loaded.clone(), sink, history, usage));
 
             // Open the microphone once now, so the first real dictation is not
-            // truncated waiting for CoreAudio to initialise.
-            pipeline.warmup();
+            // truncated waiting for CoreAudio to initialise — unless macOS has
+            // never asked about the microphone. Opening it is what makes macOS
+            // ask, and on a first run that dialog would land before the setup
+            // window could explain it. The setup window's "Allow…" opens the
+            // device instead, and `setup_state` warms up once it is granted.
+            // Denied and Unknown (every other OS) still warm up as before.
+            if permissions_at_launch.microphone == permissions::Permission::NotAsked {
+                tracing::info!("microphone never asked for; warmup waits for the setup window");
+            } else {
+                pipeline.warmup();
+            }
 
             spawn_level_ticker(app.handle().clone(), Arc::clone(&pipeline));
+
+            // Follow the system's choice of microphone, and say so when it
+            // changes: the settings window updates its Microphone row, and a
+            // notice names the new device — unless the user pinned one, in
+            // which case the default changing is not their concern. A device
+            // that merely appeared only refreshes the picker.
+            {
+                let app = app.handle().clone();
+                let overlay = Arc::clone(&overlay);
+                let watched = Arc::clone(&pipeline);
+                input_device::watch(move |change| match change {
+                    input_device::Change::Default(device) => {
+                        if let Err(err) = app.emit(INPUT_DEVICE_EVENT, &device) {
+                            tracing::warn!("could not announce the microphone change: {err}");
+                        }
+                        let pinned = watched.settings().input_device.is_some();
+                        if let (Some(device), false) = (device, pinned) {
+                            tracing::info!(microphone = %device.name, "default input device changed");
+                            overlay.notice(format!("Microphone: {}", device.name));
+                        }
+                    }
+                    input_device::Change::List => {
+                        if let Err(err) = app.emit(INPUT_DEVICE_EVENT, input_device::current()) {
+                            tracing::warn!("could not announce the device list change: {err}");
+                        }
+                    }
+                });
+            }
 
             tracing::info!(
                 api = session::api_base().as_deref(),
@@ -205,13 +273,16 @@ pub fn run() {
                 tracing::error!("could not bind the push-to-talk shortcut: {err:#}");
             }
 
+            // No permission is requested from here. Every system dialog is
+            // triggered by a button in the setup window, in the order the user
+            // reads them, once the window has said what each one is for. Three
+            // unexplained dialogs stacked on top of each other before that
+            // window existed is what a first launch used to look like.
             if loaded.fn_trigger {
-                if !fn_key::input_monitoring_granted() {
-                    tracing::info!("asking for Input Monitoring so hold-Fn can work");
-                    let _ = fn_key::request_input_monitoring();
-                }
                 // Failing here is not fatal: the shortcut above still works, so
-                // the user loses the nicer gesture rather than dictation.
+                // the user loses the nicer gesture rather than dictation. On a
+                // first run this is expected — the tap starts after the restart
+                // the setup window asks for.
                 if let Err(err) = fn_key::spawn(fn_bus) {
                     tracing::warn!(
                         "hold-Fn is enabled but could not start ({err:#}); \
@@ -222,12 +293,9 @@ pub fn run() {
 
             if !inject::accessibility_granted() {
                 tracing::warn!(
-                    "Accessibility permission not granted — pasting will silently fail. \
-                     Prompting for it now."
+                    "Accessibility permission not granted — pasting will silently fail \
+                     until it is granted from the setup window"
                 );
-                // Registers TeleKey in the Accessibility list and offers the
-                // user a direct route there. Shown at most once per launch.
-                permissions::prompt_for_accessibility();
             }
 
             // A build that cannot hold a permission is worth saying out loud —
@@ -251,6 +319,14 @@ pub fn run() {
             // requires it (see rule 1 in CLAUDE.md).
             let handle = app.handle().clone();
             let fn_trigger = loaded.fn_trigger;
+            // A restart the setup window asked for: it should come back up and
+            // say the job is done, or the user is left staring at nothing.
+            let after_restart = std::env::var_os(commands::SETUP_AFTER_RESTART).is_some();
+            if after_restart {
+                // SAFETY: still single-threaded startup; nothing else reads the
+                // environment yet.
+                unsafe { std::env::remove_var(commands::SETUP_AFTER_RESTART) };
+            }
             std::thread::spawn(move || {
                 let outstanding = setup::evaluate(
                     permissions_at_launch,
@@ -266,11 +342,11 @@ pub fn run() {
                     .iter()
                     .filter(|row| !row.is_done())
                     .count();
-                if outstanding.complete {
+                if outstanding.complete && !after_restart {
                     tracing::info!("setup is complete, nothing to prompt for");
                     return;
                 }
-                tracing::info!(missing, "opening the setup window");
+                tracing::info!(missing, after_restart, "opening the setup window");
 
                 let opener = handle.clone();
                 let queued = handle.run_on_main_thread(move || {
@@ -303,8 +379,19 @@ pub fn run() {
             );
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running telekey");
+        .build(tauri::generate_context!())
+        .expect("error while running telekey")
+        .run(|app, event| {
+            // Quitting mid-dictation must never leave the machine silent. This
+            // covers a clean exit; a force-kill cannot be caught, which is why
+            // the muting uses the device's own mute flag where it has one —
+            // that is one click to undo from the menu bar.
+            if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) {
+                if let Some(pipeline) = app.try_state::<Arc<Pipeline>>() {
+                    pipeline.restore_output();
+                }
+            }
+        });
 }
 
 pub const SETTINGS_LABEL: &str = "settings";
@@ -342,12 +429,23 @@ pub fn open_main_window(app: &AppHandle, tab: &str) -> tauri::Result<()> {
 
 pub const SETUP_LABEL: &str = "setup";
 
+/// The setup window's size. The height was measured in the browser preview
+/// with the fullest state on screen — four rows, the credentials form open,
+/// the "use the shortcut instead" action — at 754 px, and rounded up to leave
+/// room for an error line. The page keeps its footer stuck to the bottom, so
+/// even on a display too short for this the Done button stays in view.
+const SETUP_WIDTH: f64 = 460.0;
+const SETUP_HEIGHT: f64 = 800.0;
+const SETUP_MIN_HEIGHT: f64 = 620.0;
+/// Space left for the menubar and Dock when the display is smaller than the
+/// window would like to be.
+const SETUP_WORK_AREA_MARGIN: f64 = 24.0;
+
 /// Open the setup window, or bring it forward if it is already up.
 ///
 /// A window of its own rather than a tab of Settings: it is the first thing a
 /// new user sees, it has exactly one job — turn every dot green — and a
-/// settings window full of vocabulary lists and rate tables would bury it. It
-/// is fixed-size for the same reason.
+/// settings window full of vocabulary lists and rate tables would bury it.
 pub fn open_setup_window(app: &AppHandle) -> tauri::Result<()> {
     if let Some(existing) = app.get_webview_window(SETUP_LABEL) {
         existing.show()?;
@@ -355,21 +453,40 @@ pub fn open_setup_window(app: &AppHandle) -> tauri::Result<()> {
         return Ok(());
     }
 
+    let height = setup_height_for(app);
     let window = tauri::WebviewWindowBuilder::new(
         app,
         SETUP_LABEL,
         tauri::WebviewUrl::App("setup.html".into()),
     )
     .title("TeleKey Setup")
-    // Tall enough for the worst case — four rows and the restart banner —
-    // because a checklist that scrolls hides the item you have not done yet.
-    .inner_size(460.0, 760.0)
-    .resizable(false)
+    .inner_size(SETUP_WIDTH, height)
+    .min_inner_size(SETUP_WIDTH, SETUP_MIN_HEIGHT.min(height))
+    // Resizable so nothing can ever be clipped, but not maximisable: a
+    // full-screen checklist is absurd, and the green button would offer it.
+    .resizable(true)
+    .maximizable(false)
     .center()
     .build()?;
 
     window.set_focus()?;
     Ok(())
+}
+
+/// The preferred height, or as much of it as the display's work area allows.
+fn setup_height_for(app: &AppHandle) -> f64 {
+    let available = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .map(|monitor| {
+            let scale = monitor.scale_factor();
+            monitor.work_area().size.height as f64 / scale - SETUP_WORK_AREA_MARGIN
+        });
+    match available {
+        Some(limit) if limit < SETUP_HEIGHT => limit.max(SETUP_MIN_HEIGHT),
+        _ => SETUP_HEIGHT,
+    }
 }
 
 /// `telekey://auth?…` lands the Firebase session in the Keychain.
@@ -402,8 +519,29 @@ fn apply_auth_urls(app: &AppHandle, pipeline: &Pipeline, urls: Vec<url::Url>) {
                     tracing::warn!("could not emit session: {err}");
                 }
                 tracing::info!("hosted session stored");
-                if let Err(err) = open_main_window(app, "usage") {
-                    tracing::warn!("could not open credits after sign-in: {err}");
+
+                // Back to the window the user was in. Mid-setup, that is the
+                // setup window, whose rows still need doing; opening Usage on
+                // top of it left two windows and no obvious next step. This
+                // also covers a cold launch by the link itself, where the URL
+                // arrives before the setup window has been created: opening it
+                // here is idempotent with the startup check. Credentials are
+                // known ready — the session was stored a moment ago — so the
+                // Keychain is not read again on this thread.
+                let outstanding = app.try_state::<commands::LaunchPermissions>().map(|at_launch| {
+                    setup::evaluate(
+                        at_launch.0,
+                        permissions::current(),
+                        true,
+                        pipeline.settings().fn_trigger,
+                    )
+                });
+                let opened = match outstanding {
+                    Some(state) if !state.complete => open_setup_window(app),
+                    _ => open_main_window(app, "usage"),
+                };
+                if let Err(err) = opened {
+                    tracing::warn!("could not open a window after sign-in: {err}");
                 }
             }
             Err(err) => tracing::debug!("ignored URL: {err:#}"),

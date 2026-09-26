@@ -8,10 +8,20 @@
  */
 
 /* The settings page leaves room to scroll past the last section. This window is
-   a fixed-height checklist, so that space is just a gap above the footer. */
+   a checklist sized to fit, so that space is just a gap above the footer. It is
+   a flex column so the footer sits at the bottom of the window even when the
+   list is short — and sticks there if the list ever grows taller than the
+   window, so "Done" and the last row can never scroll out of sight. */
 .setupPage {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
   padding-top: 22px;
-  padding-bottom: 22px;
+  padding-bottom: 0;
+}
+
+.setupPage > .card {
+  flex: none;
 }
 
 /* The rows carry more explanation than a settings row, and the button has to
@@ -85,5 +95,9 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 20px;
+  margin-top: auto;
+  padding: 20px 0 22px;
+  position: sticky;
+  bottom: 0;
+  background: var(--paper);
 }

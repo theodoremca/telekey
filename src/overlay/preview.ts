@@ -28,6 +28,16 @@ const ROWS: Array<{
     message:
       "TeleKey needs Accessibility permission to paste. Grant it in System Settings › Privacy & Security › Accessibility.",
   },
+  {
+    label: "Notice — the default microphone changed",
+    state: "notice",
+    message: "Microphone: AirPods Pro",
+  },
+  {
+    label: "Notice — the microphone dropped out mid-sentence",
+    state: "notice",
+    message: "Microphone disconnected — kept the first 12 s",
+  },
 ];
 
 /** A syllable envelope with a trailing pause, so the trace looks like speech. */

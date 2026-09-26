@@ -6,6 +6,7 @@ import {
   messageFrom,
   type ApiKeyStatus,
   type HostedAccount,
+  type InputDevice,
   type Permissions,
   type Rates,
   type SessionStatus,
@@ -16,10 +17,15 @@ import { HistoryPanel } from "./HistoryPanel";
 import { SettingsPanel } from "./SettingsPanel";
 import { UsagePanel } from "./UsagePanel";
 import { toGlyphs } from "./shortcut";
+import { STATUS_EVENT, settlesADictation, type Status } from "../status";
 
 type Tab = "settings" | "history" | "usage";
 
 const TAB_EVENT = "telekey://tab";
+/** Any window saved settings; reload rather than trust our copy. */
+const SETTINGS_EVENT = "telekey://settings";
+/** The default microphone changed, or a device came or went. */
+const INPUT_DEVICE_EVENT = "telekey://input-device";
 
 /** The tray can open this window straight onto either tab. */
 function initialTab(): Tab {
@@ -34,8 +40,15 @@ export function App() {
   const [keyStatus, setKeyStatus] = useState<ApiKeyStatus | null>(null);
   const [session, setSession] = useState<SessionStatus | null>(null);
   const [account, setAccount] = useState<HostedAccount | null>(null);
-  const [device, setDevice] = useState<string | null>(null);
+  const [defaultDevice, setDefaultDevice] = useState<InputDevice | null>(null);
+  const [devices, setDevices] = useState<InputDevice[]>([]);
   const [signing, setSigning] = useState<Signing>("unknown");
+  // Hides the "mute other audio" toggle where the platform cannot do it, rather
+  // than offering a switch that would quietly do nothing.
+  const [canMuteOutput, setCanMuteOutput] = useState(false);
+  // Counts settled dictations. History and Usage refetch when it changes, so
+  // a tab left open shows the new transcript without being reopened.
+  const [dictations, setDictations] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const refreshStatus = useCallback(async () => {
@@ -58,23 +71,44 @@ export function App() {
     }
   }, []);
 
+  const refreshDevices = useCallback(async () => {
+    const [current, all] = await Promise.all([api.inputDevice(), api.inputDevices()]);
+    setDefaultDevice(current);
+    setDevices(all);
+  }, []);
+
   useEffect(() => {
     (async () => {
       try {
-        const [loaded, dev, sign] = await Promise.all([
+        const [loaded, sign, canMute] = await Promise.all([
           api.loadSettings(),
-          api.inputDevice(),
           api.signingStatus(),
+          api.canMuteOutput(),
         ]);
         setSettings(loaded);
-        setDevice(dev);
         setSigning(sign);
-        await refreshStatus();
+        setCanMuteOutput(canMute);
+        await Promise.all([refreshStatus(), refreshDevices()]);
       } catch (err) {
         setError(messageFrom(err));
       }
     })();
-  }, [refreshStatus]);
+  }, [refreshStatus, refreshDevices]);
+
+  // Plugging in a headset changes the default microphone and the list of
+  // choices; the backend says so, and the Microphone rows follow live.
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    listen<InputDevice | null>(INPUT_DEVICE_EVENT, (event) => {
+      setDefaultDevice(event.payload);
+      void refreshDevices().catch(() => {});
+    })
+      .then((unlisten) => {
+        stop = unlisten;
+      })
+      .catch(() => {});
+    return () => stop?.();
+  }, [refreshDevices]);
 
   // Permissions are granted in System Settings, not here. Re-check on return
   // rather than making the user restart the app.
@@ -112,6 +146,42 @@ export function App() {
     return () => stop?.();
   }, [refreshStatus]);
 
+  // The overlay's status stream, listened to for one reason: a dictation that
+  // has just settled changed history, usage and (for a hosted account) the
+  // balance. History and usage are written before the status is published,
+  // so refetching on it never races the write.
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    listen<Status>(STATUS_EVENT, (event) => {
+      if (!settlesADictation(event.payload)) return;
+      setDictations((count) => count + 1);
+      void refreshStatus().catch(() => {});
+    })
+      .then((unlisten) => {
+        stop = unlisten;
+      })
+      .catch(() => {});
+    return () => stop?.();
+  }, [refreshStatus]);
+
+  // Another window (the setup window, switching hold-Fn off) may have saved.
+  // Reload from the source rather than trusting the payload, so this copy can
+  // never be an older one that a later save here would write back.
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    listen(SETTINGS_EVENT, () => {
+      api
+        .loadSettings()
+        .then(setSettings)
+        .catch(() => {});
+    })
+      .then((unlisten) => {
+        stop = unlisten;
+      })
+      .catch(() => {});
+    return () => stop?.();
+  }, []);
+
   const save = useCallback(async (next: Settings) => {
     try {
       setSettings(await api.saveSettings(next));
@@ -131,8 +201,14 @@ export function App() {
     );
   }
 
+  // Everything a dictation needs. The microphone counts when granted, and also
+  // when "unknown": that is what every platform but macOS reports, and there
+  // is nothing to grant there.
+  const microphoneReady =
+    permissions?.microphone === "granted" || permissions?.microphone === "unknown";
   const ready =
     permissions?.accessibility === "granted" &&
+    microphoneReady &&
     (Boolean(keyStatus?.isSet) || Boolean(session?.signedIn));
 
   return (
@@ -195,17 +271,20 @@ export function App() {
           keyStatus={keyStatus}
           session={session}
           account={account}
-          device={device}
+          defaultDevice={defaultDevice}
+          devices={devices}
           signing={signing}
+          canMuteOutput={canMuteOutput}
           onSave={save}
           onKeyChanged={setKeyStatus}
           onSessionChanged={refreshStatus}
         />
       ) : tab === "history" ? (
-        <HistoryPanel shortcut={toGlyphs(settings.shortcut)} />
+        <HistoryPanel shortcut={toGlyphs(settings.shortcut)} refreshKey={dictations} />
       ) : (
         <UsagePanel
           settings={settings}
+          refreshKey={dictations}
           hosted={
             session?.signedIn
               ? (account ?? {

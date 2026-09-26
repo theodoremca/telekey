@@ -14,7 +14,7 @@ use std::sync::{
 
 use anyhow::{anyhow, Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{FromSample, Sample, SampleFormat, StreamConfig};
+use cpal::{ErrorKind, FromSample, Sample, SampleFormat, StreamConfig};
 use parking_lot::Mutex;
 use rubato::audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{Fft, FixedSync, Resampler};
@@ -38,14 +38,24 @@ impl Clip {
     }
 }
 
+/// A finished capture, plus anything the device reported on the way.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Recording {
+    pub clip: Clip,
+    /// The device dropped out or changed mid-capture, but audio was kept. For
+    /// the user to see once the dictation has settled, never instead of it.
+    pub warning: Option<String>,
+}
+
 enum Cmd {
     /// Open the device and discard the audio, so the expensive first open
     /// happens at launch rather than mid-sentence.
     Warmup,
     /// Replies once the stream is actually live, so nothing tells the user to
-    /// speak before the microphone is listening.
-    Start(mpsc::Sender<Result<()>>),
-    Stop(mpsc::Sender<Result<Clip>>),
+    /// speak before the microphone is listening. Carries the pinned device id,
+    /// if the user chose one.
+    Start(Option<String>, mpsc::Sender<Result<()>>),
+    Stop(mpsc::Sender<Result<Recording>>),
 }
 
 /// Handle to the capture thread.
@@ -82,10 +92,13 @@ impl AudioEngine {
     /// Blocking here is deliberate: the caller announces "recording" on the
     /// strength of this returning, and announcing it earlier is a lie that
     /// costs the user the start of their sentence.
-    pub fn start(&self) -> Result<()> {
+    ///
+    /// `preferred` is a device id to open instead of the system default; when
+    /// it is not connected, the default is used and a warning logged.
+    pub fn start(&self, preferred: Option<String>) -> Result<()> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.tx
-            .send(Cmd::Start(reply_tx))
+            .send(Cmd::Start(preferred, reply_tx))
             .map_err(|_| anyhow!("audio thread is gone"))?;
         reply_rx
             .recv()
@@ -93,7 +106,7 @@ impl AudioEngine {
     }
 
     /// Stop capturing and return the clip, resampled to [`TARGET_SAMPLE_RATE`].
-    pub fn stop(&self) -> Result<Clip> {
+    pub fn stop(&self) -> Result<Recording> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.tx
             .send(Cmd::Stop(reply_tx))
@@ -116,7 +129,7 @@ fn audio_thread(rx: mpsc::Receiver<Cmd>, level: Arc<AtomicU32>) {
         match cmd {
             Cmd::Warmup => {
                 let started = std::time::Instant::now();
-                match start_stream(Arc::clone(&level)) {
+                match start_stream(Arc::clone(&level), None) {
                     Ok(stream) => {
                         drop(stream);
                         level.store(0f32.to_bits(), Ordering::Relaxed);
@@ -130,14 +143,14 @@ fn audio_thread(rx: mpsc::Receiver<Cmd>, level: Arc<AtomicU32>) {
                     Err(err) => tracing::warn!("could not warm up the device: {err:#}"),
                 }
             }
-            Cmd::Start(reply) => {
+            Cmd::Start(preferred, reply) => {
                 if active.is_some() {
                     // Key repeat while the shortcut is held.
                     let _ = reply.send(Ok(()));
                     continue;
                 }
                 let started = std::time::Instant::now();
-                let result = match start_stream(Arc::clone(&level)) {
+                let result = match start_stream(Arc::clone(&level), preferred.as_deref()) {
                     Ok(stream) => {
                         tracing::debug!(
                             ms = started.elapsed().as_millis() as u64,
@@ -169,31 +182,83 @@ struct ActiveStream {
     stream: cpal::Stream,
     buffer: Arc<Mutex<Vec<f32>>>,
     source_rate: u32,
+    /// The first thing the device reported going wrong, if anything did. cpal
+    /// does not move a stream to a new device: unplugging the one in use ends
+    /// the audio, and the user has to be told rather than handed a transcript
+    /// of the first half of their sentence with no explanation.
+    fault: Arc<Mutex<Option<ErrorKind>>>,
 }
 
 impl ActiveStream {
-    fn finish(self) -> Result<Clip> {
+    fn finish(self) -> Result<Recording> {
         let ActiveStream {
             stream,
             buffer,
             source_rate,
+            fault,
         } = self;
 
         // Dropping the stream stops CoreAudio calling back, so the buffer is
         // settled by the time we take it.
         drop(stream);
 
+        let fault = fault.lock().take();
         let raw = std::mem::take(&mut *buffer.lock());
+        if raw.is_empty() {
+            if let Some(kind) = &fault {
+                anyhow::bail!("{} — nothing was recorded", describe_fault(kind));
+            }
+        }
+
         let samples = resample_to_target(raw, source_rate)?;
-        Ok(Clip { samples })
+        let clip = Clip { samples };
+        let warning = fault.map(|kind| {
+            format!(
+                "{} — kept the first {:.0} s",
+                describe_fault(&kind),
+                clip.duration_secs()
+            )
+        });
+        Ok(Recording { clip, warning })
     }
 }
 
-fn start_stream(level: Arc<AtomicU32>) -> Result<ActiveStream> {
+/// Words for what the device reported, in the overlay's two-line budget.
+fn describe_fault(kind: &ErrorKind) -> &'static str {
+    match kind {
+        ErrorKind::DeviceNotAvailable => "Microphone disconnected",
+        ErrorKind::StreamInvalidated => "Microphone changed mid-sentence",
+        _ => "Microphone stopped",
+    }
+}
+
+/// The device to open: the one the user pinned, if it is connected, else the
+/// system default.
+///
+/// Looked up by id rather than by scanning every device's configurations —
+/// this runs between key-down and the stream going live, and enumerating
+/// input devices probes each one.
+fn pick_device(host: &cpal::Host, preferred: Option<&str>) -> Result<cpal::Device> {
+    if let Some(wanted) = preferred {
+        let found = wanted
+            .parse::<cpal::DeviceId>()
+            .ok()
+            .and_then(|id| host.device_by_id(&id));
+        match found {
+            Some(device) => return Ok(device),
+            None => tracing::warn!(
+                device = wanted,
+                "the chosen microphone is not connected; using the system default"
+            ),
+        }
+    }
+    host.default_input_device()
+        .context("no input device available")
+}
+
+fn start_stream(level: Arc<AtomicU32>, preferred: Option<&str>) -> Result<ActiveStream> {
     let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .context("no input device available")?;
+    let device = pick_device(&host, preferred)?;
     let supported = device
         .default_input_config()
         .context("could not read the default input config")?;
@@ -206,7 +271,18 @@ fn start_stream(level: Arc<AtomicU32>) -> Result<ActiveStream> {
     tracing::debug!(source_rate, channels, ?sample_format, "opening input stream");
 
     let buffer = Arc::new(Mutex::new(Vec::<f32>::new()));
-    let err_fn = |err: cpal::Error| tracing::error!("audio stream error: {err}");
+    let fault = Arc::new(Mutex::new(None::<ErrorKind>));
+    let err_fn = {
+        let fault = Arc::clone(&fault);
+        move |err: cpal::Error| match err.kind() {
+            // A dropped buffer is a glitch, not a broken device.
+            ErrorKind::Xrun => tracing::debug!("audio stream overrun: {err}"),
+            kind => {
+                tracing::error!("audio stream error: {err}");
+                fault.lock().get_or_insert(kind);
+            }
+        }
+    };
 
     // One arm per sample format cpal may hand us; each funnels into `ingest`.
     macro_rules! build_stream {
@@ -238,6 +314,7 @@ fn start_stream(level: Arc<AtomicU32>) -> Result<ActiveStream> {
         stream,
         buffer,
         source_rate,
+        fault,
     })
 }
 

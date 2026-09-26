@@ -132,13 +132,8 @@ fn describe_signing() -> String {
 }
 
 fn describe_input_device() -> String {
-    use cpal::traits::{DeviceTrait, HostTrait};
-
-    match cpal::default_host().default_input_device() {
-        Some(device) => match device.id() {
-            Ok(id) => format!("{id}"),
-            Err(_) => "unnamed device".to_string(),
-        },
+    match crate::input_device::current() {
+        Some(device) => format!("{} ({})", device.name, device.id),
         None => "NONE FOUND".to_string(),
     }
 }

@@ -4,14 +4,16 @@
 //! demand would cost a webview launch at the exact moment the user is already
 //! waiting.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use parking_lot::Mutex;
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 use crate::panel;
+use crate::pipeline::Status;
 
 pub const OVERLAY_LABEL: &str = "overlay";
 
@@ -25,12 +27,23 @@ const FAILURE_LINGER: Duration = Duration::from_millis(4_500);
 /// A cancel is just confirmation that nothing happened — keep it brief.
 const CANCEL_LINGER: Duration = Duration::from_millis(700);
 
+/// A notice is a glance: "Microphone: AirPods Pro" needs no longer than this.
+const NOTICE_LINGER: Duration = Duration::from_millis(2_600);
+
 pub struct Overlay {
     app: AppHandle,
     window: WebviewWindow,
     /// Bumped on every visibility change so a scheduled hide belonging to an
     /// earlier dictation cannot close the overlay for the current one.
     generation: AtomicU64,
+    /// Whether something is on screen right now, from `show` until the hide
+    /// that ends it. A notice only takes the capsule when nothing else has it:
+    /// "recording" is false while transcribing and while a result lingers,
+    /// which is exactly when a notice would otherwise replace an error.
+    busy: AtomicBool,
+    /// The latest notice that arrived while the capsule was busy, shown once
+    /// it is free. Only the latest: two notices in a row are one fact.
+    pending_notice: Mutex<Option<String>>,
 }
 
 impl Overlay {
@@ -54,6 +67,8 @@ impl Overlay {
             app: app.clone(),
             window,
             generation: AtomicU64::new(0),
+            busy: AtomicBool::new(false),
+            pending_notice: Mutex::new(None),
         }))
     }
 
@@ -77,6 +92,7 @@ impl Overlay {
     /// follows the user's current display.
     pub fn show(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
+        self.busy.store(true, Ordering::SeqCst);
 
         self.on_main(|window| {
             if let Err(err) = position(window) {
@@ -88,13 +104,14 @@ impl Overlay {
         });
     }
 
-    pub fn hide(&self) {
+    pub fn hide(self: &Arc<Self>) {
         self.generation.fetch_add(1, Ordering::SeqCst);
         self.on_main(|window| {
             if let Err(err) = window.hide() {
                 tracing::warn!("could not hide the overlay: {err:#}");
             }
         });
+        self.release();
     }
 
     /// Hide after `delay`, unless another dictation starts in the meantime.
@@ -110,8 +127,43 @@ impl Overlay {
                         tracing::warn!("could not hide the overlay: {err:#}");
                     }
                 });
+                overlay.release();
             }
         });
+    }
+
+    /// Show a short note when the capsule is free, or keep it until it is.
+    ///
+    /// Never in place of a dictation's state: a notice that arrived while a
+    /// result was lingering would otherwise replace that result and, with its
+    /// own shorter linger, hide it early — an "Out of credits" the user never
+    /// saw. During a recording the note waits too; the waveform is the only
+    /// thing that belongs there.
+    pub fn notice(self: &Arc<Self>, text: String) {
+        if self.busy.load(Ordering::SeqCst) {
+            *self.pending_notice.lock() = Some(text);
+            return;
+        }
+        self.notice_now(text);
+    }
+
+    fn notice_now(self: &Arc<Self>, text: String) {
+        self.set_clickable(false);
+        self.show();
+        if let Err(err) = self.app.emit(crate::STATUS_EVENT, Status::Notice { text }) {
+            tracing::warn!("could not emit the notice: {err}");
+        }
+        self.hide_after(NOTICE_LINGER);
+    }
+
+    /// The capsule is free again. If a notice queued up meanwhile, it gets its
+    /// turn now — after the result, which is the whole point of the queue.
+    fn release(self: &Arc<Self>) {
+        self.busy.store(false, Ordering::SeqCst);
+        let queued = self.pending_notice.lock().take();
+        if let Some(text) = queued {
+            self.notice_now(text);
+        }
     }
 
     pub fn linger_after_success(self: &Arc<Self>) {

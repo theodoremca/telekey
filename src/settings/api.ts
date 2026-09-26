@@ -14,6 +14,15 @@ export interface Settings {
   rates: Rates;
   ratesUpdated: string;
   fnTrigger: boolean;
+  muteWhileRecording: boolean;
+  /** A pinned microphone's id, or null to follow the system default. */
+  inputDevice: string | null;
+}
+
+/** A microphone, as cpal names it. Mirrors `InputDevice` in input_device.rs. */
+export interface InputDevice {
+  id: string;
+  name: string;
 }
 
 export type Permission = "granted" | "denied" | "notAsked" | "unknown";
@@ -153,6 +162,16 @@ export const MAX_VOCABULARY = 100;
 const inTauri = () =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
+/**
+ * Query flags for the browser preview, so the states that are hard to reach
+ * can be looked at: `?balance=0` (a new account with nothing to spend),
+ * `?account=fail` (signed in, but the balance could not be fetched).
+ */
+const previewFlags = () =>
+  typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search)
+    : new URLSearchParams();
+
 const previewState: {
   settings: Settings;
   key: ApiKeyStatus;
@@ -166,6 +185,8 @@ const previewState: {
       { step: "apiKey", state: "missing", needsRestart: false },
       { step: "microphone", state: "asksOnFirstUse", needsRestart: false },
       { step: "accessibility", state: "missing", needsRestart: false },
+      // Listed because the preview settings have hold-Fn on, as a new install does.
+      { step: "inputMonitoring", state: "missing", needsRestart: false },
     ],
     complete: false,
     restartPending: false,
@@ -184,6 +205,8 @@ const previewState: {
     },
     ratesUpdated: "2026-08-24",
     fnTrigger: true,
+    muteWhileRecording: false,
+    inputDevice: null,
     profiles: [
       { app: "com.tinyspeck.slackmacgap", label: "Slack", style: { kind: "terse" } },
       { app: "com.apple.Terminal", label: "Terminal", style: { kind: "literal" } },
@@ -249,9 +272,21 @@ function grantInPreview(step: SetupStep) {
 
   row.state = "done";
   row.needsRestart = step === "accessibility" || step === "inputMonitoring";
-  setup.complete = setup.requirements.every((r) => r.state === "done");
-  setup.restartPending = setup.requirements.some((r) => r.needsRestart);
+  settlePreviewSetup();
 }
+
+/** The same two rules `setup::evaluate` applies: complete when every row is
+ *  done, and a restart offered only then. */
+function settlePreviewSetup() {
+  const setup = previewState.setup;
+  setup.complete = setup.requirements.every((r) => r.state === "done");
+  setup.restartPending = setup.complete && setup.requirements.some((r) => r.needsRestart);
+}
+
+const PREVIEW_DEVICES: InputDevice[] = [
+  { id: "coreaudio:BuiltInMicrophoneDevice", name: "MacBook Pro Microphone" },
+  { id: "coreaudio:AirPodsPro", name: "AirPods Pro" },
+];
 
 const preview = {
   loadSettings: async () => previewState.settings,
@@ -259,7 +294,19 @@ const preview = {
     previewState.settings = settings;
     return settings;
   },
+  setFnTrigger: async (enabled: boolean) => {
+    previewState.settings = { ...previewState.settings, fnTrigger: enabled };
+    // With hold-Fn off, Input Monitoring is no longer asked for.
+    if (!enabled) {
+      previewState.setup.requirements = previewState.setup.requirements.filter(
+        (row) => row.step !== "inputMonitoring",
+      );
+      settlePreviewSetup();
+    }
+    return previewState.settings;
+  },
   validateShortcut: async () => undefined,
+  canMuteOutput: async () => true,
   apiKeyStatus: async () => previewState.key,
   setApiKey: async () => {
     previewState.key = {
@@ -288,7 +335,15 @@ const preview = {
     previewState.session = { signedIn: false, email: null, uid: null };
     return previewState.session;
   },
-  hostedAccount: async () => structuredClone(previewState.account),
+  hostedAccount: async () => {
+    const flags = previewFlags();
+    if (flags.get("account") === "fail") {
+      throw "Session expired — sign in again";
+    }
+    const account = structuredClone(previewState.account);
+    if (flags.has("balance")) account.balanceCents = Number(flags.get("balance"));
+    return account;
+  },
   createCheckout: async () => undefined,
   permissions: async (): Promise<Permissions> => ({
     accessibility: "denied",
@@ -310,7 +365,8 @@ const preview = {
   },
   restartApp: async () => undefined,
   closeWindow: async () => undefined,
-  inputDevice: async () => "coreaudio:BuiltInMicrophoneDevice",
+  inputDevice: async (): Promise<InputDevice | null> => PREVIEW_DEVICES[0],
+  inputDevices: async (): Promise<InputDevice[]> => PREVIEW_DEVICES,
   historyEntries: async () => previewState.history,
   deleteHistoryEntry: async (id: number) => {
     previewState.history = previewState.history.filter((e) => e.id !== id);
@@ -377,6 +433,11 @@ const live = {
   loadSettings: () => invoke<Settings>("load_settings"),
   saveSettings: (settings: Settings) =>
     invoke<Settings>("save_settings", { settings }),
+  /** One field, changed under the backend's lock: safe from the setup window
+   *  while Settings is open with its own copy. */
+  setFnTrigger: (enabled: boolean) =>
+    invoke<Settings>("set_fn_trigger", { enabled }),
+  canMuteOutput: () => invoke<boolean>("can_mute_output"),
   validateShortcut: (accelerator: string) =>
     invoke<void>("validate_shortcut", { accelerator }),
   apiKeyStatus: () => invoke<ApiKeyStatus>("api_key_status"),
@@ -397,7 +458,8 @@ const live = {
   promptForMicrophone: () => invoke<void>("prompt_for_microphone"),
   restartApp: () => invoke<void>("restart_app"),
   closeWindow: () => getCurrentWindow().close(),
-  inputDevice: () => invoke<string | null>("input_device"),
+  inputDevice: () => invoke<InputDevice | null>("input_device"),
+  inputDevices: () => invoke<InputDevice[]>("input_devices"),
   historyEntries: () => invoke<HistoryEntry[]>("history_entries"),
   deleteHistoryEntry: (id: number) =>
     invoke<HistoryEntry[]>("delete_history_entry", { id }),

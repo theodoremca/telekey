@@ -7,6 +7,7 @@ import {
   type ApiKeyStatus,
   type CreditPack,
   type HostedAccount,
+  type InputDevice,
   type Permission,
   type Permissions,
   type SessionStatus,
@@ -22,8 +23,10 @@ export function SettingsPanel({
   keyStatus,
   session,
   account,
-  device,
+  defaultDevice,
+  devices,
   signing,
+  canMuteOutput,
   onSave,
   onKeyChanged,
   onSessionChanged,
@@ -33,8 +36,13 @@ export function SettingsPanel({
   keyStatus: ApiKeyStatus | null;
   session: SessionStatus | null;
   account: HostedAccount | null;
-  device: string | null;
+  /** The system's current default microphone. */
+  defaultDevice: InputDevice | null;
+  /** Every microphone that could be pinned. */
+  devices: InputDevice[];
   signing: Signing;
+  /** False where the platform cannot silence output; the toggle is then hidden. */
+  canMuteOutput: boolean;
   onSave: (next: Settings) => Promise<boolean>;
   onKeyChanged: (status: ApiKeyStatus) => void;
   onSessionChanged: () => Promise<void>;
@@ -50,9 +58,19 @@ export function SettingsPanel({
         />
         <PermissionRow
           label="Microphone"
-          hint={device ?? "No input device found."}
+          hint={
+            defaultDevice
+              ? `System default: ${defaultDevice.name}`
+              : "No input device found."
+          }
           state={permissions?.microphone ?? "unknown"}
           onOpen={() => api.openPermissionSettings("microphone")}
+        />
+        <InputRow
+          devices={devices}
+          defaultDevice={defaultDevice}
+          chosen={settings.inputDevice}
+          onChoose={(inputDevice) => void onSave({ ...settings, inputDevice })}
         />
         <AccountRow
           session={session}
@@ -108,6 +126,17 @@ export function SettingsPanel({
             hint="Lets TeleKey see the Fn key. Restart TeleKey after granting."
             state={permissions?.inputMonitoring ?? "unknown"}
             onOpen={() => api.openPermissionSettings("inputMonitoring")}
+          />
+        )}
+
+        {canMuteOutput && (
+          <Toggle
+            label="Mute other audio while dictating"
+            hint="Music and video go quiet while you hold, and come back when you let go."
+            checked={settings.muteWhileRecording}
+            onChange={(muteWhileRecording) =>
+              void onSave({ ...settings, muteWhileRecording })
+            }
           />
         )}
       </Section>
@@ -231,6 +260,65 @@ function PermissionRow({
           Open
         </button>
       )}
+    </div>
+  );
+}
+
+/**
+ * Which microphone to dictate with.
+ *
+ * "System default" is the answer for nearly everyone: plug in a headset and
+ * macOS moves the default to it, and TeleKey follows. Pinning is for the person
+ * whose headset microphone is worse than the one in the laptop. A pinned
+ * device that is not connected is still shown, and the default is used until
+ * it comes back.
+ */
+function InputRow({
+  devices,
+  defaultDevice,
+  chosen,
+  onChoose,
+}: {
+  devices: InputDevice[];
+  defaultDevice: InputDevice | null;
+  chosen: string | null;
+  onChoose: (id: string | null) => void;
+}) {
+  const missing = chosen !== null && !devices.some((device) => device.id === chosen);
+  const hint =
+    chosen === null
+      ? "Follows the system default, so a headset takes over when you connect it."
+      : missing
+        ? "The pinned microphone is not connected. The system default is used until it is."
+        : "Pinned. Stays on this microphone while it is connected.";
+
+  return (
+    <div className="row column">
+      <div className="row tight">
+        <div className="rowText">
+          <span className="rowLabel">Input</span>
+          <span className="rowHint">{hint}</span>
+        </div>
+      </div>
+      <div className="row tight">
+        <select
+          className="input"
+          value={chosen ?? ""}
+          onChange={(event) => onChoose(event.target.value || null)}
+        >
+          <option value="">
+            System default{defaultDevice ? ` (${defaultDevice.name})` : ""}
+          </option>
+          {devices.map((device) => (
+            <option key={device.id} value={device.id}>
+              {device.name}
+            </option>
+          ))}
+          {missing && chosen !== null && (
+            <option value={chosen}>Pinned microphone (not connected)</option>
+          )}
+        </select>
+      </div>
     </div>
   );
 }

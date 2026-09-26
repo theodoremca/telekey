@@ -25,6 +25,24 @@ tail -f ~/Library/Logs/telekey.log
 `run.sh` is the only way to test dictation end to end. It replaces
 `/Applications/TeleKey.app`, so it needs the user to run it or approve it.
 
+### Reset to a first install
+
+```bash
+./scripts/reset-to-first-run.sh --dry-run    # show what would go; changes nothing
+./scripts/reset-to-first-run.sh --reinstall  # wipe, then run.sh: a new user's first run
+```
+
+Quits the app, resets its three permissions, signs out, deletes the app and all
+its files (old Flowtype ones too, which first launch would otherwise adopt), and
+resets the signed-in staging account so the next sign-in gets a new user's
+credit. `--keep-credits` skips that last part. Destructive and irreversible, so
+it shows the plan and asks first. Permissions are reset *before* the app is
+deleted: `tccutil` finds the app through Launch Services and fails (-10814) once
+it is gone. Every path is spelled out; never add a wildcard, because a glob on
+`flowtype` under `~/Library` also matches Claude Code's cache for this repo. The
+credits helper, `functions/scripts/reset-staging-user.cjs`, has the project and
+the `staging-users` collection hard-coded, so it cannot reach production.
+
 ### Build without installing
 
 ```bash
@@ -54,6 +72,8 @@ bun run dev                                    # Vite on :1420
 open http://localhost:1420/index.html          # settings window, with preview stub data
 open http://localhost:1420/setup.html          # first-run permission checklist
 open http://localhost:1420/preview.html        # every overlay state on one page
+open 'http://localhost:1420/setup.html?balance=0'      # signed in with nothing to spend
+open 'http://localhost:1420/setup.html?account=fail'   # signed in, balance unreachable
 ```
 
 **`bun tauri dev` cannot dictate** — a bare binary has no `Info.plist`, so no
@@ -247,6 +267,45 @@ inline (`web/components/Mark.tsx`).
 './chunks/vendor-chunks/next.js'".**
 `next build` and `next dev` both write to `web/.next`, so building while the dev
 server runs wrecks it. Stop the dev server, build, then start it again.
+
+**15. "Mute while dictating" does nothing on some outputs, or leaves the volume
+wrong afterwards.**
+Not every output device has a mute property — several USB interfaces and some
+Bluetooth headsets do not — so `output_mute.rs` falls back to setting the volume
+scalar to zero and must then restore the *exact* previous level. Two rules keep
+that honest. The device that was muted is remembered and restored by id, because
+the default output can change mid-dictation. And `restore_output` is deliberately
+not gated on the setting: switching the toggle off mid-dictation must still hand
+the audio back. Restoring when nothing was muted is a no-op. Muting is also never
+allowed to fail a dictation — it warns and carries on, like history and usage.
+A force-kill while muted cannot be caught, which is why the device's own mute
+flag is preferred over volume: it is one click to undo in the menu bar.
+
+**16. A macOS permission dialog appears at launch, before the setup window.**
+Nothing in `lib.rs` `setup()` may request a permission, and the launch warmup
+is skipped while the microphone is `NotAsked`, because opening the device is
+what makes macOS ask. Every dialog is triggered by a button in the setup
+window, in the order the rows read, once the window has said what it is for;
+`setup_state` warms the microphone up the first time it sees it granted, and
+`Pipeline::begin` refuses to record until it is, so silence is never uploaded
+and billed. Three stacked, unexplained dialogs is what a first launch used to
+be. The restart banner waits until every other row is done (one restart, not
+two), and `restart_app` sets `TELEKEY_SETUP_AFTER_RESTART` so the relaunch
+reopens the window to say "TeleKey is ready". After the `telekey://auth` link,
+`apply_auth_urls` opens the setup window if setup is incomplete, never Usage on
+top of it.
+
+**17. A notice hides a result, or shows up mid-recording.**
+`Status::Notice` never goes through `TauriSink`'s generic emit. `Overlay::notice`
+shows it only when the capsule is free — `busy` is set from `show()` until the
+hide that ends it, because `is_recording` is false while transcribing and while
+a result lingers, which is exactly when a notice would replace an "Out of
+credits" and hide it early — and otherwise keeps the latest until that hide
+releases it. Device changes come from `input_device.rs`: the CoreAudio callback
+only signals a worker thread, which debounces, asks cpal what the default is
+now, and dedupes by id. A pinned device (`Settings.input_device`, a cpal id) is
+looked up with `device_by_id`, never by enumerating, because that runs between
+key-down and the stream going live.
 
 ---
 

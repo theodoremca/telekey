@@ -64,12 +64,26 @@ pub struct Settings {
     /// When the rates were last set, so staleness is visible rather than silent.
     #[serde(alias = "rates_updated")]
     pub rates_updated: String,
+    /// Silence whatever is playing while the key is held.
+    ///
+    /// Off by default: it changes something outside this app, so it is opt-in.
+    /// On speakers, playback otherwise bleeds into the microphone and lands in
+    /// the transcript. See `output_mute.rs`.
+    #[serde(alias = "mute_while_recording")]
+    pub mute_while_recording: bool,
     /// Hold Fn to dictate, in addition to the shortcut above.
     ///
     /// On by default: that is the gesture people try first. It needs Input
     /// Monitoring, which the setup window asks for on first launch.
     #[serde(alias = "fn_trigger")]
     pub fn_trigger: bool,
+    /// Which microphone to open, as cpal's device id (`coreaudio:<UID>` on
+    /// macOS). `None` follows the system default, which is what most people
+    /// want: plug in a headset and macOS moves the default to it. Pinning is
+    /// for the person whose headset mic is worse than the one in the laptop.
+    /// A pinned device that is not connected falls back to the default.
+    #[serde(alias = "input_device")]
+    pub input_device: Option<String>,
 }
 
 impl Default for Settings {
@@ -85,6 +99,8 @@ impl Default for Settings {
             rates: Rates::default(),
             rates_updated: "2026-08-24".to_string(),
             fn_trigger: true,
+            mute_while_recording: false,
+            input_device: None,
         }
     }
 }
@@ -367,6 +383,22 @@ mod tests {
         assert_eq!(settings.shortcut, "Ctrl+Alt+Space");
     }
 
+    /// A file written before a field existed must still load, with the new
+    /// field at its default rather than an error.
+    #[test]
+    fn a_file_without_the_mute_toggle_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("settings.json"),
+            r#"{"shortcut":"Ctrl+Alt+Space","fnTrigger":true}"#,
+        )
+        .unwrap();
+
+        let settings = Settings::load(dir.path()).unwrap();
+        assert!(!settings.mute_while_recording, "opt-in, so off by default");
+        assert!(settings.fn_trigger);
+    }
+
     #[test]
     fn settings_round_trip_through_disk() {
         let dir = tempfile::tempdir().unwrap();
@@ -381,6 +413,8 @@ mod tests {
             rates: Rates::default(),
             rates_updated: "2026-08-24".to_string(),
             fn_trigger: false,
+            mute_while_recording: true,
+            input_device: Some("coreaudio:BuiltInMicrophoneDevice".to_string()),
         };
 
         original.save(dir.path()).unwrap();

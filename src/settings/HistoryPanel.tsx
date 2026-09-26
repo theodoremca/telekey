@@ -8,7 +8,15 @@ import { api, messageFrom, type HistoryEntry } from "./api";
  * Clicking an entry copies it — that is why anyone opens this panel, so it is
  * the whole-row action rather than a button you have to aim at.
  */
-export function HistoryPanel({ shortcut }: { shortcut: string[] }) {
+export function HistoryPanel({
+  shortcut,
+  refreshKey,
+}: {
+  shortcut: string[];
+  /** Bumped by the window when a dictation finishes, so the list refetches
+   *  while it is on screen instead of only when the tab is reopened. */
+  refreshKey: number;
+}) {
   const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
   const [query, setQuery] = useState("");
   const [copied, setCopied] = useState<number | null>(null);
@@ -16,11 +24,23 @@ export function HistoryPanel({ shortcut }: { shortcut: string[] }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let stale = false;
     api
       .historyEntries()
-      .then(setEntries)
-      .catch((err) => setError(messageFrom(err)));
-  }, []);
+      .then((next) => {
+        if (stale) return;
+        setEntries(next);
+        setError(null);
+      })
+      .catch((err) => {
+        if (!stale) setError(messageFrom(err));
+      });
+    // Two fetches can overlap when dictations land quickly; the older one must
+    // not overwrite the newer list.
+    return () => {
+      stale = true;
+    };
+  }, [refreshKey]);
 
   useEffect(() => {
     if (copied === null) return;

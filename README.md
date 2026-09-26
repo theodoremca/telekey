@@ -33,11 +33,13 @@ Then work through **Setup** below.
 
 ## Setup
 
-TeleKey needs three things, and it walks you through them: a **Setup** window
-opens on first launch listing each one, with a button that takes you straight to
-the right pane of System Settings. It re-checks as you go, so a row turns green
-the moment you come back, and it asks you to restart only when a permission
-genuinely needs it. You can reopen it any time from the menubar icon → Setup…
+TeleKey needs up to four things, and it walks you through them: a **Setup**
+window opens on first launch listing each one, with a button that asks macOS
+for that permission right there, or opens the exact pane of System Settings.
+Nothing is asked for before that window has said what it is for. It re-checks
+as you go, so a row turns green the moment you come back, and it asks for one
+restart — only when a permission genuinely needs it, and only once everything
+else is done. You can reopen it any time from the menubar icon → Setup…
 
 The rest of this section is the same ground, if you would rather read it than
 click through it.
@@ -55,21 +57,32 @@ Or from the terminal:
 
 That reads the key from stdin, so it never lands in your shell history.
 
-**Or sign in.** Settings → Sign in opens the browser. Google or a magic link.
-TeleKey uses its own key and deducts prepaid credits. Buy packs from Settings
-or the website.
+**Or sign in.** Setup or Settings → Sign in opens the browser. Google or a
+magic link. TeleKey uses its own key and deducts prepaid credits. A new account
+starts empty, and Setup says so: buy a pack from there, from Settings, or on
+the website before your first dictation.
 
 ### 2. Microphone
 
-Prompted on your first dictation. Accept it.
+Setup's **Allow…** button brings up the macOS dialog; one click. If you hold
+the shortcut before allowing it, TeleKey asks then, and records and bills
+nothing until it is allowed.
 
 ### 3. Accessibility
 
-Required to paste into other apps. TeleKey prompts on launch; take the prompt,
-then switch it on in **System Settings › Privacy & Security › Accessibility**,
-and quit and reopen TeleKey so it re-reads the permission.
+Required to paste into other apps. Setup's **Open** button asks macOS to prompt
+and opens **System Settings › Privacy & Security › Accessibility** behind it;
+switch TeleKey on there. Granted after launch, it takes effect on the restart
+Setup offers once everything else is done.
 
 Without it, everything works right up to the paste and then nothing appears.
+
+### 4. Input Monitoring (hold-Fn only)
+
+Fn is a modifier, not a key, so seeing it needs Input Monitoring — a separate
+permission. Setup asks only while hold-Fn is on, and offers **Use the shortcut
+instead** if you would rather not grant it. Like Accessibility, it takes effect
+on restart.
 
 ### Check everything at once
 
@@ -81,7 +94,7 @@ Without it, everything works right up to the paste and then nothing appears.
   API key          yes  (from Keychain)
   accessibility    yes
   signature        stable (permissions survive rebuilds)
-  input device     coreaudio:BuiltInMicrophoneDevice
+  input device     MacBook Pro Microphone (coreaudio:BuiltInMicrophoneDevice)
 
 Ready to dictate.
 ```
@@ -99,6 +112,8 @@ Everything below is optional — TeleKey works with none of it configured.
 | **Shortcut** | Rebindable. Click **Change** and press the combination you want. |
 | **Vocabulary** | Names and jargon — "Kubernetes", your product names — sent to the model as recognition hints so they come back spelled right. |
 | **Formatting** | Per-app styles: literal in a terminal (no sentence capital, no full stop), terse in Slack, formal in Mail. Literal runs on your Mac; the others cost one extra request. |
+| **Mute while dictating** | Off by default. Silences whatever is playing for as long as you hold the key, so music and video cannot bleed into the microphone. Your volume comes back when you let go. macOS only for now. |
+| **Microphone** | Follows the system default, so a headset takes over when you connect it — the capsule says "Microphone: AirPods Pro" for a moment when that happens. Pin one in Settings › Input if you would rather it did not. If the microphone drops out mid-sentence, what was captured is still transcribed and the capsule tells you. |
 | **History** | Recent transcripts, click any to copy. Stored `0600` on your Mac only, capped, clearable, and switchable off entirely. |
 | **Usage** | What you have spent and how many minutes you have dictated — today, this month, all time — with a 30-day chart. Rates are editable, since published prices change. |
 

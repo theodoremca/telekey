@@ -30,10 +30,14 @@ const CHART_DAYS = 30;
 export function UsagePanel({
   settings,
   hosted,
+  refreshKey,
   onSaveRates,
 }: {
   settings: Settings;
   hosted: HostedAccount | null;
+  /** Bumped by the window when a dictation settles, so the figures refetch
+   *  while the tab is on screen. */
+  refreshKey: number;
   onSaveRates: (rates: Rates) => Promise<boolean>;
 }) {
   const [period, setPeriod] = useState<Period>("today");
@@ -58,7 +62,7 @@ export function UsagePanel({
 
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+  }, [refresh, refreshKey]);
 
   const clearAll = async () => {
     try {

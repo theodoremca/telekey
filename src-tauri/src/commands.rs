@@ -84,25 +84,63 @@ pub fn save_settings(
     }
 
     let dir = settings::config_dir().map_err(to_message)?;
-    settings.save(&dir).map_err(to_message)?;
+    // Written and made current under one lock: see `Pipeline::save_settings`.
+    let saved = pipeline.save_settings(&dir, settings).map_err(to_message)?;
 
-    if settings.fn_trigger != previous.fn_trigger {
+    if saved.fn_trigger != previous.fn_trigger {
         // The tap owns a run loop on its own thread for the life of the
         // process, so toggling it takes effect on relaunch. The UI says so.
         tracing::info!(
-            enabled = settings.fn_trigger,
+            enabled = saved.fn_trigger,
             "hold-Fn setting changed; applies on relaunch"
         );
     }
 
-    pipeline.update_settings(settings.clone());
     tracing::info!("settings saved");
+    announce_settings(&app, &saved);
 
-    Ok(settings)
+    Ok(saved)
+}
+
+/// Switch hold-Fn on or off without the caller holding a copy of `Settings`.
+///
+/// The setup window uses this to let someone skip Input Monitoring. Changing
+/// the one field under the lock means a Settings window open at the same time
+/// cannot write its older copy back over the change, and the event below tells
+/// it to reload.
+#[tauri::command]
+pub fn set_fn_trigger(
+    app: AppHandle,
+    pipeline: State<'_, Arc<Pipeline>>,
+    enabled: bool,
+) -> Result<Settings, String> {
+    let dir = settings::config_dir().map_err(to_message)?;
+    let saved = pipeline.set_fn_trigger(&dir, enabled).map_err(to_message)?;
+    tracing::info!(enabled, "hold-Fn setting changed; applies on relaunch");
+    announce_settings(&app, &saved);
+    Ok(saved)
+}
+
+/// Every window reloads its settings on this, so no window can save a stale
+/// copy over another's change.
+fn announce_settings(app: &AppHandle, saved: &Settings) {
+    use tauri::Emitter;
+    if let Err(err) = app.emit(crate::SETTINGS_EVENT, saved) {
+        tracing::warn!("could not announce the settings change: {err}");
+    }
 }
 
 /// Check an accelerator without binding it, so the recorder can give feedback
 /// as the user presses keys.
+/// Whether this platform can silence system output.
+///
+/// The settings window hides the "mute while dictating" toggle when it cannot,
+/// so no switch is offered that would quietly do nothing.
+#[tauri::command]
+pub fn can_mute_output(pipeline: State<'_, Arc<Pipeline>>) -> bool {
+    pipeline.can_mute_output()
+}
+
 #[tauri::command]
 pub fn validate_shortcut(accelerator: String) -> Result<(), String> {
     trigger::parse_accelerator(&accelerator)
@@ -161,9 +199,16 @@ pub fn setup_state(
     pipeline: State<'_, Arc<Pipeline>>,
     at_launch: State<'_, LaunchPermissions>,
 ) -> SetupState {
+    let now = permissions::current();
+    // Launch skips the warmup while the microphone has never been asked for,
+    // so the first poll to see it granted pays that cost now instead of on the
+    // user's first sentence. A no-op once anything has warmed up.
+    if now.microphone.is_granted() {
+        pipeline.warmup_once();
+    }
     setup::evaluate(
         at_launch.0,
-        permissions::current(),
+        now,
         credentials_ready(),
         pipeline.settings().fn_trigger,
     )
@@ -207,13 +252,16 @@ pub fn open_hosted_account() -> Result<(), String> {
     crate::session::open_hosted_account().map_err(to_message)
 }
 
-#[tauri::command]
+/// Both of these make a blocking HTTP request. A synchronous command runs on
+/// the main thread, which would freeze every window (and the overlay) for as
+/// long as the network takes; `async` moves them to Tauri's thread pool.
+#[tauri::command(async)]
 pub fn hosted_account() -> Result<crate::hosted::HostedAccount, String> {
     crate::hosted::fetch_account().map_err(to_message)
 }
 
 /// Start Stripe Checkout in the browser. The webhook credits the ledger.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_checkout(pack_id: String) -> Result<(), String> {
     let url = crate::hosted::create_checkout(&pack_id).map_err(to_message)?;
     crate::session::open_in_browser(&url).map_err(to_message)
@@ -237,12 +285,20 @@ pub fn prompt_for_microphone(pipeline: State<'_, Arc<Pipeline>>) {
     std::thread::spawn(move || pipeline.warmup());
 }
 
+/// Set in the environment before a restart from the setup window. The new
+/// process inherits it and opens the setup window even though nothing is left
+/// to do, so the user sees "TeleKey is ready" rather than nothing at all.
+pub const SETUP_AFTER_RESTART: &str = "TELEKEY_SETUP_AFTER_RESTART";
+
 /// Quit and relaunch.
 ///
 /// Accessibility trust and the Fn event tap are both read while the process
 /// starts, so for those two this is the only way to finish the job.
 #[tauri::command]
 pub fn restart_app(app: AppHandle) {
+    // SAFETY: the process is about to exec its replacement; no other thread
+    // reads the environment between here and that.
+    unsafe { std::env::set_var(SETUP_AFTER_RESTART, "1") };
     app.restart()
 }
 
@@ -270,11 +326,19 @@ pub fn signing_status() -> Signing {
 
 #[tauri::command]
 pub fn open_permission_settings(pane: SettingsPane) -> Result<(), String> {
-    // For Accessibility, ask macOS to prompt first: that registers TeleKey in
-    // the list, so the user only has to flip a switch that is already there
-    // rather than find the right bundle with the + button.
-    if matches!(pane, SettingsPane::Accessibility) {
-        permissions::prompt_for_accessibility();
+    // Ask macOS to prompt first: that registers TeleKey in the list, so the
+    // user only has to flip a switch that is already there rather than find
+    // the right bundle with the + button. The dialog's own button leads to the
+    // same pane, which is open behind it; a prompt macOS has already shown
+    // once does nothing, and then the pane is the only way.
+    match pane {
+        SettingsPane::Accessibility => {
+            permissions::prompt_for_accessibility();
+        }
+        SettingsPane::InputMonitoring => {
+            crate::fn_key::request_input_monitoring();
+        }
+        SettingsPane::Microphone => {}
     }
     permissions::open_settings_pane(pane).map_err(to_message)
 }
@@ -383,14 +447,17 @@ pub fn open_apps() -> Vec<RunningApp> {
 }
 
 /// The default input device, so the user can confirm which microphone is live.
-#[tauri::command]
-pub fn input_device() -> Option<String> {
-    use cpal::traits::{DeviceTrait, HostTrait};
+/// Async because describing a device reads its configurations, which is not
+/// instant, and this must not hold the main thread.
+#[tauri::command(async)]
+pub fn input_device() -> Option<crate::input_device::InputDevice> {
+    crate::input_device::current()
+}
 
-    cpal::default_host()
-        .default_input_device()
-        .and_then(|device| device.id().ok())
-        .map(|id| format!("{id}"))
+/// Every input device, for the picker in Settings.
+#[tauri::command(async)]
+pub fn input_devices() -> Vec<crate::input_device::InputDevice> {
+    crate::input_device::list()
 }
 
 #[cfg(test)]

@@ -17,6 +17,8 @@ use crate::audio::{AudioEngine, Clip};
 use crate::frontmost::{frontmost_app, TargetApp};
 use crate::history::History;
 use crate::inject::{self, PASTE_SETTLE_DELAY};
+use crate::output_mute::{self, OutputMute};
+use crate::permissions::{self, Permission};
 use crate::hosted::{HostedPolisher, HostedTranscriber};
 use crate::polish::{OpenAiPolisher, Polisher};
 use crate::session;
@@ -36,6 +38,10 @@ pub enum Status {
     Failed { message: String },
     /// Recording discarded, or transcription abandoned. Nothing was pasted.
     Cancelled,
+    /// A short note that is not the state of a dictation — the microphone
+    /// changed, or dropped out part-way. The overlay shows it only when no
+    /// dictation owns the capsule, and never in place of a result.
+    Notice { text: String },
 }
 
 /// Anything that wants to know what the pipeline is doing — in the app, the
@@ -67,7 +73,22 @@ pub struct Pipeline {
     cancelled: AtomicBool,
     /// True only while Recording or Transcribing — Escape is a no-op otherwise.
     escape_arm: crate::escape::Arm,
+    /// Silences whatever is playing for the length of the hold, when the user
+    /// has asked for it. A trait so tests need no sound card.
+    output: Arc<dyn OutputMute>,
+    /// Whether the microphone has been opened once this process. Set by the
+    /// launch warmup, or by the first setup poll to see the permission granted.
+    warmed: AtomicBool,
+    /// Something the audio device reported mid-recording, kept until the
+    /// dictation settles so the note appears after the result, not instead
+    /// of it.
+    device_warning: Mutex<Option<String>>,
 }
+
+/// What the user sees when they hold the key before allowing the microphone.
+/// The setup window opens alongside it (see `TauriSink`), so "in Setup" is a
+/// place they are looking at, not one they have to find.
+pub const MICROPHONE_NEEDED: &str = "Allow the microphone in Setup, then hold again";
 
 impl Pipeline {
     pub fn new(
@@ -88,7 +109,24 @@ impl Pipeline {
             recording: AtomicBool::new(false),
             cancelled: AtomicBool::new(false),
             escape_arm: crate::escape::new_arm(),
+            output: output_mute::for_this_platform(),
+            warmed: AtomicBool::new(false),
+            device_warning: Mutex::new(None),
         }
+    }
+
+    /// Swap in another output control. Tests use it to watch mute and restore
+    /// without touching the machine's volume.
+    pub fn with_output_mute(mut self, output: Arc<dyn OutputMute>) -> Self {
+        self.output = output;
+        self
+    }
+
+    /// Whether this platform can silence system output at all. The settings
+    /// window hides the toggle when it cannot, rather than offering one that
+    /// quietly does nothing.
+    pub fn can_mute_output(&self) -> bool {
+        self.output.supported()
     }
 
     pub fn settings(&self) -> Settings {
@@ -99,10 +137,44 @@ impl Pipeline {
         let limit = settings.history_limit;
         let keeping = settings.history_enabled;
         *self.settings.lock() = settings;
+        self.apply_history_policy(keeping, limit);
+    }
 
-        // Turning history off, or lowering the cap, must take effect now rather
-        // than at the next dictation — the user may have just decided the
-        // existing entries should not be there.
+    /// Write `next` to disk and make it current, as one step.
+    ///
+    /// The lock is held across the write so two windows saving at once — the
+    /// setup window switching hold-Fn off while Settings is open, say — cannot
+    /// interleave a read, a write and a cache update and lose one of the saves.
+    /// The history policy runs after the lock is released: `enforce_limit`
+    /// never touches the settings lock, but keeping the two apart costs nothing
+    /// and removes a whole class of deadlock.
+    pub fn save_settings(&self, dir: &std::path::Path, next: Settings) -> Result<Settings> {
+        let limit = next.history_limit;
+        let keeping = next.history_enabled;
+        {
+            let mut current = self.settings.lock();
+            next.save(dir)?;
+            *current = next.clone();
+        }
+        self.apply_history_policy(keeping, limit);
+        Ok(next)
+    }
+
+    /// Change one field under the lock, so a stale copy held by another window
+    /// cannot be written back over it.
+    pub fn set_fn_trigger(&self, dir: &std::path::Path, enabled: bool) -> Result<Settings> {
+        let mut current = self.settings.lock();
+        let mut next = current.clone();
+        next.fn_trigger = enabled;
+        next.save(dir)?;
+        *current = next.clone();
+        Ok(next)
+    }
+
+    /// Turning history off, or lowering the cap, must take effect now rather
+    /// than at the next dictation — the user may have just decided the existing
+    /// entries should not be there.
+    fn apply_history_policy(&self, keeping: bool, limit: usize) {
         let outcome = if keeping {
             self.history.enforce_limit(limit)
         } else {
@@ -132,6 +204,31 @@ impl Pipeline {
         }
     }
 
+    /// Silence system output for the length of the hold, if that is switched on.
+    ///
+    /// Never fatal. A dictation that could not quiet the speakers is still a
+    /// good dictation, the same rule history and usage follow.
+    fn mute_output(&self) {
+        if !self.settings.lock().mute_while_recording {
+            return;
+        }
+        if let Err(err) = self.output.mute() {
+            tracing::warn!("could not mute system output: {err:#}");
+        }
+    }
+
+    /// Put system output back.
+    ///
+    /// Deliberately unconditional, not gated on the setting: switching the
+    /// toggle off mid-dictation must still hand back the audio, and restoring
+    /// when nothing was muted does nothing. Also called on the way out of the
+    /// app, so quitting mid-dictation cannot leave the machine silent.
+    pub fn restore_output(&self) {
+        if let Err(err) = self.output.restore() {
+            tracing::warn!("could not restore system output: {err:#}");
+        }
+    }
+
     /// Drop the cached clients so the next dictation picks up a new API key.
     pub fn invalidate_transcriber(&self) {
         *self.transcriber.lock() = None;
@@ -148,7 +245,18 @@ impl Pipeline {
     /// The first stream a process opens costs ~2s; without this the user's
     /// first dictation after launch loses its opening words.
     pub fn warmup(&self) {
+        self.warmed.store(true, Ordering::SeqCst);
         self.engine.warmup();
+    }
+
+    /// Warm up if nothing has yet. For the user who allowed the microphone
+    /// after launch: the launch skipped the warmup so as not to prompt them
+    /// before the setup window could say why, and this pays it as soon as the
+    /// permission lands rather than on their first sentence.
+    pub fn warmup_once(&self) {
+        if !self.warmed.swap(true, Ordering::SeqCst) {
+            self.engine.warmup();
+        }
     }
 
     pub fn is_recording(&self) -> bool {
@@ -269,8 +377,9 @@ impl Pipeline {
 
     fn abort_recording(&self) {
         self.recording.store(false, Ordering::Relaxed);
+        self.restore_output();
         match self.engine.stop() {
-            Ok(mut clip) => clip.samples.zeroize(),
+            Ok(mut recording) => recording.clip.samples.zeroize(),
             Err(err) => tracing::debug!("nothing to discard: {err:#}"),
         }
         self.announce(Status::Cancelled);
@@ -279,15 +388,21 @@ impl Pipeline {
     fn begin_transcribe(self: &Arc<Self>) -> Option<Receiver<Result<Option<String>, String>>> {
         let started = Instant::now();
         self.recording.store(false, Ordering::Relaxed);
+        // The key is up and the audio is captured: hand playback back now,
+        // rather than holding the room silent for the transcription too.
+        self.restore_output();
 
-        let clip = match self.engine.stop() {
-            Ok(clip) => clip,
+        let recording = match self.engine.stop() {
+            Ok(recording) => recording,
             Err(err) => {
                 tracing::error!("could not stop recording: {err:#}");
                 self.fail(format!("Recording failed: {err}"));
                 return None;
             }
         };
+        let clip = recording.clip;
+        // Shown once the dictation has settled, after its result.
+        *self.device_warning.lock() = recording.warning;
 
         let duration = clip.duration_secs();
         self.announce(Status::Transcribing);
@@ -322,23 +437,46 @@ impl Pipeline {
     fn settle_transcribe(&self, outcome: Result<Option<String>, String>) {
         if self.cancelled.load(Ordering::SeqCst) {
             self.announce_cancelled();
-            return;
+        } else {
+            match outcome {
+                Ok(Some(text)) => {
+                    self.remember(&text);
+                    self.announce(Status::Inserted { text });
+                }
+                Ok(None) => self.announce_cancelled(),
+                Err(message) => {
+                    tracing::error!("dictation failed: {message}");
+                    self.fail(message);
+                }
+            }
         }
 
-        match outcome {
-            Ok(Some(text)) => {
-                self.remember(&text);
-                self.announce(Status::Inserted { text });
-            }
-            Ok(None) => self.announce_cancelled(),
-            Err(message) => {
-                tracing::error!("dictation failed: {message}");
-                self.fail(message);
-            }
+        // After the result, whatever it was: a microphone that dropped out is
+        // worth knowing about whether the words made it or not, but it is
+        // never the headline.
+        if let Some(text) = self.device_warning.lock().take() {
+            self.sink.publish(Status::Notice { text });
         }
     }
 
     fn begin(&self) {
+        // Without the permission the stream opens on silence, and that silence
+        // would be uploaded, billed and reported as "nothing was transcribed".
+        // Opening the device is what makes macOS ask, so a never-asked user
+        // still gets the system dialog here — and the setup window with it.
+        match permissions::microphone() {
+            Permission::NotAsked => {
+                self.warmup();
+                self.fail(MICROPHONE_NEEDED.to_string());
+                return;
+            }
+            Permission::Denied => {
+                self.fail(MICROPHONE_NEEDED.to_string());
+                return;
+            }
+            Permission::Granted | Permission::Unknown => {}
+        }
+
         // Capture the target app before anything else can steal focus.
         let target = frontmost_app();
         tracing::info!(target = target.profile_key(), "dictation started");
@@ -347,11 +485,16 @@ impl Pipeline {
         // Blocks until the stream is actually live. Announcing "recording"
         // before that point is what made the user speak into a microphone that
         // was not yet open.
-        if let Err(err) = self.engine.start() {
+        let preferred = self.settings.lock().input_device.clone();
+        if let Err(err) = self.engine.start(preferred) {
             tracing::error!("could not start recording: {err:#}");
             self.fail(format!("Could not start recording: {err}"));
             return;
         }
+
+        // After the stream is live, so a device that refuses to mute cannot
+        // delay the recording the user is already speaking into.
+        self.mute_output();
 
         self.recording.store(true, Ordering::Relaxed);
         self.announce(Status::Recording);
@@ -712,6 +855,244 @@ mod tests {
                 units: self.units,
             })
         }
+    }
+
+    use std::sync::atomic::AtomicUsize;
+
+    /// Watches mute and restore without touching the machine's volume.
+    #[derive(Default)]
+    struct FakeOutput {
+        mutes: AtomicUsize,
+        restores: AtomicUsize,
+        held: AtomicBool,
+        /// Stands in for a device with neither a mute flag nor a volume control.
+        broken: bool,
+    }
+
+    impl FakeOutput {
+        fn broken() -> Self {
+            Self {
+                broken: true,
+                ..Self::default()
+            }
+        }
+
+        fn counts(&self) -> (usize, usize) {
+            (
+                self.mutes.load(Ordering::SeqCst),
+                self.restores.load(Ordering::SeqCst),
+            )
+        }
+    }
+
+    impl crate::output_mute::OutputMute for FakeOutput {
+        fn mute(&self) -> Result<()> {
+            self.mutes.fetch_add(1, Ordering::SeqCst);
+            if self.broken {
+                return Err(anyhow::anyhow!("no mute or volume control"));
+            }
+            self.held.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn restore(&self) -> Result<()> {
+            self.restores.fetch_add(1, Ordering::SeqCst);
+            self.held.store(false, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn supported(&self) -> bool {
+            true
+        }
+    }
+
+    fn with_muting(enabled: bool) -> (Arc<Pipeline>, Arc<FakeOutput>) {
+        let output = Arc::new(FakeOutput::default());
+        let settings = Settings {
+            mute_while_recording: enabled,
+            ..Settings::default()
+        };
+        let pipeline = Pipeline::new(settings, Arc::new(NullSink), test_history(), test_usage())
+            .with_output_mute(Arc::clone(&output) as Arc<dyn crate::output_mute::OutputMute>);
+        (Arc::new(pipeline), output)
+    }
+
+    #[test]
+    fn muting_is_opt_in() {
+        let (pipeline, output) = with_muting(false);
+        pipeline.mute_output();
+        assert_eq!(output.counts(), (0, 0), "the toggle was off");
+        assert!(!output.held.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn muting_silences_output_when_switched_on() {
+        let (pipeline, output) = with_muting(true);
+        pipeline.mute_output();
+        assert_eq!(output.counts(), (1, 0));
+        assert!(output.held.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn releasing_the_key_hands_playback_back() {
+        let (pipeline, output) = with_muting(true);
+        pipeline.mute_output();
+        // Stop: what the pipeline runs when the key comes up.
+        pipeline.begin_transcribe();
+        assert_eq!(output.counts().1, 1, "restored on stop");
+        assert!(!output.held.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn cancelling_hands_playback_back() {
+        let (pipeline, output) = with_muting(true);
+        pipeline.mute_output();
+        pipeline.abort_recording();
+        assert_eq!(output.counts().1, 1, "restored on cancel");
+        assert!(!output.held.load(Ordering::SeqCst));
+    }
+
+    /// Switching the toggle off mid-dictation must still give the audio back:
+    /// restoring is deliberately not gated on the setting.
+    #[test]
+    fn turning_the_toggle_off_mid_dictation_still_restores() {
+        let (pipeline, output) = with_muting(true);
+        pipeline.mute_output();
+        pipeline.update_settings(Settings::default());
+
+        pipeline.restore_output();
+        assert_eq!(output.counts().1, 1);
+        assert!(!output.held.load(Ordering::SeqCst));
+    }
+
+    /// A device that cannot be silenced is a warning in the log, never a failed
+    /// dictation — the same rule history and usage follow. The pipeline carries
+    /// on to the transcribe step exactly as it would have.
+    #[test]
+    fn a_device_that_will_not_mute_does_not_fail_the_dictation() {
+        let output = Arc::new(FakeOutput::broken());
+        let settings = Settings {
+            mute_while_recording: true,
+            ..Settings::default()
+        };
+        let pipeline = Arc::new(
+            Pipeline::new(settings, Arc::new(NullSink), test_history(), test_usage())
+                .with_output_mute(Arc::clone(&output) as Arc<dyn crate::output_mute::OutputMute>),
+        );
+
+        pipeline.mute_output();
+        assert_eq!(output.counts().0, 1, "it tried");
+        assert!(!output.held.load(Ordering::SeqCst), "and it did not take");
+
+        // Releasing the key still runs the rest of the dictation, and still
+        // hands playback back even though the mute never took.
+        pipeline.begin_transcribe();
+        assert_eq!(output.counts().1, 1);
+    }
+
+    /// Notes how many history entries exist at the moment `Inserted` is
+    /// published. The settings window refetches history on that event, so the
+    /// entry has to be on disk first or the refetch shows the old list.
+    struct HistoryWatchingSink {
+        history: Arc<History>,
+        entries_at_inserted: Mutex<Option<usize>>,
+    }
+
+    impl StatusSink for HistoryWatchingSink {
+        fn publish(&self, status: Status) {
+            if matches!(status, Status::Inserted { .. }) {
+                *self.entries_at_inserted.lock() = Some(self.history.entries().len());
+            }
+        }
+    }
+
+    fn settle_with_history(enabled: bool) -> Option<usize> {
+        let history = test_history();
+        let sink = Arc::new(HistoryWatchingSink {
+            history: Arc::clone(&history),
+            entries_at_inserted: Mutex::new(None),
+        });
+        let settings = Settings {
+            history_enabled: enabled,
+            ..Settings::default()
+        };
+        let pipeline = Pipeline::new(
+            settings,
+            Arc::clone(&sink) as Arc<dyn StatusSink>,
+            history,
+            test_usage(),
+        );
+
+        // `insert()` needs Accessibility, so the paste path is not reachable
+        // in a test; settling is where history and the announcement meet.
+        pipeline.settle_transcribe(Ok(Some("hello there".into())));
+        let seen = *sink.entries_at_inserted.lock();
+        seen
+    }
+
+    #[test]
+    fn history_is_written_before_inserted_is_announced() {
+        assert_eq!(settle_with_history(true), Some(1));
+    }
+
+    #[test]
+    fn inserted_is_still_announced_with_history_off() {
+        assert_eq!(settle_with_history(false), Some(0));
+    }
+
+    #[test]
+    fn saving_settings_holds_the_lock_and_returns_what_was_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipeline = Pipeline::new(Settings::default(), Arc::new(NullSink), test_history(), test_usage());
+
+        let saved = pipeline
+            .save_settings(
+                dir.path(),
+                Settings {
+                    vocabulary: vec!["Zustand".into()],
+                    ..Settings::default()
+                },
+            )
+            .unwrap();
+
+        assert_eq!(saved.vocabulary, vec!["Zustand".to_string()]);
+        assert_eq!(pipeline.settings().vocabulary, vec!["Zustand".to_string()]);
+        assert_eq!(
+            Settings::load(dir.path()).unwrap().vocabulary,
+            vec!["Zustand".to_string()]
+        );
+    }
+
+    #[test]
+    fn switching_fn_off_keeps_every_other_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipeline = Pipeline::new(
+            Settings {
+                vocabulary: vec!["Hordanso".into()],
+                fn_trigger: true,
+                ..Settings::default()
+            },
+            Arc::new(NullSink),
+            test_history(),
+            test_usage(),
+        );
+
+        let saved = pipeline.set_fn_trigger(dir.path(), false).unwrap();
+
+        assert!(!saved.fn_trigger);
+        assert_eq!(saved.vocabulary, vec!["Hordanso".to_string()]);
+        assert!(!Settings::load(dir.path()).unwrap().fn_trigger);
+    }
+
+    #[test]
+    fn warmup_once_only_opens_the_device_the_first_time() {
+        let pipeline = Pipeline::new(Settings::default(), Arc::new(NullSink), test_history(), test_usage());
+        assert!(!pipeline.warmed.load(Ordering::SeqCst));
+        pipeline.warmup_once();
+        assert!(pipeline.warmed.load(Ordering::SeqCst));
+        // A second call is a no-op; the flag stays set either way.
+        pipeline.warmup_once();
+        assert!(pipeline.warmed.load(Ordering::SeqCst));
     }
 
     #[test]

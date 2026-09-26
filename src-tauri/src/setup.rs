@@ -85,6 +85,11 @@ pub struct SetupState {
     /// complete: they have granted everything asked of them, and the window
     /// should stop blocking them on a screen they have finished with.
     pub complete: bool,
+    /// Something granted this session is not in force yet — and there is
+    /// nothing else left to grant. Held back until then on purpose: Accessibility
+    /// comes before Input Monitoring in the list, and offering a restart the
+    /// moment the first one lands means asking for a second restart after the
+    /// next. One restart, once everything else is done.
     pub restart_pending: bool,
 }
 
@@ -129,9 +134,10 @@ pub fn evaluate(
         ));
     }
 
+    let complete = requirements.iter().all(Requirement::is_done);
     SetupState {
-        complete: requirements.iter().all(Requirement::is_done),
-        restart_pending: requirements.iter().any(|row| row.needs_restart),
+        complete,
+        restart_pending: complete && requirements.iter().any(|row| row.needs_restart),
         requirements,
     }
 }
@@ -215,6 +221,25 @@ mod tests {
 
         assert!(row(&state, Step::Accessibility).needs_restart);
         assert!(state.restart_pending);
+    }
+
+    #[test]
+    fn the_restart_waits_until_everything_else_is_granted() {
+        // Accessibility landed this session, but Input Monitoring is still
+        // outstanding. Restarting now would only mean restarting again later.
+        let now = Permissions {
+            accessibility: Permission::Granted,
+            microphone: Permission::Granted,
+            input_monitoring: Permission::Denied,
+        };
+        let state = evaluate(nothing_granted(), now, true, true);
+
+        assert!(row(&state, Step::Accessibility).needs_restart);
+        assert!(!state.complete);
+        assert!(
+            !state.restart_pending,
+            "one restart, once the last permission is in"
+        );
     }
 
     #[test]

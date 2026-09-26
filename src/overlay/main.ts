@@ -10,16 +10,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 
-type Status =
-  | { kind: "idle" }
-  | { kind: "recording" }
-  | { kind: "transcribing" }
-  | { kind: "inserted"; text: string }
-  | { kind: "failed"; message: string }
-  | { kind: "cancelled" };
-
-const STATUS_EVENT = "telekey://status";
-const LEVEL_EVENT = "telekey://level";
+import { LEVEL_EVENT, STATUS_EVENT, type Status } from "../status";
 
 /** Roughly three seconds of history at the 30 Hz the backend emits. */
 const TRACE_SAMPLES = 88;
@@ -164,6 +155,14 @@ function setState(next: Status) {
     case "cancelled":
       messageEl.textContent = "Cancelled";
       announce("Cancelled");
+      break;
+
+    case "notice":
+      messageEl.textContent = next.text;
+      announce(next.text);
+      break;
+
+    case "idle":
       break;
   }
 }

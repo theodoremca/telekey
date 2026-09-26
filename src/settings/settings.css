@@ -102,6 +102,12 @@ body {
   color: var(--bad);
 }
 
+/* Both windows set this class once everything is in place; without the rule
+   "Ready to dictate" was rendered in the same red as "Setup incomplete". */
+.verdict.ready {
+  color: var(--ok);
+}
+
 .mastheadActions {
   display: flex;
   align-items: center;
@@ -195,6 +201,15 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A stacked row has the whole width for its hint, and its hint is usually the
+   sentence that explains an account or a key — so it wraps instead of being
+   cut to one line. Single-line rows keep the ellipsis. */
+.row.column .rowHint {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
 }
 
 .rowValue {
