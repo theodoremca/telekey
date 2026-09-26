@@ -38,11 +38,19 @@ export function Header() {
         </Link>
 
         <nav aria-label="Sections" className="ml-4 hidden items-center gap-6 md:flex">
-          {NAV_LINKS.map((link) => (
-            <a key={link.href} href={link.href} className={quietLink}>
-              {link.label}
-            </a>
-          ))}
+          {NAV_LINKS.map((link) =>
+            // Section anchors are plain links so the browser scrolls; pages
+            // go through the router.
+            link.href.startsWith("/#") ? (
+              <a key={link.href} href={link.href} className={quietLink}>
+                {link.label}
+              </a>
+            ) : (
+              <Link key={link.href} href={link.href} className={quietLink}>
+                {link.label}
+              </Link>
+            ),
+          )}
         </nav>
 
         <div className="ml-auto flex items-center gap-4">

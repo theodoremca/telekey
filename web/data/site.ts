@@ -7,6 +7,18 @@
 
 const REPO = "https://github.com/theodoremca/telekey";
 
+/** Theodore's own page there: its og:title reads "THEODORE IMONIGIE" (checked 26 Sep 2026). */
+const COFFEE = "https://buymeacoffee.com/theodoremca";
+
+/**
+ * A sentence with links in it, for copy where a phrase should lead somewhere
+ * ("open source" to the code). Rendered by components/Rich.tsx.
+ */
+export type Segment = string | { text: string; href: string };
+
+export const SUPPORT = { label: "Buy me a coffee", href: COFFEE } as const;
+export const ABOUT_LINK = { label: "About", href: "/about" } as const;
+
 export const BRAND = {
   name: "TeleKey",
   tagline: "Push-to-talk dictation for your Mac",
@@ -31,13 +43,18 @@ export const NAV_LINKS = [
   { href: "/#formats", label: "Formatting" },
   { href: "/#privacy", label: "Privacy" },
   { href: "/#pricing", label: "Pricing" },
+  ABOUT_LINK,
 ] as const;
 
 export const HERO = {
   /** The last line is set in amber. */
   titleLines: ["Hold a key.", "Speak.", "It's typed."],
   /** The claim. MIT licence: LICENSE; the rates: PRICING below. */
-  lede: "Free and open source with your own OpenAI key. Or pay per minute instead of per month.",
+  lede: [
+    "Free and ",
+    { text: "open source", href: REPO },
+    " with your own OpenAI key. Or pay per minute instead of per month.",
+  ],
   /** For search results and link previews, where the claim needs its subject. */
   meta: "Push-to-talk dictation for your Mac. Free and open source with your own OpenAI key, or pay per minute instead of per month.",
   demo: {
@@ -88,7 +105,7 @@ export const NUMBERS = [
   { value: "3–4 s", label: "from letting go to pasted text" },
   { value: "1.4¢", label: "a minute of speech, on credits" },
   { value: "0 bytes", label: "of audio ever written to disk" },
-  { value: "MIT", label: "licensed; the code is public" },
+  { value: "MIT", label: "licensed; the code is public", href: REPO },
 ] as const;
 
 /**
@@ -251,7 +268,17 @@ export const PRIVACY = {
 
 export const PRICING = {
   title: "Free with your own key.",
-  lede: "TeleKey is open source under MIT. Pay OpenAI directly, or let us hold the key.",
+  lede: [
+    "TeleKey is ",
+    { text: "open source under MIT", href: REPO },
+    ". Pay OpenAI directly, or let us hold the key.",
+  ],
+  /** Under the plans: the free plan is free, and this is how to keep it so. */
+  coffee: [
+    "Using your own key? It stays free. If TeleKey saves you time, ",
+    { text: "buy me a coffee", href: COFFEE },
+    ".",
+  ],
   plans: [
     {
       id: "byok",
@@ -292,6 +319,79 @@ export const FOOTER_LINKS = [
   { href: REPO, label: "GitHub" },
   { href: `${REPO}/releases`, label: "Releases" },
   { href: `${REPO}#setup`, label: "Setup guide" },
+  ABOUT_LINK,
+  SUPPORT,
   SIGN_IN,
   BUY_CREDITS,
 ] as const;
+
+/**
+ * The About page. The facts about Theodore are from his public GitHub profile
+ * (name, "Solutions Architect", the @theodoremca handle); the principles each
+ * trace to the code or README like everything else on the site. The first-
+ * person lines are his to rewrite: nothing here speaks for him beyond that.
+ */
+export const ABOUT = {
+  meta: {
+    title: "About — TeleKey",
+    description:
+      "TeleKey is built by one person, Theodore Imonigie, in the open. Free with your own OpenAI key; if it saves you time, buy him a coffee.",
+  },
+  intro: {
+    /** The last line is set in amber. */
+    titleLines: ["Hi, I'm", "Theodore."],
+    name: "Theodore Imonigie",
+    role: "Solutions architect",
+    // His GitHub avatar, served by GitHub; swap for a file in public/ any time.
+    avatar: "https://avatars.githubusercontent.com/u/35204506?v=4",
+    lede: [
+      "I build TeleKey on my own, in the open. Every line of it is ",
+      { text: "on GitHub", href: REPO },
+      ", under the MIT licence, and it is free with your own OpenAI key.",
+    ],
+  },
+  principles: {
+    title: "How it's built.",
+    items: [
+      {
+        id: "hold",
+        name: "Hold, don't toggle",
+        body: "You always know when it is listening, because you are holding the key. Let go and it is sent; press Esc and nothing is.",
+      },
+      {
+        id: "key",
+        name: "Your key, your bill",
+        body: "With your own OpenAI key there is no account and nothing between you and OpenAI. Credits are there for anyone who would rather not manage a key.",
+      },
+      {
+        id: "memory",
+        name: "Nothing kept that needn't be",
+        body: "Audio lives in memory and is zeroed after upload. Transcripts stay on your Mac, and switching history off deletes them.",
+      },
+      {
+        id: "open",
+        name: "In the open",
+        body: "Read the code, fork it, or tell me where it is wrong. Issues and pull requests are how TeleKey gets better.",
+      },
+    ],
+  },
+  support: {
+    title: "Keep it free.",
+    body: "TeleKey costs nothing with your own key, and I'd like to keep it that way. If it saves you time, a coffee helps pay for the hosting and keeps the work going.",
+    coffee: SUPPORT,
+    star: { label: "Star it on GitHub", href: REPO },
+    other: [
+      "Found a bug or want a feature? ",
+      { text: "Open an issue", href: `${REPO}/issues` },
+      ". It helps as much as a coffee.",
+    ],
+  },
+  elsewhere: {
+    title: "Elsewhere",
+    links: [
+      { id: "github", label: "GitHub", handle: "@theodoremca", href: "https://github.com/theodoremca" },
+      { id: "x", label: "X", handle: "@theodoremca", href: "https://x.com/theodoremca" },
+      { id: "coffee", label: "Buy Me a Coffee", handle: "theodoremca", href: COFFEE },
+    ],
+  },
+} as const;

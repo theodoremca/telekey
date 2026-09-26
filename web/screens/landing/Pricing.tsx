@@ -1,5 +1,6 @@
 import { KeyCard } from "@/components/KeyCard";
 import { KeycapLink } from "@/components/Keycap";
+import { Rich } from "@/components/Rich";
 import { PRICING } from "@/data/site";
 import { useSectionReveal } from "@/lib/sectionReveal";
 
@@ -19,7 +20,7 @@ export function Pricing() {
           {PRICING.title}
         </h2>
         <p data-reveal="rise" className="mt-4 max-w-[52ch] text-[17px] leading-relaxed text-ink-soft">
-          {PRICING.lede}
+          <Rich parts={PRICING.lede} linkClassName="text-ink" />
         </p>
 
         <div className="mt-12 grid gap-5 md:grid-cols-2">
@@ -68,6 +69,10 @@ export function Pricing() {
             );
           })}
         </div>
+
+        <p data-reveal="rise" className="mt-8 mb-0 text-[15px] leading-relaxed text-ink-soft">
+          <Rich parts={PRICING.coffee} linkClassName="text-ink" />
+        </p>
       </div>
     </section>
   );

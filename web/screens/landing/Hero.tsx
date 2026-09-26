@@ -1,6 +1,7 @@
 import { useRef } from "react";
 
 import { KeycapLink } from "@/components/Keycap";
+import { Rich } from "@/components/Rich";
 import { COMPARE, HERO, PRIMARY_ACTION, SIGN_IN } from "@/data/site";
 import { gsap, useGSAP } from "@/lib/gsap";
 import { landPrepared } from "@/lib/sectionReveal";
@@ -106,7 +107,7 @@ export function Hero() {
             data-hero-copy=""
             className="mt-5 mb-7 max-w-[36ch] text-[17px] leading-relaxed text-dim"
           >
-            {HERO.lede}
+            <Rich parts={HERO.lede} linkClassName="text-glow" />
           </p>
           <div className="flex flex-wrap gap-3">
             <KeycapLink href={PRIMARY_ACTION.href} data-reveal="key" data-hero-key="">
