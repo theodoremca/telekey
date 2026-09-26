@@ -88,6 +88,20 @@ bun run dev              # Next.js on :3000
 bun run build            # must pass, along with `bun run tsc --noEmit`
 ```
 
+Deploying is by hand from `web/`; pushing to GitHub deploys nothing:
+
+```bash
+cd web && vercel deploy            # a Preview build; the URL is in the output
+vercel alias set <that url> telekey-staging.vercel.app
+vercel deploy --prod               # telekey.vercel.app follows automatically
+```
+
+The Vercel project must hold `NEXT_PUBLIC_TELEKEY_API_BASE` (staging origin for
+Preview, `/api` for Production) *and* `NEXT_PUBLIC_FIREBASE_API_KEY` for every
+environment. `.env*` files are neither committed nor uploaded, so a key that is
+only in a local `.env` builds fine on this Mac and ships a login page that says
+"Sign-in is not configured in this build". `vercel env ls` before deploying.
+
 Next.js Pages Router, Tailwind 4, GSAP. Pages are thin; the landing page is
 `web/screens/landing/`. Every word, link and figure is in `web/data/site.ts`,
 and each claim there traces back to `README.md` or to code — the credits rate is
