@@ -14,6 +14,7 @@ import {
 
 import { KeycapButton } from "@/components/Keycap";
 
+import { fetchAccount, isNotATester } from "../lib/api";
 import { firebaseAuth, isConfigured } from "../lib/firebase";
 import { handoffToApp, rememberDesktop, wantsDesktop } from "../lib/handoff";
 
@@ -89,7 +90,38 @@ export default function Login() {
     }
   };
 
+  // Staging lets only listed testers in. Ask the API before handing a session
+  // to the app, so someone who is not listed learns it here, with their email
+  // named, instead of from every dictation failing later. Any other failure
+  // (offline, a cold start) does not block sign-in; the app reports those.
+  const refusedAsTester = async (user: User): Promise<boolean> => {
+    try {
+      await fetchAccount(await user.getIdToken());
+      return false;
+    } catch (err) {
+      if (!isNotATester(err)) return false;
+      setStatus(null);
+      setHandoffUser(null);
+      setContinueUser(null);
+      setProblem(err.message);
+      await signOut(firebaseAuth()).catch(() => {});
+      return true;
+    }
+  };
+
+  const continueAs = async (user: User) => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      if (await refusedAsTester(user)) return;
+      await handoffToApp(user);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const afterAuth = async (user: User) => {
+    if (await refusedAsTester(user)) return;
     if (wantsDesktop()) {
       rememberDesktop(false);
       await handoffToApp(user);
@@ -158,7 +190,8 @@ export default function Login() {
           <KeycapButton
             variant="ink"
             className="mt-5 w-full"
-            onClick={() => void handoffToApp(continueUser)}
+            disabled={busy}
+            onClick={() => void continueAs(continueUser)}
           >
             Open TeleKey
           </KeycapButton>

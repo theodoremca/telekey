@@ -115,6 +115,33 @@ pre-hide with `opacity` or a CSS `transform`, and never `gsap.from()` on
 pre-hidden content: both leave the page blank with a clean console. The hero
 demo never touches a microphone; its trace is drawn, and the page says so.
 
+### Backend (`functions/`)
+
+```bash
+cd functions && npm test                        # builds, then the pure tests in test/
+firebase deploy --only functions:staging        # or functions:api for production
+```
+
+The Firebase CLI on Theodore's Mac is signed in as an account with no access
+to `telekey-app`; his gcloud login has it. Deploy through gcloud's credentials
+with a throwaway CLI config, so the CLI falls back to them:
+
+```bash
+XDG_CONFIG_HOME=$(mktemp -d) \
+GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcloud/application_default_credentials.json \
+firebase deploy --only functions:staging --project telekey-app --non-interactive
+```
+
+**Staging is invite-only.** Every authenticated route on `staging` goes through
+`requireMember`, which refuses (403, code `not_a_tester`) any email not in
+`STAGING_ALLOWED_EMAILS` in `functions/.env`, before a user document or the
+welcome credit is created. The email must be Firebase-verified, and an empty
+list lets nobody in. To add a tester, add their email there and redeploy
+staging; the refusal message names the email to add. The website asks `/me`
+before handing a session to the app, so a non-tester is told on the login
+page. None of the refusal messages may contain "credit": the desktop overlay
+opens the Buy credits window for failures that do.
+
 ### Tests — run all three before claiming anything works
 
 ```bash
@@ -183,6 +210,7 @@ Desktop loads **`.env` then `.env.staging` or `.env.production`**, chosen by `TE
 | `NEXT_PUBLIC_TELEKEY_API_BASE` | `web/.env.development` or `web/.env.production` | Same Functions origin for the website |
 | Functions secrets | `functions/.env` | `OPENAI_API_KEY`, `STRIPE_SECRET_KEY_STAGING`, `STRIPE_SECRET_KEY_PRODUCTION`, `STRIPE_WEBHOOK_SECRET_STAGING`, `STRIPE_WEBHOOK_SECRET_PRODUCTION`. Gitignored; `firebase deploy` reads it from disk. Copy `functions/.env.example`. |
 | `TELEKEY_SITE_URL_STAGING` / `_PRODUCTION` | `functions/.env` | Checkout return URLs |
+| `STAGING_ALLOWED_EMAILS` | `functions/.env` | Comma-separated emails allowed to use staging. Everyone else gets a 403 naming their email. Empty means nobody. Production ignores it |
 | `APPLE_ID` `APPLE_PASSWORD` `APPLE_TEAM_ID` / `APPLE_API_KEY` `APPLE_API_ISSUER` `APPLE_API_KEY_PATH` | shell | Notarisation, `release.sh` |
 
 Firestore: `staging-users` / `production-users`, `staging-packs` / `production-packs`.

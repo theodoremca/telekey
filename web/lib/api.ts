@@ -10,6 +10,26 @@ export interface HostedAccount {
   packs: CreditPack[];
 }
 
+/**
+ * An error from the hosted API, keeping its status and machine-readable code
+ * so a page can react to a particular refusal ("not_a_tester" on staging).
+ */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code: string | null,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+/** Staging refused this email because it is not on the testers list. */
+export function isNotATester(err: unknown): err is ApiError {
+  return err instanceof ApiError && err.code === "not_a_tester";
+}
+
 function apiBase(): string {
   const base = process.env.NEXT_PUBLIC_TELEKEY_API_BASE;
   if (!base) {
@@ -24,12 +44,13 @@ export async function fetchAccount(idToken: string): Promise<HostedAccount> {
   });
   const body = (await response.json().catch(() => ({}))) as {
     error?: string;
+    code?: string;
     email?: string | null;
     balanceCents?: number;
     packs?: CreditPack[];
   };
   if (!response.ok) {
-    throw new Error(body.error ?? "Could not load the account");
+    throw new ApiError(body.error ?? "Could not load the account", response.status, body.code ?? null);
   }
   return {
     email: body.email ?? null,
@@ -52,10 +73,11 @@ export async function startCheckout(
   });
   const body = (await response.json().catch(() => ({}))) as {
     error?: string;
+    code?: string;
     url?: string;
   };
   if (!response.ok || !body.url) {
-    throw new Error(body.error ?? "Could not start checkout");
+    throw new ApiError(body.error ?? "Could not start checkout", response.status, body.code ?? null);
   }
   return body.url;
 }

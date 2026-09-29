@@ -18,6 +18,8 @@ import { onRequest } from "firebase-functions/v2/https";
 import OpenAI, { toFile } from "openai";
 import Stripe from "stripe";
 
+import { NOT_A_TESTER, parseTesters, testerProblem } from "./testers";
+
 initializeApp();
 
 function requiredEnv(name: string): string {
@@ -50,6 +52,8 @@ type Stage = {
   openai: () => string;
   stripe: () => string;
   webhook: () => string;
+  /** When set, only these emails may use the API. Staging only. */
+  testers?: () => Set<string>;
 };
 
 type Units = {
@@ -112,6 +116,26 @@ async function requireUser(req: { header: (n: string) => string | undefined }) {
       status: 401,
     });
   }
+}
+
+/**
+ * A signed-in user who may use this stage. On staging that means a listed
+ * tester, checked before anything is created for them: a stranger gets no
+ * user document and no welcome credit.
+ */
+async function requireMember(
+  stage: Stage,
+  req: { header: (n: string) => string | undefined },
+) {
+  const user = await requireUser(req);
+  if (stage.testers) {
+    const problem = testerProblem(stage.testers(), user.email, user.email_verified);
+    if (problem) {
+      console.warn(`staging refused ${user.email ?? user.uid}: not a listed tester`);
+      throw Object.assign(new Error(problem), { status: 403, code: NOT_A_TESTER });
+    }
+  }
+  return user;
 }
 
 async function ensureUser(
@@ -233,11 +257,12 @@ function fail(
   err: unknown,
 ) {
   const status = Number((err as { status?: number }).status ?? 500);
+  const code = (err as { code?: unknown }).code;
   const message = err instanceof Error ? err.message : "Something went wrong.";
   if (status >= 500) {
     console.error(err);
   }
-  json(res, status, { error: message });
+  json(res, status, typeof code === "string" ? { error: message, code } : { error: message });
 }
 
 function stripFunctionName(req: express.Request, _res: express.Response, next: express.NextFunction) {
@@ -275,7 +300,7 @@ function createApp(stage: Stage): express.Express {
         json(res, 405, { error: "POST only" });
         return;
       }
-      const user = await requireUser(req);
+      const user = await requireMember(stage, req);
       const userRef = await ensureUser(stage.prefix, user.uid, user.email);
       const before = await userRef.get();
       if (Number(before.get("balanceCents") ?? 0) < MIN_CENTS) {
@@ -320,7 +345,7 @@ function createApp(stage: Stage): express.Express {
 
   app.post("/polish", async (req, res) => {
     try {
-      const user = await requireUser(req);
+      const user = await requireMember(stage, req);
       const userRef = await ensureUser(stage.prefix, user.uid, user.email);
       const before = await userRef.get();
       if (Number(before.get("balanceCents") ?? 0) < MIN_CENTS) {
@@ -365,7 +390,7 @@ function createApp(stage: Stage): express.Express {
 
   app.get("/me", async (req, res) => {
     try {
-      const user = await requireUser(req);
+      const user = await requireMember(stage, req);
       const ref = await ensureUser(stage.prefix, user.uid, user.email);
       const snap = await ref.get();
       const [usage, packs] = await Promise.all([
@@ -398,7 +423,7 @@ function createApp(stage: Stage): express.Express {
 
   app.post("/createCheckoutSession", async (req, res) => {
     try {
-      const user = await requireUser(req);
+      const user = await requireMember(stage, req);
       await ensureUser(stage.prefix, user.uid, user.email);
       const packId = String((req.body as { packId?: string }).packId ?? "");
       const pack = await getFirestore()
@@ -491,6 +516,8 @@ export const staging = onRequest(
     openai: () => requiredEnv("OPENAI_API_KEY"),
     stripe: () => requiredEnv("STRIPE_SECRET_KEY_STAGING"),
     webhook: () => requiredEnv("STRIPE_WEBHOOK_SECRET_STAGING"),
+    // Read on each request, so a redeploy with a new list takes effect at once.
+    testers: () => parseTesters(process.env.STAGING_ALLOWED_EMAILS),
   }),
 );
 

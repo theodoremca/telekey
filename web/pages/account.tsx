@@ -5,7 +5,7 @@ import { onAuthStateChanged, signOut, type User } from "firebase/auth";
 
 import { KeycapButton, KeycapLink } from "@/components/Keycap";
 
-import { fetchAccount, money, startCheckout, type HostedAccount } from "../lib/api";
+import { fetchAccount, isNotATester, money, startCheckout, type HostedAccount } from "../lib/api";
 import { firebaseAuth, isConfigured } from "../lib/firebase";
 import { handoffToApp, wantsDesktop } from "../lib/handoff";
 
@@ -22,11 +22,14 @@ export default function Account() {
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [paidMessage, setPaidMessage] = useState<string | null>(null);
+  // Staging refused this email: it is not on the testers list.
+  const [notTester, setNotTester] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isConfigured()) return;
     return onAuthStateChanged(firebaseAuth(), (next) => {
       setUser(next);
+      setNotTester(null);
       if (!next) {
         setAccount(null);
         return;
@@ -35,15 +38,20 @@ export default function Account() {
         .getIdToken()
         .then(fetchAccount)
         .then(setAccount)
-        .catch((err: Error) => setProblem(err.message));
+        .catch((err: Error) => {
+          if (isNotATester(err)) setNotTester(err.message);
+          else setProblem(err.message);
+        });
     });
   }, []);
 
+  // Hand the session to the app only once the API has accepted it, so a
+  // staging visitor who is not a tester never gets a session that fails.
   useEffect(() => {
-    if (user && wantsDesktop()) {
+    if (user && account && wantsDesktop()) {
       void handoffToApp(user);
     }
-  }, [user]);
+  }, [user, account]);
 
   // While Stripe's return URL still carries ?paid=1, poll for the credit
   // balance to change, then drop the query so a reload doesn't restart it.
@@ -125,6 +133,29 @@ export default function Account() {
         <KeycapLink href="/login" variant="ink">
           Sign in
         </KeycapLink>
+      </>
+    );
+  }
+
+  if (notTester) {
+    return (
+      <>
+        <Head>
+          <title>Account — TeleKey</title>
+        </Head>
+        <h1 className={title}>Testers only</h1>
+        <p className="mt-4 mb-2 max-w-[46ch] text-[17px] leading-relaxed text-ink-soft">
+          This is TeleKey's test server, and only listed testers can use it.
+        </p>
+        <p role="alert" className="mt-0 mb-8 font-mono text-[13px] leading-relaxed text-bad">
+          {notTester}
+        </p>
+        <KeycapButton
+          variant="paper"
+          onClick={() => void signOut(firebaseAuth()).then(() => router.push("/login"))}
+        >
+          Use a different account
+        </KeycapButton>
       </>
     );
   }
