@@ -7,8 +7,14 @@
 
 const REPO = "https://github.com/theodoremca/telekey";
 
-/** Theodore's own page there: its og:title reads "THEODORE IMONIGIE" (checked 26 Sep 2026). */
-const COFFEE = "https://buymeacoffee.com/theodoremca";
+/**
+ * A Stripe Payment Link on the live EntityQ LLC account (plink_1UKqv5JBYM0g0sSoS93Ot3Uy):
+ * product "Support TeleKey", the supporter chooses the amount (suggested $5,
+ * minimum $1), and it returns to /about?thanks=1. It carries no uid or cents
+ * metadata, so the credits webhook in functions/src/index.ts ignores it.
+ * Stripe counts it as a tip for software already given, not a donation.
+ */
+const COFFEE = "https://buy.stripe.com/fZu9AU3qv8Oe1Cj45Fao800";
 
 /**
  * A sentence with links in it, for copy where a phrase should lead somewhere
@@ -391,7 +397,8 @@ export const ABOUT = {
     links: [
       { id: "github", label: "GitHub", handle: "@theodoremca", href: "https://github.com/theodoremca" },
       { id: "x", label: "X", handle: "@theodoremca", href: "https://x.com/theodoremca" },
-      { id: "coffee", label: "Buy Me a Coffee", handle: "theodoremca", href: COFFEE },
     ],
   },
+  /** Shown when the tip link sends someone back (?thanks=1). */
+  thanks: "Thank you. That coffee keeps TeleKey free for everyone.",
 } as const;

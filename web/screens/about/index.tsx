@@ -1,4 +1,5 @@
 import Head from "next/head";
+import { useRouter } from "next/router";
 
 import { KeyCard } from "@/components/KeyCard";
 import { KeycapLink } from "@/components/Keycap";
@@ -14,12 +15,22 @@ function Intro() {
   const reveal = useSectionReveal<HTMLElement>();
   const { intro, support } = ABOUT;
   const last = intro.titleLines.length - 1;
+  // The tip link sends people back here with ?thanks=1.
+  const thanked = useRouter().query.thanks === "1";
 
   return (
     <section
       ref={reveal}
       className="relative overflow-hidden bg-[radial-gradient(120%_90%_at_50%_0%,#24222f_0%,var(--color-graphite)_60%)] text-glow"
     >
+      {thanked && (
+        <p
+          role="status"
+          className="m-0 border-b border-hair bg-voice/15 px-5 py-3 text-center text-sm text-glow"
+        >
+          {ABOUT.thanks}
+        </p>
+      )}
       <div className="mx-auto grid max-w-[1120px] items-center gap-x-16 gap-y-10 px-5 py-16 sm:px-8 sm:py-24 lg:grid-cols-[1fr_auto]">
         {/* The portrait sits on a key, like everything else you can press
             here. Above the words on a phone, beside them on a desk. */}
