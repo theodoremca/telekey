@@ -36,7 +36,9 @@ export const BRAND = {
 /** The page's one job. Every primary button points here. */
 export const PRIMARY_ACTION = {
   label: "Download for Mac",
-  href: `${REPO}/releases`,
+  // The newest published release, which .github/workflows/release.yml makes
+  // from a version tag.
+  href: `${REPO}/releases/latest`,
 } as const;
 
 export const SIGN_IN = { label: "Sign in", href: "/login" } as const;

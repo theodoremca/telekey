@@ -53,6 +53,19 @@ bun tauri build --bundles app      # → src-tauri/target/release/bundle/macos/T
 ./scripts/release.sh               # signed + notarised; needs the APPLE_* vars in RELEASING.md
 ```
 
+### Release (all platforms)
+
+```bash
+git tag v<version> && git push origin v<version>   # tag must equal the version in tauri.conf.json, Cargo.toml, package.json
+```
+
+`.github/workflows/release.yml` then builds a universal macOS `.dmg`, a Windows
+`-setup.exe` and Linux `.deb`/`.AppImage`, and publishes the release. Running it
+by hand builds without publishing. Mac signing and notarisation need the
+`APPLE_CERTIFICATE*` / `APPLE_API_*` repo secrets in RELEASING.md; without them
+the Mac build is ad-hoc. The website's Download button points at
+`/releases/latest`.
+
 **Always set `APPLE_SIGNING_IDENTITY` or run `dev-sign.sh` after a build.**
 Without it the bundle carries the linker's placeholder signature and macOS
 permissions silently never stick. See rule 2 below.

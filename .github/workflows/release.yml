@@ -1,0 +1,283 @@
+name: release
+
+# Push a version tag and this builds TeleKey for macOS, Windows and Linux and
+# publishes them as a GitHub release:
+#
+#   git tag v0.2.0 && git push origin v0.2.0
+#
+# The tag must match "version" in src-tauri/tauri.conf.json, Cargo.toml and
+# package.json, or nothing is built. Run it by hand (Actions › release › Run
+# workflow) to build everything without publishing: a rehearsal, with the
+# installers attached to the run.
+#
+# macOS is signed with the Developer ID and notarised when the APPLE_* secrets
+# below are set (see RELEASING.md). Without them it still builds, ad-hoc
+# signed, and the release notes tell people how to open it. Windows and Linux
+# are not code-signed.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: check version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+      publish: ${{ steps.read.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: read
+        name: Read and check the version
+        run: |
+          tauri="$(jq -r .version src-tauri/tauri.conf.json)"
+          npm="$(jq -r .version package.json)"
+          cargo="$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)"
+          echo "tauri.conf.json $tauri, package.json $npm, Cargo.toml $cargo"
+          if [[ "$tauri" != "$npm" || "$tauri" != "$cargo" ]]; then
+            echo "::error::The three version numbers disagree. Make them the same before releasing."
+            exit 1
+          fi
+          echo "version=$tauri" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            if [[ "$GITHUB_REF_NAME" != "v$tauri" ]]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match version $tauri. Tag v$tauri, or change the version first."
+              exit 1
+            fi
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  macos:
+    name: build (macOS, universal)
+    needs: version
+    runs-on: macos-latest
+    outputs:
+      notarised: ${{ steps.notarise.outputs.notarised }}
+    env:
+      HAS_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
+      HAS_NOTARY: ${{ secrets.APPLE_API_KEY_P8 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: release-macos
+
+      - run: bun install --frozen-lockfile
+
+      # The Developer ID goes into a throwaway keychain that only this job sees.
+      - name: Import the Developer ID certificate
+        if: env.HAS_CERT == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password="$(openssl rand -base64 24)"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/cert.p12" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$keychain"
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity="$(security find-identity -v -p codesigning "$keychain" \
+            | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' | head -1)"
+          if [[ -z "$identity" ]]; then
+            echo "::error::APPLE_CERTIFICATE holds no 'Developer ID Application' identity."
+            exit 1
+          fi
+          echo "Signing as: $identity"
+          echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+
+      # With these set, Tauri notarises and staples the app itself.
+      - name: Prepare notarisation
+        if: env.HAS_CERT == 'true' && env.HAS_NOTARY == 'true'
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          printf '%s' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+
+      - name: Build
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: bun tauri build --bundles app --target universal-apple-darwin
+
+      # No certificate: seal the bundle ad-hoc with the real entitlements, the
+      # same fallback a local build gets. Better than the linker's placeholder
+      # signature, which macOS cannot attach a permission grant to.
+      - name: Sign ad-hoc (no certificate)
+        if: env.HAS_CERT != 'true'
+        run: ./scripts/dev-sign.sh src-tauri/target/universal-apple-darwin/release/bundle/macos/TeleKey.app
+
+      - name: Package the disk image
+        run: |
+          if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+            export DMG_SIGNING_IDENTITY="$APPLE_SIGNING_IDENTITY"
+          fi
+          ./scripts/dmg.sh src-tauri/target/universal-apple-darwin/release/bundle/macos/TeleKey.app
+
+      # Tauri notarises the app but not the image, and the image is what people
+      # open; Gatekeeper rejects an unnotarised one. See RELEASING.md.
+      - id: notarise
+        name: Notarise the disk image
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          dmg="$(ls src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg)"
+          if [[ "$HAS_CERT" == 'true' && "$HAS_NOTARY" == 'true' ]]; then
+            xcrun notarytool submit "$dmg" \
+              --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" \
+              --wait
+            xcrun stapler staple "$dmg"
+            spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg"
+            echo "notarised=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::macOS build is not notarised: add the APPLE_* secrets (RELEASING.md)."
+            echo "notarised=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: telekey-macos
+          path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+  windows:
+    name: build (Windows)
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: release-windows
+
+      - run: bun install --frozen-lockfile
+
+      # NSIS rather than MSI: MSI needs the VBSCRIPT optional feature, which the
+      # hosted runners do not enable.
+      - name: Build
+        run: bun tauri build --bundles nsis
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: telekey-windows
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+  linux:
+    name: build (Linux)
+    needs: version
+    # The oldest supported Ubuntu: a binary built against an older glibc runs
+    # on newer distributions, not the other way round.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tauri's WebKitGTK and tray, plus ALSA for the microphone (cpal), libxdo
+      # for typing the paste (enigo) and D-Bus for the keyring.
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libssl-dev libxdo-dev libasound2-dev libdbus-1-dev \
+            build-essential pkg-config patchelf file
+
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: release-linux
+
+      - run: bun install --frozen-lockfile
+
+      - name: Build
+        run: bun tauri build --bundles deb,appimage
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: telekey-linux
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+
+  publish:
+    name: publish the release
+    needs: [version, macos, windows, linux]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Write the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTARISED: ${{ needs.macos.outputs.notarised }}
+        run: |
+          {
+            echo "## Install"
+            echo
+            if [[ "$NOTARISED" == 'true' ]]; then
+              echo "**macOS** (Apple Silicon and Intel): open the \`.dmg\` and drag TeleKey onto Applications."
+            else
+              echo "**macOS** (Apple Silicon and Intel): open the \`.dmg\` and drag TeleKey onto Applications. This build is not notarised, so macOS will call it damaged; after copying it, run:"
+              echo
+              echo '```bash'
+              echo 'xattr -dr com.apple.quarantine /Applications/TeleKey.app'
+              echo '```'
+            fi
+            echo
+            echo "**Windows:** run the \`-setup.exe\`. It is not code-signed yet, so SmartScreen may warn: choose *More info*, then *Run anyway*."
+            echo
+            echo "**Linux** (X11, not Wayland; new and little tested): install the \`.deb\` with \`sudo apt install ./TeleKey_*.deb\`, or make the \`.AppImage\` executable and run it."
+            echo
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+              -f tag_name="$GITHUB_REF_NAME" --jq .body
+          } > notes.md
+          cat notes.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          prerelease=()
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then prerelease=(--prerelease); fi
+          ls -l dist
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "TeleKey $VERSION" \
+            --notes-file notes.md \
+            "${prerelease[@]}"

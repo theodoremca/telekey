@@ -8,6 +8,12 @@
 # it also calls `hdiutil internet-enable`, removed in macOS 10.15. The plain
 # image below has no such dependency: an app, a link to /Applications, drag
 # across.
+#
+#   ./scripts/dmg.sh                        the default release build
+#   ./scripts/dmg.sh path/to/TeleKey.app    any other build, e.g. a universal one
+#
+# With DMG_SIGNING_IDENTITY set (a Developer ID), the image is signed too, which
+# notarising it requires. The release workflow does that, then notarises it.
 
 set -euo pipefail
 
@@ -15,8 +21,7 @@ set -euo pipefail
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP="$ROOT/src-tauri/target/release/bundle/macos/TeleKey.app"
-OUT_DIR="$ROOT/src-tauri/target/release/bundle/dmg"
+APP="${1:-$ROOT/src-tauri/target/release/bundle/macos/TeleKey.app}"
 
 if [[ ! -d "$APP" ]]; then
   echo "No app bundle at: $APP" >&2
@@ -24,8 +29,18 @@ if [[ ! -d "$APP" ]]; then
   exit 1
 fi
 
+APP="$(cd "$(dirname "$APP")" && pwd)/$(basename "$APP")"
+# Beside the app's own bundle folder: bundle/macos/TeleKey.app → bundle/dmg.
+OUT_DIR="$(dirname "$(dirname "$APP")")/dmg"
+
 VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")"
-ARCH="$(uname -m)"
+# The binary's own architectures, not this machine's: a universal build made on
+# Apple Silicon is still universal.
+ARCHS="$(lipo -archs "$APP/Contents/MacOS/TeleKey" 2>/dev/null || uname -m)"
+case "$ARCHS" in
+  *x86_64*arm64* | *arm64*x86_64*) ARCH="universal" ;;
+  *) ARCH="$ARCHS" ;;
+esac
 DMG="$OUT_DIR/TeleKey_${VERSION}_${ARCH}.dmg"
 
 # Warn rather than fail: an unsigned DMG is still useful for local testing.
@@ -57,6 +72,12 @@ hdiutil create \
 
 echo "▸ Verifying…"
 hdiutil verify "$DMG" >/dev/null
+
+if [[ -n "${DMG_SIGNING_IDENTITY:-}" ]]; then
+  echo "▸ Signing the image as \"$DMG_SIGNING_IDENTITY\"…"
+  codesign --force --sign "$DMG_SIGNING_IDENTITY" --timestamp "$DMG"
+  codesign --verify --verbose=2 "$DMG"
+fi
 
 echo
 echo "$DMG"

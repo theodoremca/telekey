@@ -115,6 +115,61 @@ Find your identities with:
 security find-identity -v -p codesigning
 ```
 
+## Releasing from GitHub (macOS, Windows, Linux)
+
+`.github/workflows/release.yml` builds all three and publishes a GitHub
+release when a version tag is pushed:
+
+```bash
+# 1. Make the version the same in all three places:
+#    src-tauri/tauri.conf.json, src-tauri/Cargo.toml, package.json
+# 2. Commit, then tag that version and push the tag:
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+A tag that does not match the version stops the run before anything is built.
+To rehearse without publishing, run the workflow by hand (Actions › release ›
+Run workflow): it builds everything and attaches the installers to the run.
+
+What comes out:
+
+| Platform | File | Signed |
+|---|---|---|
+| macOS (Apple Silicon and Intel) | `TeleKey_<ver>_universal.dmg` | Developer ID and notarised, once the secrets below are set; ad-hoc until then |
+| Windows | `TeleKey_<ver>_x64-setup.exe` | No — SmartScreen warns |
+| Linux (X11) | `.deb` and `.AppImage` | No |
+
+The release notes say how to get past each warning.
+
+### macOS signing secrets
+
+Without these the Mac build is ad-hoc signed and people must clear the
+quarantine flag by hand. Add them once with the GitHub CLI:
+
+1. **The certificate.** In Keychain Access, find *Developer ID Application:
+   ENTITYQ LLC*, right-click › Export, save as `.p12` with a password.
+
+   ```bash
+   base64 -i DeveloperID.p12 | gh secret set APPLE_CERTIFICATE
+   gh secret set APPLE_CERTIFICATE_PASSWORD     # the export password
+   rm DeveloperID.p12
+   ```
+
+2. **A notarisation key.** In App Store Connect › Users and Access ›
+   Integrations › App Store Connect API, create a key with the Developer role
+   and download `AuthKey_<KEYID>.p8` (it downloads only once).
+
+   ```bash
+   gh secret set APPLE_API_KEY_P8 < AuthKey_<KEYID>.p8
+   gh secret set APPLE_API_KEY                  # the key ID
+   gh secret set APPLE_API_ISSUER               # the issuer ID shown above the keys
+   ```
+
+The workflow imports the certificate into a throwaway keychain, lets Tauri sign
+and notarise the app, signs the disk image, then notarises and staples that
+too, for the reason given above.
+
 ## What is in the bundle, and why
 
 **`Entitlements.plist`** declares exactly one thing:
