@@ -273,6 +273,12 @@ impl Pipeline {
         self.cancelled.store(true, Ordering::SeqCst);
     }
 
+    /// A short note in the capsule that is not about a dictation, shown when
+    /// the capsule is free (see `Overlay::notice`).
+    pub fn notice(&self, text: String) {
+        self.sink.publish(Status::Notice { text });
+    }
+
     fn announce(&self, status: Status) {
         let live = matches!(status, Status::Recording | Status::Transcribing);
         self.escape_arm.store(live, Ordering::SeqCst);

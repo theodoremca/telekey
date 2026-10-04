@@ -23,6 +23,13 @@ on:
 permissions:
   contents: write
 
+env:
+  # Which TeleKey server the released app talks to, baked in at build time
+  # (session.rs reads it with option_env!). Staging for now, on Theodore's
+  # instruction: test credits, testers only. Change to "production" to ship
+  # the real thing.
+  TELEKEY_STAGE: staging
+
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -258,6 +265,10 @@ jobs:
               echo '```'
             fi
             echo
+            if [[ "$TELEKEY_STAGE" != 'production' ]]; then
+              echo "> This is a **staging** build: it signs in to TeleKey's test server, which only invited testers can use."
+              echo
+            fi
             echo "**Windows:** run the \`-setup.exe\`. It is not code-signed yet, so SmartScreen may warn: choose *More info*, then *Run anyway*."
             echo
             echo "**Linux** (X11, not Wayland; new and little tested): install the \`.deb\` with \`sudo apt install ./TeleKey_*.deb\`, or make the \`.AppImage\` executable and run it."

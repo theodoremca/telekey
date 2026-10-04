@@ -371,6 +371,17 @@ last; anything else that signs by name (`APPLE_SIGNING_IDENTITY` for
 designated requirement names the team, not the certificate. Renewal steps are
 in RELEASING.md.
 
+**19. On Windows, signing in on the website never signs the app in.**
+Two causes, both Windows-only. Windows (and Linux) open a `telekey://` link by
+starting a *second* copy of the app with the link as its argument, so the
+running copy never saw it; `tauri-plugin-single-instance` with its `deep-link`
+feature, registered as the first plugin, hands the link to the running copy.
+And Windows' Credential Manager caps an entry at 2,560 bytes of UTF-16, about
+1,280 characters, which a session (the Google ID token alone is ~1,400) does
+not fit; `session.rs` splits a long value across `hosted-session.1`, `.2`, …
+and the tests enforce the Windows limit. A sign-in that fails to save now says
+so in the capsule instead of only in the log.
+
 ---
 
 ## Architecture in one screen

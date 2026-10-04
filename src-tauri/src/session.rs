@@ -41,35 +41,165 @@ impl SessionStatus {
 }
 
 pub fn load() -> Result<Option<Session>> {
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)
-        .context("could not open the session Keychain entry")?;
-    match entry.get_password() {
-        Ok(raw) => {
+    match read_session(&Keyring)? {
+        Some(raw) => {
             let session: Session = serde_json::from_str(&raw)
                 .context("stored session was not valid JSON")?;
             Ok(Some(session))
         }
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(err) => Err(anyhow::Error::new(err).context("could not read the hosted session")),
+        None => Ok(None),
     }
 }
 
 pub fn store(session: &Session) -> Result<()> {
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)
-        .context("could not open the session Keychain entry")?;
     let raw = serde_json::to_string(session).context("could not serialise the session")?;
-    entry
-        .set_password(&raw)
-        .context("could not store the hosted session")
+    write_session(&Keyring, &raw)
 }
 
 pub fn clear() -> Result<()> {
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)
-        .context("could not open the session Keychain entry")?;
-    match entry.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(err) => Err(anyhow::Error::new(err).context("could not delete the hosted session")),
+    delete_session(&Keyring)
+}
+
+// ---- storage ------------------------------------------------------------
+//
+// Windows' Credential Manager holds at most 2,560 bytes per entry and stores
+// text as UTF-16, two bytes a character, so about 1,280 characters. A session
+// does not fit: the Google ID token alone runs to some 1,400. On Windows the
+// write failed, the app only logged it, and a sign-in silently did not stick.
+// So a value too long for one entry is split across numbered entries
+// (`hosted-session.1`, `.2`, …) and the first entry records how many. The same
+// layout is used on every platform, so the Mac exercises it daily.
+
+/// UTF-16 code units per entry: 2,400 bytes, under Windows' 2,560.
+const PART_UNITS: usize = 1_200;
+/// The first entry's value when the session is split, followed by the count.
+const PARTS_MARKER: &str = "telekey-parts:";
+/// Far more than a session needs (about three); a bound for clean-up.
+const MAX_PARTS: usize = 8;
+
+/// The platform secret store, behind a trait so the layout can be tested
+/// without touching the real one.
+trait SecretStore {
+    fn get(&self, account: &str) -> Result<Option<String>>;
+    fn set(&self, account: &str, value: &str) -> Result<()>;
+    /// Removing something that is not there is not an error.
+    fn delete(&self, account: &str) -> Result<()>;
+}
+
+/// The Keychain on macOS, Credential Manager on Windows, the Secret Service
+/// on Linux.
+struct Keyring;
+
+impl SecretStore for Keyring {
+    fn get(&self, account: &str) -> Result<Option<String>> {
+        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, account)
+            .context("could not open the session Keychain entry")?;
+        match entry.get_password() {
+            Ok(value) => Ok(Some(value)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(err) => Err(anyhow::Error::new(err).context("could not read the hosted session")),
+        }
     }
+
+    fn set(&self, account: &str, value: &str) -> Result<()> {
+        keyring::Entry::new(KEYCHAIN_SERVICE, account)
+            .context("could not open the session Keychain entry")?
+            .set_password(value)
+            .context("could not store the hosted session")
+    }
+
+    fn delete(&self, account: &str) -> Result<()> {
+        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, account)
+            .context("could not open the session Keychain entry")?;
+        match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(err) => Err(anyhow::Error::new(err).context("could not delete the hosted session")),
+        }
+    }
+}
+
+fn part_account(index: usize) -> String {
+    format!("{KEYCHAIN_ACCOUNT}.{index}")
+}
+
+/// Cut `raw` into pieces of at most `limit` UTF-16 code units, between
+/// characters, so no piece is longer than an entry can hold.
+fn split_utf16(raw: &str, limit: usize) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut units = 0;
+    for ch in raw.chars() {
+        let len = ch.len_utf16();
+        if units + len > limit && !current.is_empty() {
+            parts.push(std::mem::take(&mut current));
+            units = 0;
+        }
+        current.push(ch);
+        units += len;
+    }
+    if !current.is_empty() || parts.is_empty() {
+        parts.push(current);
+    }
+    parts
+}
+
+fn write_session(store: &impl SecretStore, raw: &str) -> Result<()> {
+    if raw.encode_utf16().count() <= PART_UNITS {
+        store.set(KEYCHAIN_ACCOUNT, raw)?;
+        return remove_parts(store, 1);
+    }
+
+    let parts = split_utf16(raw, PART_UNITS);
+    if parts.len() > MAX_PARTS {
+        bail!("the sign-in is too large to store ({} parts)", parts.len());
+    }
+    // The parts first and the count last, so the first entry never names
+    // parts that have not been written yet.
+    for (index, part) in parts.iter().enumerate() {
+        store.set(&part_account(index + 1), part)?;
+    }
+    store.set(KEYCHAIN_ACCOUNT, &format!("{PARTS_MARKER}{}", parts.len()))?;
+    // A shorter session than the last one leaves parts behind; remove them.
+    remove_parts(store, parts.len() + 1)
+}
+
+fn read_session(store: &impl SecretStore) -> Result<Option<String>> {
+    let Some(first) = store.get(KEYCHAIN_ACCOUNT)? else {
+        return Ok(None);
+    };
+    // A session stored whole: every one written before the split existed, and
+    // any short enough for one entry.
+    let Some(count) = first.strip_prefix(PARTS_MARKER) else {
+        return Ok(Some(first));
+    };
+
+    let count: usize = count
+        .trim()
+        .parse()
+        .context("the stored sign-in has an unreadable part count")?;
+    if count == 0 || count > MAX_PARTS {
+        bail!("the stored sign-in claims {count} parts");
+    }
+    let mut raw = String::new();
+    for index in 1..=count {
+        let part = store
+            .get(&part_account(index))?
+            .with_context(|| format!("the stored sign-in is missing part {index} of {count}"))?;
+        raw.push_str(&part);
+    }
+    Ok(Some(raw))
+}
+
+fn delete_session(store: &impl SecretStore) -> Result<()> {
+    store.delete(KEYCHAIN_ACCOUNT)?;
+    remove_parts(store, 1)
+}
+
+fn remove_parts(store: &impl SecretStore, from: usize) -> Result<()> {
+    for index in from..=MAX_PARTS {
+        store.delete(&part_account(index))?;
+    }
+    Ok(())
 }
 
 pub fn status() -> SessionStatus {
@@ -372,6 +502,144 @@ pub fn session_from_callback_url(raw: &str) -> Result<Session> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
+
+    /// Windows' per-entry limit, in bytes of UTF-16.
+    const WINDOWS_ENTRY_BYTES: usize = 2_560;
+
+    /// A secret store that also enforces Windows' size limit, so a layout that
+    /// would fail there fails here.
+    #[derive(Default)]
+    struct MemoryStore {
+        entries: Mutex<BTreeMap<String, String>>,
+    }
+
+    impl MemoryStore {
+        fn accounts(&self) -> Vec<String> {
+            self.entries.lock().unwrap().keys().cloned().collect()
+        }
+    }
+
+    impl SecretStore for MemoryStore {
+        fn get(&self, account: &str) -> Result<Option<String>> {
+            Ok(self.entries.lock().unwrap().get(account).cloned())
+        }
+
+        fn set(&self, account: &str, value: &str) -> Result<()> {
+            let bytes = value.encode_utf16().count() * 2;
+            if bytes > WINDOWS_ENTRY_BYTES {
+                bail!("{bytes} bytes is over Windows' {WINDOWS_ENTRY_BYTES}");
+            }
+            self.entries
+                .lock()
+                .unwrap()
+                .insert(account.to_string(), value.to_string());
+            Ok(())
+        }
+
+        fn delete(&self, account: &str) -> Result<()> {
+            self.entries.lock().unwrap().remove(account);
+            Ok(())
+        }
+    }
+
+    /// A session the size a real Google sign-in produces.
+    fn realistic_session() -> String {
+        serde_json::to_string(&Session {
+            refresh_token: "r".repeat(900),
+            id_token: "i".repeat(1_400),
+            uid: "a".repeat(28),
+            email: "theodoreimonigie@gmail.com".into(),
+            id_token_expires: 1_790_000_000,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn a_real_sessions_size_would_not_fit_one_windows_entry() {
+        // The bug this layout exists for.
+        assert!(realistic_session().encode_utf16().count() * 2 > WINDOWS_ENTRY_BYTES);
+    }
+
+    #[test]
+    fn a_real_session_round_trips_in_parts_that_each_fit_windows() {
+        let store = MemoryStore::default();
+        let raw = realistic_session();
+
+        write_session(&store, &raw).unwrap();
+
+        assert_eq!(read_session(&store).unwrap(), Some(raw));
+        let first = store.get(KEYCHAIN_ACCOUNT).unwrap().unwrap();
+        assert!(first.starts_with(PARTS_MARKER), "first entry: {first}");
+    }
+
+    #[test]
+    fn a_short_value_is_stored_whole_with_no_parts() {
+        let store = MemoryStore::default();
+        write_session(&store, "{\"short\":true}").unwrap();
+
+        assert_eq!(store.accounts(), vec![KEYCHAIN_ACCOUNT.to_string()]);
+        assert_eq!(read_session(&store).unwrap().as_deref(), Some("{\"short\":true}"));
+    }
+
+    #[test]
+    fn a_session_stored_whole_before_the_split_still_loads() {
+        let store = MemoryStore::default();
+        store
+            .entries
+            .lock()
+            .unwrap()
+            .insert(KEYCHAIN_ACCOUNT.into(), "{\"legacy\":1}".into());
+        assert_eq!(read_session(&store).unwrap().as_deref(), Some("{\"legacy\":1}"));
+    }
+
+    #[test]
+    fn a_shorter_session_removes_the_parts_it_no_longer_needs() {
+        let store = MemoryStore::default();
+        write_session(&store, &"x".repeat(3_000)).unwrap();
+        assert_eq!(store.accounts().len(), 4, "{:?}", store.accounts());
+
+        write_session(&store, &"y".repeat(1_500)).unwrap();
+        assert_eq!(store.accounts().len(), 3, "{:?}", store.accounts());
+        assert_eq!(read_session(&store).unwrap(), Some("y".repeat(1_500)));
+
+        write_session(&store, "short").unwrap();
+        assert_eq!(store.accounts(), vec![KEYCHAIN_ACCOUNT.to_string()]);
+    }
+
+    #[test]
+    fn characters_outside_the_basic_plane_count_twice() {
+        // An emoji is two UTF-16 units; splitting by characters alone would
+        // overfill an entry.
+        let raw = "😀".repeat(1_000);
+        let parts = split_utf16(&raw, PART_UNITS);
+        assert!(parts.iter().all(|p| p.encode_utf16().count() <= PART_UNITS));
+        assert_eq!(parts.concat(), raw);
+
+        let store = MemoryStore::default();
+        write_session(&store, &raw).unwrap();
+        assert_eq!(read_session(&store).unwrap(), Some(raw));
+    }
+
+    #[test]
+    fn signing_out_removes_every_part() {
+        let store = MemoryStore::default();
+        write_session(&store, &realistic_session()).unwrap();
+        delete_session(&store).unwrap();
+        assert!(store.accounts().is_empty(), "{:?}", store.accounts());
+        assert_eq!(read_session(&store).unwrap(), None);
+    }
+
+    #[test]
+    fn a_missing_part_is_an_error_not_a_truncated_session() {
+        let store = MemoryStore::default();
+        write_session(&store, &"z".repeat(3_000)).unwrap();
+        store.delete(&part_account(2)).unwrap();
+        let err = read_session(&store).unwrap_err();
+        assert!(format!("{err:#}").contains("missing part 2"), "{err:#}");
+    }
 
     #[test]
     fn session_status_serialises_camel_case() {

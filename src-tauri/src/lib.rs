@@ -149,7 +149,26 @@ pub fn run() {
     let fn_bus = trigger_bus.clone();
     let escape_bus = trigger_bus.clone();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // Windows and Linux open a telekey:// link by starting a second copy of the
+    // app with the link as its argument, so a sign-in never reached the copy
+    // already running. This plugin hands the link to the running copy's own
+    // deep-link handler (its "deep-link" feature) and ends the second copy. It
+    // is registered first so the second copy exits before anything else starts.
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+        // A sign-in link has been handled already. Anything else is someone
+        // opening TeleKey again, which deserves a window rather than nothing.
+        if argv.iter().any(|arg| arg.starts_with("telekey://")) {
+            return;
+        }
+        if let Err(err) = open_main_window(app, "settings") {
+            tracing::warn!("could not open settings for a second launch: {err}");
+        }
+    }));
+
+    builder
         .plugin(trigger::plugin(trigger_bus.clone()))
         .plugin(tauri_plugin_deep_link::init())
         .invoke_handler(tauri::generate_handler![
@@ -370,6 +389,18 @@ pub fn run() {
 
             app.manage(trigger_bus);
             app.manage(Arc::clone(&pipeline));
+
+            // The Windows installer registers telekey:// links; a Linux
+            // AppImage registers nothing, so claim the scheme at runtime there.
+            // On Windows this rewrites the same per-user entry, harmlessly.
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                if let Err(err) = app.deep_link().register_all() {
+                    tracing::warn!("could not register telekey:// links: {err}");
+                }
+            }
+
             listen_for_hosted_session(app.handle(), Arc::clone(&pipeline));
 
             tracing::info!(
@@ -512,6 +543,9 @@ fn apply_auth_urls(app: &AppHandle, pipeline: &Pipeline, urls: Vec<url::Url>) {
             Ok(next) => {
                 if let Err(err) = session::store(&next) {
                     tracing::warn!("could not store the hosted session: {err:#}");
+                    // Said out loud: a sign-in that silently did not stick is
+                    // indistinguishable from one that never arrived.
+                    pipeline.notice(format!("Sign-in didn't save: {err}"));
                     continue;
                 }
                 pipeline.invalidate_transcriber();
