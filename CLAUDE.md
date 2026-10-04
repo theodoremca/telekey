@@ -389,6 +389,24 @@ a Windows window procedure, where building a window deadlocks (Tauri's docs),
 so the link is handled on its own thread and windows open through
 `run_on_main_thread`. A sign-in that fails to save says so in the capsule.
 
+**20. On Windows, setup never finishes and its "Open" buttons do nothing.**
+Accessibility, Input Monitoring and hold-Fn exist only on macOS, and
+`fnTrigger` defaults to true, so Windows was asked for a permission it cannot
+grant, and "Open" ran macOS's `open x-apple.systempreferences:…`.
+`permissions::Platform` says which permissions exist on this OS;
+`setup::evaluate` lists only those, Settings hides the rest (the `platform`
+command), and `wants_fn` keeps the Fn tap macOS-only. Windows never asks for
+the microphone: it is on unless a switch in Settings › Privacy › Microphone is
+off, and then a desktop app records silence. `permissions::microphone()` reads
+those switches from the `CapabilityAccessManager\ConsentStore\microphone`
+registry keys, and only an explicit `Deny` counts. Even that is a hint, not
+proof (Microsoft says a desktop app may still get through), so setup shows the
+row but `Pipeline::begin` records anyway; it refuses only when the device then
+fails to open or hands back nothing but zeros, and never uploads that silence.
+macOS's answer is final (`microphone_denial_is_final`). Linux has no microphone
+permission, so it lists no row. Preview any platform's windows in the browser
+with `?platform=windows` or `?platform=linux`.
+
 ---
 
 ## Architecture in one screen

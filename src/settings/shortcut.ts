@@ -9,17 +9,46 @@
 export interface Recorded {
   /** What Rust parses, e.g. `Ctrl+Alt+Space`. */
   accelerator: string;
-  /** What the user sees, e.g. `["⌃", "⌥", "Space"]`. */
+  /** What the user sees, e.g. `["⌃", "⌥", "Space"]`, or `Ctrl` and `Alt` off a Mac. */
   glyphs: string[];
 }
 
-/** macOS renders modifiers in this order regardless of press order. */
-const MODIFIER_GLYPHS: Array<[string, string]> = [
-  ["Ctrl", "⌃"],
-  ["Alt", "⌥"],
-  ["Shift", "⇧"],
-  ["Super", "⌘"],
-];
+/**
+ * Whose keyboard the labels are for. A Windows user has no ⌃ or ⌥ keycap, and
+ * the key macOS calls ⌘ is the Windows key there.
+ */
+export type KeyStyle = "mac" | "windows" | "linux";
+
+/** The webview's own system; the browser preview can override it. */
+function detectStyle(): KeyStyle {
+  const agent = typeof navigator === "undefined" ? "" : (navigator.userAgent ?? "");
+  if (/Windows/i.test(agent)) return "windows";
+  if (/Linux|X11/i.test(agent) && !/Android/i.test(agent)) return "linux";
+  return "mac";
+}
+
+let style: KeyStyle = detectStyle();
+
+/** For the browser preview's `?platform=` flag, and for tests. */
+export function setKeyStyle(next: KeyStyle) {
+  style = next;
+}
+
+export function keyStyle(): KeyStyle {
+  return style;
+}
+
+/** The order modifiers are shown in, whatever order they were pressed in. */
+const MODIFIER_TOKENS = ["Ctrl", "Alt", "Shift", "Super"] as const;
+type Modifier = (typeof MODIFIER_TOKENS)[number];
+
+const MODIFIER_LABELS: Record<KeyStyle, Record<Modifier, string>> = {
+  mac: { Ctrl: "⌃", Alt: "⌥", Shift: "⇧", Super: "⌘" },
+  windows: { Ctrl: "Ctrl", Alt: "Alt", Shift: "Shift", Super: "Win" },
+  linux: { Ctrl: "Ctrl", Alt: "Alt", Shift: "Shift", Super: "Super" },
+};
+
+const modifierLabel = (modifier: Modifier) => MODIFIER_LABELS[style][modifier];
 
 /** Codes that are modifiers, and so can never be the shortcut's key. */
 const MODIFIER_CODES = new Set([
@@ -38,7 +67,6 @@ const MODIFIER_CODES = new Set([
 
 const KEY_LABELS: Record<string, string> = {
   Space: "Space",
-  Enter: "Return",
   Tab: "Tab",
   Backslash: "\\",
   Backquote: "`",
@@ -59,6 +87,7 @@ const KEY_LABELS: Record<string, string> = {
 
 /** Turn a `KeyboardEvent.code` into something worth showing a person. */
 export function keyLabel(code: string): string {
+  if (code === "Enter") return style === "mac" ? "Return" : "Enter";
   if (KEY_LABELS[code]) return KEY_LABELS[code];
   if (code.startsWith("Key")) return code.slice(3);
   if (code.startsWith("Digit")) return code.slice(5);
@@ -92,10 +121,10 @@ export function fromKeyEvent(event: {
   const tokens: string[] = [];
   const glyphs: string[] = [];
 
-  MODIFIER_GLYPHS.forEach(([token, glyph], index) => {
+  MODIFIER_TOKENS.forEach((token, index) => {
     if (held[index]) {
       tokens.push(token);
-      glyphs.push(glyph);
+      glyphs.push(modifierLabel(token));
     }
   });
 
@@ -121,29 +150,40 @@ export function modifierGlyphs(event: {
   metaKey: boolean;
 }): string[] {
   const held = [event.ctrlKey, event.altKey, event.shiftKey, event.metaKey];
-  return MODIFIER_GLYPHS.filter((_, index) => held[index]).map(
-    ([, glyph]) => glyph,
-  );
+  return MODIFIER_TOKENS.filter((_, index) => held[index]).map(modifierLabel);
 }
 
 /** Render a stored accelerator for display, e.g. `Ctrl+Alt+Space`. */
 export function toGlyphs(accelerator: string): string[] {
-  const aliases: Record<string, string> = {
-    ctrl: "⌃",
-    control: "⌃",
-    alt: "⌥",
-    option: "⌥",
-    shift: "⇧",
-    super: "⌘",
-    cmd: "⌘",
-    command: "⌘",
-    cmdorctrl: "⌘",
-    commandorcontrol: "⌘",
+  // CmdOrCtrl is ⌘ on a Mac and Ctrl everywhere else, as the hotkey crate reads it.
+  const aliases: Record<string, Modifier> = {
+    ctrl: "Ctrl",
+    control: "Ctrl",
+    alt: "Alt",
+    option: "Alt",
+    shift: "Shift",
+    super: "Super",
+    cmd: "Super",
+    command: "Super",
+    cmdorctrl: style === "mac" ? "Super" : "Ctrl",
+    commandorcontrol: style === "mac" ? "Super" : "Ctrl",
   };
 
   return accelerator
     .split("+")
     .map((token) => token.trim())
     .filter(Boolean)
-    .map((token) => aliases[token.toLowerCase()] ?? keyLabel(token));
+    .map((token) => {
+      const modifier = aliases[token.toLowerCase()];
+      return modifier ? modifierLabel(modifier) : keyLabel(token);
+    });
+}
+
+/**
+ * A shortcut in running text: `⌃ ⌥ Space` on a Mac, where the glyphs read as
+ * keys on their own, and `Ctrl + Alt + Space` elsewhere, where words need the
+ * plus signs to read as one chord.
+ */
+export function shortcutText(accelerator: string): string {
+  return toGlyphs(accelerator).join(style === "mac" ? " " : " + ");
 }

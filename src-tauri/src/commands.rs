@@ -207,11 +207,18 @@ pub fn setup_state(
         pipeline.warmup_once();
     }
     setup::evaluate(
+        permissions::Platform::current(),
         at_launch.0,
         now,
         credentials_ready(),
         pipeline.settings().fn_trigger,
     )
+}
+
+/// Which permissions and triggers exist here, so Settings shows only those.
+#[tauri::command]
+pub fn platform() -> permissions::Platform {
+    permissions::Platform::current()
 }
 
 pub fn credentials_ready() -> bool {

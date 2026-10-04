@@ -1,6 +1,6 @@
 [package]
 name = "telekey"
-version = "0.2.1"
+version = "0.2.2"
 description = "Push-to-talk dictation for macOS"
 authors = ["Theodore"]
 edition = "2021"
@@ -97,6 +97,7 @@ windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_UI_WindowsAndMessaging",
   "Win32_System_Threading",
+  "Win32_System_Registry",
 ] }
 
 [dev-dependencies]

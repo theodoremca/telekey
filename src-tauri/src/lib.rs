@@ -84,7 +84,9 @@ impl StatusSink for TauriSink {
                 }
                 // The key was held before the microphone was allowed. The
                 // message says "in Setup", so Setup had better be on screen.
-                if lower.contains("microphone") {
+                // Matched exactly: "Microphone disconnected" is about a device,
+                // and Setup has nothing to say about that.
+                if message == pipeline::MICROPHONE_NEEDED {
                     let app = self.app.clone();
                     let queued = self.app.run_on_main_thread(move || {
                         if let Err(err) = open_setup_window(&app) {
@@ -188,6 +190,7 @@ pub fn run() {
             commands::set_fn_trigger,
             commands::validate_shortcut,
             commands::can_mute_output,
+            commands::platform,
             commands::api_key_status,
             commands::set_api_key,
             commands::clear_api_key,
@@ -308,7 +311,9 @@ pub fn run() {
             // reads them, once the window has said what each one is for. Three
             // unexplained dialogs stacked on top of each other before that
             // window existed is what a first launch used to look like.
-            if loaded.fn_trigger {
+            // Hold-Fn is macOS-only; elsewhere the default `fnTrigger: true`
+            // would only log a failure on every launch.
+            if permissions::Platform::current().wants_fn(loaded.fn_trigger) {
                 // Failing here is not fatal: the shortcut above still works, so
                 // the user loses the nicer gesture rather than dictation. On a
                 // first run this is expected — the tap starts after the restart
@@ -359,6 +364,7 @@ pub fn run() {
             }
             std::thread::spawn(move || {
                 let outstanding = setup::evaluate(
+                    permissions::Platform::current(),
                     permissions_at_launch,
                     permissions::current(),
                     commands::credentials_ready(),
@@ -584,6 +590,7 @@ fn apply_auth_urls(app: &AppHandle, pipeline: &Pipeline, urls: Vec<url::Url>) {
                 // Keychain is not read again on this thread.
                 let outstanding = app.try_state::<commands::LaunchPermissions>().map(|at_launch| {
                     setup::evaluate(
+                        permissions::Platform::current(),
                         at_launch.0,
                         permissions::current(),
                         true,

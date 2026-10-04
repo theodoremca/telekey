@@ -467,8 +467,13 @@ pub fn open_in_browser(url: &str) -> Result<()> {
         }
         #[cfg(target_os = "windows")]
         {
+            use std::os::windows::process::CommandExt;
+            // TeleKey has no console, so cmd.exe would open one of its own and
+            // flash it over the screen for as long as `start` takes.
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             std::process::Command::new("cmd")
                 .args(["/C", "start", "", url])
+                .creation_flags(CREATE_NO_WINDOW)
                 .status()
         }
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]

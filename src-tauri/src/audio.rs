@@ -36,6 +36,12 @@ impl Clip {
     pub fn is_empty(&self) -> bool {
         self.samples.is_empty()
     }
+
+    /// Nothing but exact zeros. A working microphone always picks up some
+    /// noise, so this is what a device the system is blocking delivers.
+    pub fn is_digital_silence(&self) -> bool {
+        self.samples.iter().all(|&sample| sample == 0.0)
+    }
 }
 
 /// A finished capture, plus anything the device reported on the way.
@@ -410,6 +416,15 @@ pub fn encode_wav_16bit_mono(samples: &[f32], sample_rate: u32) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_exact_zeros_count_as_digital_silence() {
+        let blocked = Clip { samples: vec![0.0; 1600] };
+        let quiet_room = Clip { samples: vec![0.0, 0.0001, -0.0002, 0.0] };
+
+        assert!(blocked.is_digital_silence());
+        assert!(!quiet_room.is_digital_silence(), "a real microphone always hears something");
+    }
 
     /// Decode with a real WAV parser: proves the hand-rolled header is valid.
     #[test]

@@ -18,7 +18,7 @@ use crate::frontmost::{frontmost_app, TargetApp};
 use crate::history::History;
 use crate::inject::{self, PASTE_SETTLE_DELAY};
 use crate::output_mute::{self, OutputMute};
-use crate::permissions::{self, Permission};
+use crate::permissions::{self, Permission, Platform};
 use crate::hosted::{HostedPolisher, HostedTranscriber};
 use crate::polish::{OpenAiPolisher, Polisher};
 use crate::session;
@@ -83,6 +83,10 @@ pub struct Pipeline {
     /// dictation settles so the note appears after the result, not instead
     /// of it.
     device_warning: Mutex<Option<String>>,
+    /// Windows' privacy settings said the microphone was off when this
+    /// recording started. Not proof, so the recording went ahead; if it comes
+    /// back as pure silence, that is the answer, and nothing is uploaded.
+    microphone_switched_off: AtomicBool,
 }
 
 /// What the user sees when they hold the key before allowing the microphone.
@@ -112,6 +116,7 @@ impl Pipeline {
             output: output_mute::for_this_platform(),
             warmed: AtomicBool::new(false),
             device_warning: Mutex::new(None),
+            microphone_switched_off: AtomicBool::new(false),
         }
     }
 
@@ -406,7 +411,17 @@ impl Pipeline {
                 return None;
             }
         };
-        let clip = recording.clip;
+        let mut clip = recording.clip;
+        // Windows said the microphone was off, and the device agreed: nothing
+        // but zeros. Uploading that would bill for "nothing was transcribed".
+        if self.microphone_switched_off.swap(false, Ordering::Relaxed)
+            && clip.is_digital_silence()
+        {
+            tracing::warn!("the microphone is switched off in Windows privacy settings");
+            clip.samples.zeroize();
+            self.fail(MICROPHONE_NEEDED.to_string());
+            return None;
+        }
         // Shown once the dictation has settled, after its result.
         *self.device_warning.lock() = recording.warning;
 
@@ -470,18 +485,27 @@ impl Pipeline {
         // would be uploaded, billed and reported as "nothing was transcribed".
         // Opening the device is what makes macOS ask, so a never-asked user
         // still gets the system dialog here — and the setup window with it.
-        match permissions::microphone() {
+        let microphone = permissions::microphone();
+        match microphone {
             Permission::NotAsked => {
                 self.warmup();
                 self.fail(MICROPHONE_NEEDED.to_string());
                 return;
             }
-            Permission::Denied => {
+            Permission::Denied if Platform::current().microphone_denial_is_final() => {
                 self.fail(MICROPHONE_NEEDED.to_string());
                 return;
             }
+            Permission::Denied => {
+                tracing::warn!(
+                    "Windows privacy settings have the microphone switched off; trying anyway"
+                );
+            }
             Permission::Granted | Permission::Unknown => {}
         }
+        let switched_off = microphone == Permission::Denied;
+        self.microphone_switched_off
+            .store(switched_off, Ordering::Relaxed);
 
         // Capture the target app before anything else can steal focus.
         let target = frontmost_app();
@@ -494,7 +518,13 @@ impl Pipeline {
         let preferred = self.settings.lock().input_device.clone();
         if let Err(err) = self.engine.start(preferred) {
             tracing::error!("could not start recording: {err:#}");
-            self.fail(format!("Could not start recording: {err}"));
+            // With the privacy switch off, Windows refuses the device with
+            // "Access is denied"; the setup window says where the switch is.
+            if switched_off {
+                self.fail(MICROPHONE_NEEDED.to_string());
+            } else {
+                self.fail(format!("Could not start recording: {err}"));
+            }
             return;
         }
 

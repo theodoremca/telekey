@@ -8,6 +8,7 @@ import {
   type HostedAccount,
   type InputDevice,
   type Permissions,
+  type Platform,
   type Rates,
   type SessionStatus,
   type Settings,
@@ -16,7 +17,7 @@ import {
 import { HistoryPanel } from "./HistoryPanel";
 import { SettingsPanel } from "./SettingsPanel";
 import { UsagePanel } from "./UsagePanel";
-import { toGlyphs } from "./shortcut";
+import { setKeyStyle, toGlyphs } from "./shortcut";
 import { STATUS_EVENT, settlesADictation, type Status } from "../status";
 
 type Tab = "settings" | "history" | "usage";
@@ -46,6 +47,9 @@ export function App() {
   // Hides the "mute other audio" toggle where the platform cannot do it, rather
   // than offering a switch that would quietly do nothing.
   const [canMuteOutput, setCanMuteOutput] = useState(false);
+  // Which permissions exist here. Windows has no Accessibility or Input
+  // Monitoring and no hold-Fn, so those rows are not offered at all.
+  const [platform, setPlatform] = useState<Platform | null>(null);
   // Counts settled dictations. History and Usage refetch when it changes, so
   // a tab left open shows the new transcript without being reopened.
   const [dictations, setDictations] = useState(0);
@@ -80,11 +84,15 @@ export function App() {
   useEffect(() => {
     (async () => {
       try {
-        const [loaded, sign, canMute] = await Promise.all([
+        const [loaded, sign, canMute, here] = await Promise.all([
           api.loadSettings(),
           api.signingStatus(),
           api.canMuteOutput(),
+          api.platform(),
         ]);
+        // Before the first render with settings: every shortcut label reads it.
+        setKeyStyle(here.os === "macos" ? "mac" : here.os);
+        setPlatform(here);
         setSettings(loaded);
         setSigning(sign);
         setCanMuteOutput(canMute);
@@ -193,7 +201,7 @@ export function App() {
     }
   }, []);
 
-  if (!settings) {
+  if (!settings || !platform) {
     return (
       <main className="page">
         <p className="loading">{error ?? "Loading…"}</p>
@@ -202,8 +210,8 @@ export function App() {
   }
 
   // Everything a dictation needs. The microphone counts when granted, and also
-  // when "unknown": that is what every platform but macOS reports, and there
-  // is nothing to grant there.
+  // when "unknown": that is what Linux reports, and there is nothing to grant
+  // there. Windows reports its privacy switch, so "denied" there is real.
   const microphoneReady =
     permissions?.microphone === "granted" || permissions?.microphone === "unknown";
   const ready =
@@ -275,6 +283,7 @@ export function App() {
           devices={devices}
           signing={signing}
           canMuteOutput={canMuteOutput}
+          platform={platform}
           onSave={save}
           onKeyChanged={setKeyStatus}
           onSessionChanged={refreshStatus}

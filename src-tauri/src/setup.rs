@@ -3,14 +3,15 @@
 //! Permissions are the awkward part of shipping this app: three of them, each
 //! granted somewhere different, two of which do nothing until the process is
 //! restarted. This module turns that into a list of rows the setup window can
-//! render, and it is deliberately pure — permissions as they were at launch,
-//! permissions as they are now, and two facts about configuration in; rows
-//! out. No Tauri, no macOS APIs, so the cases that actually bite are testable:
-//! hold-Fn switched off, and a permission granted since the process started.
+//! render, and it is deliberately pure — the platform, permissions as they
+//! were at launch, permissions as they are now, and two facts about
+//! configuration in; rows out. No Tauri, no macOS APIs, so the cases that
+//! actually bite are testable: hold-Fn switched off, a permission granted since
+//! the process started, and a platform where a permission does not exist.
 
 use serde::Serialize;
 
-use crate::permissions::{Permission, Permissions};
+use crate::permissions::{Permission, Permissions, Platform};
 
 /// One row of the setup window, and the thing the frontend acts on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -97,36 +98,48 @@ pub struct SetupState {
 ///
 /// `credentials_ready` is true when there is an OpenAI key *or* a hosted
 /// session — either is enough to transcribe.
+///
+/// Only permissions that exist on `platform` are listed. A row for one that
+/// does not — Input Monitoring on Windows, say — could never go green, so
+/// setup would never finish.
 pub fn evaluate(
+    platform: Platform,
     at_launch: Permissions,
     now: Permissions,
     credentials_ready: bool,
     fn_trigger: bool,
 ) -> SetupState {
-    let mut requirements = vec![
-        Requirement {
-            step: Step::ApiKey,
-            state: if credentials_ready {
-                StepState::Done
-            } else {
-                StepState::Missing
-            },
-            // A new key is picked up immediately: the pipeline drops its cached
-            // transcriber when one is saved.
-            needs_restart: false,
+    let mut requirements = vec![Requirement {
+        step: Step::ApiKey,
+        state: if credentials_ready {
+            StepState::Done
+        } else {
+            StepState::Missing
         },
-        requirement(Step::Microphone, at_launch.microphone, now.microphone),
-        requirement(
+        // A new key is picked up immediately: the pipeline drops its cached
+        // transcriber when one is saved.
+        needs_restart: false,
+    }];
+
+    if platform.microphone {
+        requirements.push(requirement(
+            Step::Microphone,
+            at_launch.microphone,
+            now.microphone,
+        ));
+    }
+    if platform.accessibility {
+        requirements.push(requirement(
             Step::Accessibility,
             at_launch.accessibility,
             now.accessibility,
-        ),
-    ];
+        ));
+    }
 
     // Input Monitoring buys nothing unless hold-Fn is switched on. Asking for a
     // permission the user has no use for costs trust, and this one is the most
     // alarming-sounding of the three.
-    if fn_trigger {
+    if platform.wants_fn(fn_trigger) {
         requirements.push(requirement(
             Step::InputMonitoring,
             at_launch.input_monitoring,
@@ -180,7 +193,7 @@ mod tests {
 
     #[test]
     fn a_fresh_install_has_everything_left_to_do() {
-        let state = evaluate(nothing_granted(), nothing_granted(), false, false);
+        let state = evaluate(Platform::MACOS, nothing_granted(), nothing_granted(), false, false);
 
         assert!(!state.complete);
         assert!(
@@ -193,7 +206,7 @@ mod tests {
 
     #[test]
     fn a_microphone_that_has_never_been_asked_for_is_not_a_failure() {
-        let state = evaluate(nothing_granted(), nothing_granted(), false, false);
+        let state = evaluate(Platform::MACOS, nothing_granted(), nothing_granted(), false, false);
 
         assert_eq!(
             row(&state, Step::Microphone).state,
@@ -204,8 +217,8 @@ mod tests {
 
     #[test]
     fn input_monitoring_is_listed_only_when_hold_fn_is_on() {
-        let without = evaluate(nothing_granted(), nothing_granted(), true, false);
-        let with = evaluate(nothing_granted(), nothing_granted(), true, true);
+        let without = evaluate(Platform::MACOS, nothing_granted(), nothing_granted(), true, false);
+        let with = evaluate(Platform::MACOS, nothing_granted(), nothing_granted(), true, true);
 
         assert_eq!(without.requirements.len(), 3);
         assert!(!without
@@ -217,7 +230,7 @@ mod tests {
 
     #[test]
     fn granting_accessibility_after_launch_asks_for_a_restart() {
-        let state = evaluate(nothing_granted(), everything_granted(), true, false);
+        let state = evaluate(Platform::MACOS, nothing_granted(), everything_granted(), true, false);
 
         assert!(row(&state, Step::Accessibility).needs_restart);
         assert!(state.restart_pending);
@@ -232,7 +245,7 @@ mod tests {
             microphone: Permission::Granted,
             input_monitoring: Permission::Denied,
         };
-        let state = evaluate(nothing_granted(), now, true, true);
+        let state = evaluate(Platform::MACOS, nothing_granted(), now, true, true);
 
         assert!(row(&state, Step::Accessibility).needs_restart);
         assert!(!state.complete);
@@ -244,7 +257,7 @@ mod tests {
 
     #[test]
     fn a_permission_granted_before_launch_never_asks_for_a_restart() {
-        let state = evaluate(everything_granted(), everything_granted(), true, true);
+        let state = evaluate(Platform::MACOS, everything_granted(), everything_granted(), true, true);
 
         assert!(!state.restart_pending);
         assert!(state.requirements.iter().all(|row| !row.needs_restart));
@@ -253,7 +266,7 @@ mod tests {
     #[test]
     fn the_microphone_never_asks_for_a_restart() {
         // Granted during this session, unlike at launch — and still live.
-        let state = evaluate(nothing_granted(), everything_granted(), true, false);
+        let state = evaluate(Platform::MACOS, nothing_granted(), everything_granted(), true, false);
 
         assert!(
             !row(&state, Step::Microphone).needs_restart,
@@ -263,7 +276,7 @@ mod tests {
 
     #[test]
     fn everything_granted_is_complete_even_with_a_restart_pending() {
-        let state = evaluate(nothing_granted(), everything_granted(), true, true);
+        let state = evaluate(Platform::MACOS, nothing_granted(), everything_granted(), true, true);
 
         assert!(state.complete, "the user has done everything asked of them");
         assert!(state.restart_pending, "but it is not in force yet");
@@ -271,7 +284,7 @@ mod tests {
 
     #[test]
     fn a_missing_key_alone_blocks_completion() {
-        let state = evaluate(everything_granted(), everything_granted(), false, true);
+        let state = evaluate(Platform::MACOS, everything_granted(), everything_granted(), false, true);
 
         assert!(!state.complete);
         assert!(state
@@ -279,5 +292,62 @@ mod tests {
             .iter()
             .filter(|row| row.step != Step::ApiKey)
             .all(Requirement::is_done));
+    }
+
+    #[test]
+    fn windows_lists_the_key_and_the_microphone_only() {
+        // Hold-Fn is on by default, and Windows has neither Accessibility nor
+        // Input Monitoring: listing them is what left Windows setup unfinished.
+        let state = evaluate(
+            Platform::WINDOWS,
+            nothing_granted(),
+            nothing_granted(),
+            true,
+            true,
+        );
+
+        let steps: Vec<Step> = state.requirements.iter().map(|row| row.step).collect();
+        assert_eq!(steps, [Step::ApiKey, Step::Microphone]);
+    }
+
+    #[test]
+    fn windows_is_complete_once_the_microphone_is_allowed() {
+        let allowed = Permissions {
+            accessibility: Permission::Granted,
+            microphone: Permission::Granted,
+            input_monitoring: Permission::Denied,
+        };
+        let state = evaluate(Platform::WINDOWS, allowed, allowed, true, true);
+
+        assert!(state.complete);
+        assert!(!state.restart_pending, "nothing on Windows is read at launch");
+    }
+
+    #[test]
+    fn windows_with_the_microphone_switched_off_is_not_complete() {
+        let blocked = Permissions {
+            accessibility: Permission::Granted,
+            microphone: Permission::Denied,
+            input_monitoring: Permission::Denied,
+        };
+        let state = evaluate(Platform::WINDOWS, blocked, blocked, true, true);
+
+        assert!(!state.complete);
+        assert_eq!(row(&state, Step::Microphone).state, StepState::Missing);
+    }
+
+    #[test]
+    fn linux_needs_only_a_key() {
+        let unknown = Permissions {
+            accessibility: Permission::Granted,
+            microphone: Permission::Unknown,
+            input_monitoring: Permission::Denied,
+        };
+        let without = evaluate(Platform::LINUX, unknown, unknown, false, true);
+        let with = evaluate(Platform::LINUX, unknown, unknown, true, true);
+
+        assert_eq!(without.requirements.len(), 1);
+        assert!(!without.complete);
+        assert!(with.complete, "nothing on Linux can be granted, so nothing is asked");
     }
 }

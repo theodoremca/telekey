@@ -210,7 +210,7 @@ export function UsagePanel({
             <div className="rowText">
               <span className="rowLabel">Usage data</span>
               <span className="rowHint">
-                Counts and totals only, stored on this Mac. No transcripts.
+                Counts and totals only, stored on this computer. No transcripts.
               </span>
             </div>
             {confirmingClear ? (
@@ -233,7 +233,7 @@ export function UsagePanel({
           Totals start from when usage tracking was added — earlier dictations
           were not recorded.
           {hosted
-            ? " Credits are the server ledger; minutes below are what this Mac has dictated."
+            ? " Credits are the server ledger; minutes below are what this computer has dictated."
             : " Figures are OpenAI's reported units priced at the rates above, not your invoice."}
         </p>
       </section>

@@ -10,12 +10,13 @@ import {
   type InputDevice,
   type Permission,
   type Permissions,
+  type Platform,
   type SessionStatus,
   type Settings,
   type Signing,
 } from "./api";
 import { FormattingEditor } from "./FormattingEditor";
-import { fromKeyEvent, modifierGlyphs, toGlyphs } from "./shortcut";
+import { fromKeyEvent, modifierGlyphs, shortcutText, toGlyphs } from "./shortcut";
 
 export function SettingsPanel({
   settings,
@@ -27,6 +28,7 @@ export function SettingsPanel({
   devices,
   signing,
   canMuteOutput,
+  platform,
   onSave,
   onKeyChanged,
   onSessionChanged,
@@ -43,6 +45,8 @@ export function SettingsPanel({
   signing: Signing;
   /** False where the platform cannot silence output; the toggle is then hidden. */
   canMuteOutput: boolean;
+  /** Which permissions exist here; rows for the others are not shown. */
+  platform: Platform;
   onSave: (next: Settings) => Promise<boolean>;
   onKeyChanged: (status: ApiKeyStatus) => void;
   onSessionChanged: () => Promise<void>;
@@ -50,22 +54,22 @@ export function SettingsPanel({
   return (
     <>
       <Section title="Setup">
-        <PermissionRow
-          label="Accessibility"
-          hint="Lets TeleKey paste into other apps."
-          state={permissions?.accessibility ?? "unknown"}
-          onOpen={() => api.openPermissionSettings("accessibility")}
-        />
-        <PermissionRow
-          label="Microphone"
-          hint={
-            defaultDevice
-              ? `System default: ${defaultDevice.name}`
-              : "No input device found."
-          }
-          state={permissions?.microphone ?? "unknown"}
-          onOpen={() => api.openPermissionSettings("microphone")}
-        />
+        {platform.accessibility && (
+          <PermissionRow
+            label="Accessibility"
+            hint="Lets TeleKey paste into other apps."
+            state={permissions?.accessibility ?? "unknown"}
+            onOpen={() => api.openPermissionSettings("accessibility")}
+          />
+        )}
+        {platform.microphone && (
+          <PermissionRow
+            label="Microphone"
+            hint={microphoneHint(platform, permissions?.microphone, defaultDevice)}
+            state={permissions?.microphone ?? "unknown"}
+            onOpen={() => api.openPermissionSettings("microphone")}
+          />
+        )}
         <InputRow
           devices={devices}
           defaultDevice={defaultDevice}
@@ -78,7 +82,7 @@ export function SettingsPanel({
           usingOwnKey={Boolean(keyStatus?.isSet)}
           onChanged={onSessionChanged}
         />
-        <ApiKeyRow status={keyStatus} onChanged={onKeyChanged} />
+        <ApiKeyRow status={keyStatus} platform={platform} onChanged={onKeyChanged} />
         {/* Only shown when it is a problem: an ad-hoc build silently loses its
             Accessibility grant on every rebuild, which is baffling otherwise. */}
         {signing === "unstable" && (
@@ -97,30 +101,38 @@ export function SettingsPanel({
 
       <Section
         title="Shortcut"
-        note={`Hold ${toGlyphs(settings.shortcut)} to record, then release. Fn is a second trigger if you enable it below.`}
+        note={
+          platform.holdFn
+            ? `Hold ${shortcutText(settings.shortcut)} to record, then release. Fn is a second trigger if you enable it below.`
+            : `Hold ${shortcutText(settings.shortcut)} to record, then release.`
+        }
       >
         <ShortcutRecorder
           value={settings.shortcut}
           onCommit={(shortcut) => onSave({ ...settings, shortcut })}
         />
 
-        <Toggle
-          label="Also hold Fn"
-          hint={
-            settings.fnTrigger
-              ? "Quit and reopen TeleKey to start it. Also set 🌐 to “Do Nothing” in Keyboard settings, or dictating will switch your input source."
-              : "One key instead of a chord. Needs Input Monitoring, and a restart."
-          }
-          checked={settings.fnTrigger}
-          onChange={(fnTrigger) => {
-            // Ask for the permission as it is switched on: this registers
-            // TeleKey in the list, which is where people otherwise get stuck.
-            if (fnTrigger) void api.requestInputMonitoring().catch(() => {});
-            void onSave({ ...settings, fnTrigger });
-          }}
-        />
+        {/* macOS only: on Windows and Linux the Fn key never reaches the
+            system, so the switch would do nothing. */}
+        {platform.holdFn && (
+          <Toggle
+            label="Also hold Fn"
+            hint={
+              settings.fnTrigger
+                ? "Quit and reopen TeleKey to start it. Also set 🌐 to “Do Nothing” in Keyboard settings, or dictating will switch your input source."
+                : "One key instead of a chord. Needs Input Monitoring, and a restart."
+            }
+            checked={settings.fnTrigger}
+            onChange={(fnTrigger) => {
+              // Ask for the permission as it is switched on: this registers
+              // TeleKey in the list, which is where people otherwise get stuck.
+              if (fnTrigger) void api.requestInputMonitoring().catch(() => {});
+              void onSave({ ...settings, fnTrigger });
+            }}
+          />
+        )}
 
-        {settings.fnTrigger && (
+        {platform.holdFn && settings.fnTrigger && (
           <PermissionRow
             label="Input Monitoring"
             hint="Lets TeleKey see the Fn key. Restart TeleKey after granting."
@@ -153,7 +165,7 @@ export function SettingsPanel({
 
       <Section
         title="Formatting"
-        note="Reformat dictation to match where it lands. Literal is applied on your Mac; the other styles send one extra request."
+        note="Reformat dictation to match where it lands. Literal is applied on this computer; the other styles send one extra request."
       >
         <FormattingEditor
           profiles={settings.profiles}
@@ -166,7 +178,7 @@ export function SettingsPanel({
 
       <Section
         title="History"
-        note="Transcripts are stored on this Mac only. Audio is never saved."
+        note="Transcripts are stored on this computer only. Audio is never saved."
       >
         <Toggle
           label="Keep a history of transcripts"
@@ -226,6 +238,21 @@ function Section({
       <div className="card">{children}</div>
     </section>
   );
+}
+
+/**
+ * Windows never asks about the microphone; it is on unless someone switched it
+ * off, and then TeleKey would record silence. Say where the switch is.
+ */
+function microphoneHint(
+  platform: Platform,
+  state: Permission | undefined,
+  defaultDevice: InputDevice | null,
+): string {
+  if (platform.os === "windows" && state === "denied") {
+    return "Turned off in Windows privacy settings.";
+  }
+  return defaultDevice ? `System default: ${defaultDevice.name}` : "No input device found.";
 }
 
 function PermissionRow({
@@ -323,11 +350,21 @@ function InputRow({
   );
 }
 
+/** Where the key is kept, by the name people know it by. Mirrors
+ *  `CREDENTIAL_STORE` in settings.rs. */
+const CREDENTIAL_STORE: Record<Platform["os"], string> = {
+  macos: "your Keychain",
+  windows: "Windows Credential Manager",
+  linux: "your system keyring",
+};
+
 function ApiKeyRow({
   status,
+  platform,
   onChanged,
 }: {
   status: ApiKeyStatus | null;
+  platform: Platform;
   onChanged: (status: ApiKeyStatus) => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -373,7 +410,7 @@ function ApiKeyRow({
             Cancel
           </button>
         </div>
-        <p className="rowHint">Stored in your Keychain, never in a file.</p>
+        <p className="rowHint">Stored in {CREDENTIAL_STORE[platform.os]}, never in a file.</p>
         {problem && <p className="problem">{problem}</p>}
       </div>
     );

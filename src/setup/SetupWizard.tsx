@@ -24,12 +24,13 @@ import { listen } from "@tauri-apps/api/event";
 import {
   api,
   messageFrom,
+  type Platform,
   type Requirement,
   type Settings,
   type SetupState,
   type SetupStep,
 } from "../settings/api";
-import { toGlyphs } from "../settings/shortcut";
+import { setKeyStyle, shortcutText } from "../settings/shortcut";
 
 /** How often to re-check while the window is on screen. */
 const POLL_MS = 1000;
@@ -60,6 +61,14 @@ const COPY: Record<SetupStep, { label: string; hint: string }> = {
 };
 
 /**
+ * Windows never asks for the microphone. It is on unless someone switched it
+ * off in Settings › Privacy, and then TeleKey would record silence; Open goes
+ * straight to that page.
+ */
+const WINDOWS_MICROPHONE_OFF =
+  "Microphone access is turned off in Windows privacy settings. Open them and turn on access for desktop apps.";
+
+/**
  * What satisfied the credentials row. The balance is three states, not a
  * number: a fetch that failed must not read as $0.00 and send someone with
  * credits off to buy more.
@@ -79,6 +88,7 @@ export function SetupWizard() {
   const [state, setState] = useState<SetupState | null>(null);
   const [credentials, setCredentials] = useState<Credentials>({ kind: "none" });
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [platform, setPlatform] = useState<Platform | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -135,6 +145,14 @@ export function SetupWizard() {
   useEffect(() => {
     void refreshAll();
     void loadSettings();
+    // Only for wording too: which rows to show is already decided by the backend.
+    api
+      .platform()
+      .then((here) => {
+        setKeyStyle(here.os === "macos" ? "mac" : here.os);
+        setPlatform(here);
+      })
+      .catch(() => {});
 
     // The user spends most of this flow in another application, so poll rather
     // than wait to be told. Hidden windows are skipped: nothing changes while
@@ -202,8 +220,12 @@ export function SetupWizard() {
 
       <p className="note">
         {state.complete
-          ? completionNote(settings, outOfCredits)
-          : "Sign in or add a key, then allow each permission. TeleKey checks as you go."}
+          ? completionNote(settings, platform, outOfCredits)
+          : remaining.some((row) => row.step !== "apiKey")
+            ? remaining.some((row) => row.step === "apiKey")
+              ? "Sign in or add a key, then allow each permission. TeleKey checks as you go."
+              : "Allow each permission below. TeleKey checks as you go."
+            : "Sign in or add a key. TeleKey checks as you go."}
       </p>
 
       {state.restartPending && <RestartBanner />}
@@ -214,6 +236,7 @@ export function SetupWizard() {
             key={requirement.step}
             requirement={requirement}
             credentials={credentials}
+            platform={platform}
             onChanged={refreshAll}
           />
         ))}
@@ -222,7 +245,11 @@ export function SetupWizard() {
       {error && <p className="problem">{error}</p>}
 
       <footer className="setupFooter">
-        <span className="rowHint">Reopen from the menubar → Setup…</span>
+        <span className="rowHint">
+          {platform && platform.os !== "macos"
+            ? "Reopen from the TeleKey tray icon → Setup…"
+            : "Reopen from the menubar → Setup…"}
+        </span>
         <button
           className={state.complete ? "primary" : "ghost"}
           onClick={() => void api.closeWindow()}
@@ -235,9 +262,15 @@ export function SetupWizard() {
 }
 
 /** The last line a finished user reads, so it names the gesture they have. */
-function completionNote(settings: Settings | null, outOfCredits: boolean): string {
-  const shortcut = settings ? toGlyphs(settings.shortcut).join(" ") : "your shortcut";
-  const gesture = settings?.fnTrigger === false ? `Hold ${shortcut}` : `Hold Fn or ${shortcut}`;
+function completionNote(
+  settings: Settings | null,
+  platform: Platform | null,
+  outOfCredits: boolean,
+): string {
+  const shortcut = settings ? shortcutText(settings.shortcut) : "your shortcut";
+  // Hold-Fn is macOS-only, and on by default: Windows must not be told to hold Fn.
+  const fn = settings?.fnTrigger !== false && platform?.holdFn === true;
+  const gesture = fn ? `Hold Fn or ${shortcut}` : `Hold ${shortcut}`;
   if (outOfCredits) {
     return `Buy credits, then ${gesture.charAt(0).toLowerCase()}${gesture.slice(1)}, speak, and let go.`;
   }
@@ -268,16 +301,23 @@ function RestartBanner() {
 function StepRow({
   requirement,
   credentials,
+  platform,
   onChanged,
 }: {
   requirement: Requirement;
   credentials: Credentials;
+  platform: Platform | null;
   onChanged: () => Promise<void>;
 }) {
   const { step, state, needsRestart } = requirement;
   const done = state === "done";
   const { label } = COPY[step];
-  const hint = step === "apiKey" && done ? credentialsHint(credentials) : COPY[step].hint;
+  const hint =
+    step === "apiKey" && done
+      ? credentialsHint(credentials)
+      : step === "microphone" && !done && platform?.os === "windows"
+        ? WINDOWS_MICROPHONE_OFF
+        : COPY[step].hint;
 
   // `asksOnFirstUse` is amber rather than red: macOS has not refused, it has
   // simply never been asked, and a red dot there would be a lie.

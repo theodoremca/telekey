@@ -1,5 +1,16 @@
-import { describe, expect, test } from "bun:test";
-import { fromKeyEvent, keyLabel, modifierGlyphs, toGlyphs } from "./shortcut";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+  fromKeyEvent,
+  keyLabel,
+  modifierGlyphs,
+  setKeyStyle,
+  shortcutText,
+  toGlyphs,
+} from "./shortcut";
+
+// Every test below the Windows block reads Mac glyphs, whatever runs them.
+beforeEach(() => setKeyStyle("mac"));
+afterEach(() => setKeyStyle("mac"));
 
 function press(code: string, mods: Partial<Record<string, boolean>> = {}) {
   return {
@@ -144,5 +155,32 @@ describe("modifierGlyphs", () => {
 
     expect(modifierGlyphs(event)).toEqual(["⌃", "⌥"]);
     expect(Object.keys({ ...event })).toEqual([]);
+  });
+});
+
+describe("off a Mac", () => {
+  test("Windows sees key names, not Mac glyphs", () => {
+    setKeyStyle("windows");
+    expect(toGlyphs("Ctrl+Alt+Space")).toEqual(["Ctrl", "Alt", "Space"]);
+    expect(toGlyphs("Super+Shift+KeyD")).toEqual(["Win", "Shift", "D"]);
+    expect(toGlyphs("CmdOrCtrl+KeyD")).toEqual(["Ctrl", "D"]);
+    expect(keyLabel("Enter")).toBe("Enter");
+  });
+
+  test("the recorder labels a Windows press the same way", () => {
+    setKeyStyle("windows");
+    const recorded = fromKeyEvent(press("Space", { ctrl: true, alt: true }));
+    expect(recorded?.accelerator).toBe("Ctrl+Alt+Space");
+    expect(recorded?.glyphs).toEqual(["Ctrl", "Alt", "Space"]);
+    expect(
+      modifierGlyphs({ ctrlKey: true, altKey: false, shiftKey: true, metaKey: false }),
+    ).toEqual(["Ctrl", "Shift"]);
+  });
+
+  test("running text joins names with plus signs, glyphs with spaces", () => {
+    expect(shortcutText("Ctrl+Alt+Space")).toBe("⌃ ⌥ Space");
+    setKeyStyle("linux");
+    expect(shortcutText("Ctrl+Alt+Space")).toBe("Ctrl + Alt + Space");
+    expect(toGlyphs("Super+KeyD")).toEqual(["Super", "D"]);
   });
 });

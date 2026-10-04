@@ -124,7 +124,7 @@ export function FormattingEditor({
             <span className="rowLabel">{profile.label}</span>
             <span className="rowHint">
               {isLocal(profile.style)
-                ? "Applied on your Mac"
+                ? "Applied on this computer"
                 : "One extra request"}
             </span>
           </div>

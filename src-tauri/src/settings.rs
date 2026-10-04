@@ -214,16 +214,25 @@ pub enum ApiKeySource {
     Environment,
     /// Read from a `.env` file at this path.
     EnvFile(PathBuf),
-    /// Stored in the macOS Keychain.
+    /// Stored in the system's credential store: the Keychain on macOS,
+    /// Credential Manager on Windows, the Secret Service keyring on Linux.
     Keychain,
 }
+
+/// What the credential store is called where people will look for it.
+#[cfg(target_os = "macos")]
+pub const CREDENTIAL_STORE: &str = "Keychain";
+#[cfg(target_os = "windows")]
+pub const CREDENTIAL_STORE: &str = "Credential Manager";
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub const CREDENTIAL_STORE: &str = "system keyring";
 
 impl std::fmt::Display for ApiKeySource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Environment => write!(f, "{API_KEY_VAR} environment variable"),
             Self::EnvFile(path) => write!(f, "{}", path.display()),
-            Self::Keychain => write!(f, "Keychain"),
+            Self::Keychain => write!(f, "{CREDENTIAL_STORE}"),
         }
     }
 }
@@ -604,6 +613,8 @@ mod tests {
             ApiKeySource::Environment.to_string(),
             "OPENAI_API_KEY environment variable"
         );
+        assert_eq!(ApiKeySource::Keychain.to_string(), CREDENTIAL_STORE);
+        #[cfg(target_os = "macos")]
         assert_eq!(ApiKeySource::Keychain.to_string(), "Keychain");
         assert_eq!(
             ApiKeySource::EnvFile(PathBuf::from("/tmp/.env")).to_string(),

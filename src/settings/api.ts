@@ -34,6 +34,18 @@ export interface Permissions {
   inputMonitoring: Permission;
 }
 
+/**
+ * Which permissions and triggers exist on this platform. Mirrors `Platform` in
+ * permissions.rs: Windows has a microphone switch and nothing else TeleKey
+ * needs, Linux has none, and hold-Fn is macOS-only.
+ */
+export interface Platform {
+  os: "macos" | "windows" | "linux";
+  accessibility: boolean;
+  microphone: boolean;
+  holdFn: boolean;
+}
+
 /** A row of the setup window. Mirrors `Step` in setup.rs. */
 export type SetupStep =
   | "apiKey"
@@ -165,12 +177,24 @@ const inTauri = () =>
 /**
  * Query flags for the browser preview, so the states that are hard to reach
  * can be looked at: `?balance=0` (a new account with nothing to spend),
- * `?account=fail` (signed in, but the balance could not be fetched).
+ * `?account=fail` (signed in, but the balance could not be fetched),
+ * `?platform=windows` or `?platform=linux` (what those systems are shown).
  */
 const previewFlags = () =>
   typeof window !== "undefined"
     ? new URLSearchParams(window.location.search)
     : new URLSearchParams();
+
+const PREVIEW_PLATFORMS: Record<Platform["os"], Platform> = {
+  macos: { os: "macos", accessibility: true, microphone: true, holdFn: true },
+  windows: { os: "windows", accessibility: false, microphone: true, holdFn: false },
+  linux: { os: "linux", accessibility: false, microphone: false, holdFn: false },
+};
+
+const previewPlatform = (): Platform => {
+  const os = previewFlags().get("platform");
+  return os === "windows" || os === "linux" ? PREVIEW_PLATFORMS[os] : PREVIEW_PLATFORMS.macos;
+};
 
 const previewState: {
   settings: Settings;
@@ -283,6 +307,28 @@ function settlePreviewSetup() {
   setup.restartPending = setup.complete && setup.requirements.some((r) => r.needsRestart);
 }
 
+/**
+ * Drop the rows the previewed platform does not have, as `setup::evaluate`
+ * does. Windows never asks, so its microphone row starts as switched off — the
+ * one state there with anything to do.
+ */
+function fitPreviewToPlatform() {
+  const platform = previewPlatform();
+  const setup = previewState.setup;
+  setup.requirements = setup.requirements
+    .filter((row) => {
+      if (row.step === "microphone") return platform.microphone;
+      if (row.step === "accessibility") return platform.accessibility;
+      if (row.step === "inputMonitoring") return platform.holdFn;
+      return true;
+    })
+    .map((row) =>
+      row.step === "microphone" && platform.os === "windows" ? { ...row, state: "missing" } : row,
+    );
+  settlePreviewSetup();
+}
+fitPreviewToPlatform();
+
 const PREVIEW_DEVICES: InputDevice[] = [
   { id: "coreaudio:BuiltInMicrophoneDevice", name: "MacBook Pro Microphone" },
   { id: "coreaudio:AirPodsPro", name: "AirPods Pro" },
@@ -306,7 +352,9 @@ const preview = {
     return previewState.settings;
   },
   validateShortcut: async () => undefined,
-  canMuteOutput: async () => true,
+  // Both macOS-only in the backend, so a previewed Windows shows neither.
+  canMuteOutput: async () => previewPlatform().os === "macos",
+  platform: async () => previewPlatform(),
   apiKeyStatus: async () => previewState.key,
   setApiKey: async () => {
     previewState.key = {
@@ -345,11 +393,16 @@ const preview = {
     return account;
   },
   createCheckout: async () => undefined,
-  permissions: async (): Promise<Permissions> => ({
-    accessibility: "denied",
-    microphone: "notAsked",
-    inputMonitoring: "denied",
-  }),
+  permissions: async (): Promise<Permissions> => {
+    const { os } = previewPlatform();
+    // What each backend reports: Windows and Linux have no Accessibility to
+    // refuse, Windows has no "never asked", Linux has no switch at all.
+    return {
+      accessibility: os === "macos" ? "denied" : "granted",
+      microphone: os === "macos" ? "notAsked" : os === "windows" ? "denied" : "unknown",
+      inputMonitoring: "denied",
+    };
+  },
   requestInputMonitoring: async () => false,
   openPermissionSettings: async (
     pane: "accessibility" | "microphone" | "inputMonitoring",
@@ -377,7 +430,8 @@ const preview = {
     return previewState.history;
   },
   copyToClipboard: async () => undefined,
-  signingStatus: async (): Promise<Signing> => "unstable",
+  signingStatus: async (): Promise<Signing> =>
+    previewPlatform().os === "macos" ? "unstable" : "unknown",
   usageSummary: async (period: Period): Promise<UsageSummary> => {
     const scale = period === "today" ? 1 : period === "month" ? 18 : 74;
     const units: Units = {
@@ -438,6 +492,7 @@ const live = {
   setFnTrigger: (enabled: boolean) =>
     invoke<Settings>("set_fn_trigger", { enabled }),
   canMuteOutput: () => invoke<boolean>("can_mute_output"),
+  platform: () => invoke<Platform>("platform"),
   validateShortcut: (accelerator: string) =>
     invoke<void>("validate_shortcut", { accelerator }),
   apiKeyStatus: () => invoke<ApiKeyStatus>("api_key_status"),
