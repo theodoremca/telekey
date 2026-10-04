@@ -70,6 +70,18 @@ pub fn clear() -> Result<()> {
 // (`hosted-session.1`, `.2`, …) and the first entry records how many. The same
 // layout is used on every platform, so the Mac exercises it daily.
 
+/// Held while the session's entries are read, written or deleted. A split
+/// session is several entries, so without it a read during a write, or two
+/// writes at once, could splice two sessions together; one entry used to make
+/// every write atomic.
+static STORAGE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// Held for a whole token refresh; see `fresh_id_token`.
+static REFRESH: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn storage_lock() -> std::sync::MutexGuard<'static, ()> {
+    STORAGE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// UTF-16 code units per entry: 2,400 bytes, under Windows' 2,560.
 const PART_UNITS: usize = 1_200;
 /// The first entry's value when the session is split, followed by the count.
@@ -144,6 +156,7 @@ fn split_utf16(raw: &str, limit: usize) -> Vec<String> {
 }
 
 fn write_session(store: &impl SecretStore, raw: &str) -> Result<()> {
+    let _held = storage_lock();
     if raw.encode_utf16().count() <= PART_UNITS {
         store.set(KEYCHAIN_ACCOUNT, raw)?;
         return remove_parts(store, 1);
@@ -164,6 +177,7 @@ fn write_session(store: &impl SecretStore, raw: &str) -> Result<()> {
 }
 
 fn read_session(store: &impl SecretStore) -> Result<Option<String>> {
+    let _held = storage_lock();
     let Some(first) = store.get(KEYCHAIN_ACCOUNT)? else {
         return Ok(None);
     };
@@ -191,6 +205,7 @@ fn read_session(store: &impl SecretStore) -> Result<Option<String>> {
 }
 
 fn delete_session(store: &impl SecretStore) -> Result<()> {
+    let _held = storage_lock();
     store.delete(KEYCHAIN_ACCOUNT)?;
     remove_parts(store, 1)
 }
@@ -223,6 +238,13 @@ pub fn is_signed_in() -> bool {
 
 /// Refresh the ID token if it expires within a minute.
 pub fn fresh_id_token() -> Result<String> {
+    // One refresh at a time. A dictation and the Settings window can both find
+    // the token expired; the second waits here, then finds the first one's
+    // fresh token below instead of refreshing (and saving) again. The network
+    // call happens under this lock only, never the storage lock, so a status
+    // check on the main thread never waits on it.
+    let _refreshing = REFRESH.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
     let mut session = load()?.context("Sign in to use TeleKey's key, or add your own OpenAI key")?;
     let now = chrono::Utc::now().timestamp();
     if session.id_token_expires > now + 60 && !session.id_token.is_empty() {
@@ -490,12 +512,22 @@ pub fn session_from_callback_url(raw: &str) -> Result<Session> {
         bail!("sign-in link was missing the session");
     }
 
+    // The website no longer sends the ID token: with it the link ran past the
+    // roughly 2,048 characters a Windows browser will hand to an app, and the
+    // browser dropped it without a word. Without one, the first hosted call
+    // mints a token from the refresh token (`fresh_id_token`).
+    let id_token_expires = if id_token.is_empty() {
+        0
+    } else {
+        chrono::Utc::now().timestamp() + expires_in.max(60)
+    };
+
     Ok(Session {
         refresh_token,
         id_token,
         uid,
         email,
-        id_token_expires: chrono::Utc::now().timestamp() + expires_in.max(60),
+        id_token_expires,
     })
 }
 
@@ -664,6 +696,51 @@ mod tests {
         assert_eq!(session.uid, "user-1");
         assert_eq!(session.email, "you@example.com");
         assert!(session.id_token_expires > chrono::Utc::now().timestamp());
+    }
+
+    #[test]
+    fn a_link_without_an_id_token_is_refreshed_on_first_use() {
+        let session = session_from_callback_url(
+            "telekey://auth?refreshToken=rt&uid=user-1&email=you%40example.com",
+        )
+        .unwrap();
+        assert!(session.id_token.is_empty());
+        assert_eq!(session.id_token_expires, 0, "so fresh_id_token refreshes at once");
+    }
+
+    #[test]
+    fn concurrent_writers_and_readers_never_see_a_spliced_session() {
+        // Two long sessions of the same length, written over and over from two
+        // threads while two more read. Every read must be one or the other
+        // whole, which only the storage lock guarantees once a session spans
+        // several entries.
+        let store = std::sync::Arc::new(MemoryStore::default());
+        let a = "a".repeat(3_000);
+        let b = "b".repeat(3_000);
+        write_session(&*store, &a).unwrap();
+
+        let mut threads = Vec::new();
+        for value in [a.clone(), b.clone()] {
+            let store = std::sync::Arc::clone(&store);
+            threads.push(std::thread::spawn(move || {
+                for _ in 0..200 {
+                    write_session(&*store, &value).unwrap();
+                }
+            }));
+        }
+        for _ in 0..2 {
+            let store = std::sync::Arc::clone(&store);
+            let (a, b) = (a.clone(), b.clone());
+            threads.push(std::thread::spawn(move || {
+                for _ in 0..400 {
+                    let read = read_session(&*store).unwrap().unwrap();
+                    assert!(read == a || read == b, "spliced read of {} chars", read.len());
+                }
+            }));
+        }
+        for thread in threads {
+            thread.join().unwrap();
+        }
     }
 
     #[test]

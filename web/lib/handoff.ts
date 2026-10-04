@@ -1,19 +1,25 @@
 import type { User } from "firebase/auth";
 
+/**
+ * Windows browsers drop an app link longer than about 2,048 characters without
+ * a word, and the ID token alone is some 1,400. So the link carries only the
+ * refresh token and who it belongs to; the app mints its own ID token from the
+ * refresh token on first use (session.rs, fresh_id_token). Every app version
+ * accepts a link without one.
+ */
+const MAX_APP_LINK = 2_000;
+
 export async function handoffToApp(user: User): Promise<void> {
-  const token = await user.getIdTokenResult();
-  const expiresIn = Math.max(
-    60,
-    Math.floor((new Date(token.expirationTime).getTime() - Date.now()) / 1000),
-  );
   const params = new URLSearchParams({
     refreshToken: user.refreshToken,
-    idToken: token.token,
     uid: user.uid,
     email: user.email ?? "",
-    expiresIn: String(expiresIn),
   });
-  window.location.href = `telekey://auth?${params.toString()}`;
+  const link = `telekey://auth?${params.toString()}`;
+  if (link.length > MAX_APP_LINK) {
+    console.warn(`The TeleKey link is ${link.length} characters; Windows may not open it.`);
+  }
+  window.location.href = link;
 }
 
 export function wantsDesktop(): boolean {

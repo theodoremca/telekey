@@ -45,9 +45,19 @@ BIN="$APP/Contents/MacOS/TeleKey"
 PERMISSIONS=(Accessibility Microphone ListenEvent)
 
 # service and account pairs. The flowtype ones are what adopt_legacy_key would
-# copy back in on first launch.
+# copy back in on first launch. A long sign-in is split across numbered entries
+# (session.rs, MAX_PARTS = 8), so every part is listed; only the ones present
+# are shown or deleted.
 KEYCHAIN_ITEMS=(
   "telekey hosted-session"
+  "telekey hosted-session.1"
+  "telekey hosted-session.2"
+  "telekey hosted-session.3"
+  "telekey hosted-session.4"
+  "telekey hosted-session.5"
+  "telekey hosted-session.6"
+  "telekey hosted-session.7"
+  "telekey hosted-session.8"
   "telekey openai-api-key"
   "flowtype openai-api-key"
   "flowtype hosted-session"

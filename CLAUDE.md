@@ -379,8 +379,15 @@ feature, registered as the first plugin, hands the link to the running copy.
 And Windows' Credential Manager caps an entry at 2,560 bytes of UTF-16, about
 1,280 characters, which a session (the Google ID token alone is ~1,400) does
 not fit; `session.rs` splits a long value across `hosted-session.1`, `.2`, …
-and the tests enforce the Windows limit. A sign-in that fails to save now says
-so in the capsule instead of only in the log.
+and the tests enforce the Windows limit. Because a split session is several
+writes, `session.rs` holds a storage lock around every read and write and a
+refresh lock around `fresh_id_token`, so concurrent refreshes cannot splice two
+sessions. The website's `telekey://auth` link carries only the refresh token:
+with the ID token it ran past the ~2,048 characters a Windows browser hands to
+an app, and the browser dropped it silently. The deep-link callback runs inside
+a Windows window procedure, where building a window deadlocks (Tauri's docs),
+so the link is handled on its own thread and windows open through
+`run_on_main_thread`. A sign-in that fails to save says so in the capsule.
 
 ---
 

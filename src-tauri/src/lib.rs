@@ -163,9 +163,20 @@ pub fn run() {
         if argv.iter().any(|arg| arg.starts_with("telekey://")) {
             return;
         }
-        if let Err(err) = open_main_window(app, "settings") {
-            tracing::warn!("could not open settings for a second launch: {err}");
-        }
+        // This runs inside a window procedure, where building a window can
+        // deadlock on Windows; go through the event loop from another thread.
+        let app = app.clone();
+        std::thread::spawn(move || {
+            let opener = app.clone();
+            let queued = app.run_on_main_thread(move || {
+                if let Err(err) = open_main_window(&opener, "settings") {
+                    tracing::warn!("could not open settings for a second launch: {err}");
+                }
+            });
+            if let Err(err) = queued {
+                tracing::warn!("could not reach the main thread for a second launch: {err}");
+            }
+        });
     }));
 
     builder
@@ -524,14 +535,23 @@ fn setup_height_for(app: &AppHandle) -> f64 {
 fn listen_for_hosted_session(app: &AppHandle, pipeline: Arc<Pipeline>) {
     use tauri_plugin_deep_link::DeepLinkExt;
 
+    // Handled on a thread of its own, never inside the callback. On Windows
+    // the link arrives inside a window procedure (the single-instance plugin's
+    // WM_COPYDATA), and Tauri documents that building a window from an event
+    // handler there deadlocks. The window itself is opened through the event
+    // loop by apply_auth_urls.
     let handle = app.clone();
     let pipe = Arc::clone(&pipeline);
     app.deep_link().on_open_url(move |event| {
-        apply_auth_urls(&handle, &pipe, event.urls());
+        let (app, pipeline, urls) = (handle.clone(), Arc::clone(&pipe), event.urls());
+        std::thread::spawn(move || apply_auth_urls(&app, &pipeline, urls));
     });
 
     match app.deep_link().get_current() {
-        Ok(Some(urls)) => apply_auth_urls(app, &pipeline, urls),
+        Ok(Some(urls)) => {
+            let app = app.clone();
+            std::thread::spawn(move || apply_auth_urls(&app, &pipeline, urls));
+        }
         Ok(None) => {}
         Err(err) => tracing::debug!("no launch URL: {err}"),
     }
@@ -570,12 +590,20 @@ fn apply_auth_urls(app: &AppHandle, pipeline: &Pipeline, urls: Vec<url::Url>) {
                         pipeline.settings().fn_trigger,
                     )
                 });
-                let opened = match outstanding {
-                    Some(state) if !state.complete => open_setup_window(app),
-                    _ => open_main_window(app, "usage"),
-                };
-                if let Err(err) = opened {
-                    tracing::warn!("could not open a window after sign-in: {err}");
+                let setup_incomplete = matches!(outstanding, Some(state) if !state.complete);
+                let opener = app.clone();
+                let queued = app.run_on_main_thread(move || {
+                    let opened = if setup_incomplete {
+                        open_setup_window(&opener)
+                    } else {
+                        open_main_window(&opener, "usage")
+                    };
+                    if let Err(err) = opened {
+                        tracing::warn!("could not open a window after sign-in: {err}");
+                    }
+                });
+                if let Err(err) = queued {
+                    tracing::warn!("could not reach the main thread after sign-in: {err}");
                 }
             }
             Err(err) => tracing::debug!("ignored URL: {err:#}"),
