@@ -166,6 +166,31 @@ quarantine flag by hand. Add them once with the GitHub CLI:
    gh secret set APPLE_API_ISSUER               # the issuer ID shown above the keys
    ```
 
+### Renewing the Developer ID certificate
+
+Only the Account Holder's Apple ID can create one, but it can do that from any
+browser; the private key never has to leave the Mac that builds.
+
+1. On the building Mac: Keychain Access › Certificate Assistant › Request a
+   Certificate From a Certificate Authority, saved to disk. This creates the
+   private key in that user's keychain.
+2. developer.apple.com/account, signed in as the Account Holder › Certificates
+   › + › Developer ID Application › **G2 Sub-CA** (five years; the older
+   authority's certificates all expire on 1 February 2027). Upload the request,
+   download the `.cer`, double-click it on the building Mac.
+3. Do not revoke the old one: that can stop copies already shared from opening.
+   Let it expire.
+
+Both then sit in the keychain under one name, which `codesign` rejects as
+ambiguous. `dev-sign.sh` resolves the name to the fingerprint of the one that
+expires last; for `release.sh`, set `APPLE_SIGNING_IDENTITY` to that
+fingerprint (`security find-identity -v -p codesigning`). The designated
+requirement names the team, not the certificate, so permissions survive the
+switch. Export the new one for the `APPLE_CERTIFICATE` secret above.
+
+The current certificate is G2, valid to 17 September 2031 (fingerprint
+ABD6066F…CCA8); it signed and notarised a test build on 4 October 2026.
+
 The workflow imports the certificate into a throwaway keychain, lets Tauri sign
 and notarise the app, signs the disk image, then notarises and staples that
 too, for the reason given above.

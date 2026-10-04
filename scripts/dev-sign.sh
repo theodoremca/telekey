@@ -54,6 +54,49 @@ pick_identity() {
 
 IDENTITY="$(pick_identity)"
 
+# Several certificates can share one name: a renewed Developer ID sits beside
+# the one it replaces until that expires, and codesign refuses a name that
+# matches two ("ambiguous"). Resolve the name to the fingerprint of the
+# matching identity that expires last. A fingerprint is passed through as is.
+newest_with_name() {
+  local name="$1" dir hash end_date end_epoch best="" best_epoch=0
+  if [[ "$name" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+    printf '%s' "$name"
+    return
+  fi
+
+  dir="$(mktemp -d)"
+  # One PEM file per certificate with this name, named by its SHA-1.
+  security find-certificate -a -Z -c "$name" -p 2>/dev/null | awk -v dir="$dir" '
+    /^SHA-1 hash:/ { hash = $3 }
+    /BEGIN CERTIFICATE/ { out = dir "/" hash ".pem" }
+    out != "" { print > out }
+    /END CERTIFICATE/ { close(out); out = "" }
+  '
+
+  # Only certificates that are signing identities, i.e. have a private key here.
+  for hash in $(security find-identity -v -p codesigning | sed -n "s/^ *[0-9]*) \([0-9A-F]\{40\}\) \"$(printf '%s' "$name" | sed 's/[][\.*^$/]/\\&/g')\"\$/\1/p"); do
+    [[ -f "$dir/$hash.pem" ]] || continue
+    end_date="$(openssl x509 -in "$dir/$hash.pem" -noout -enddate | cut -d= -f2)"
+    end_epoch="$(date -j -f '%b %e %T %Y %Z' "$end_date" +%s 2>/dev/null || echo 0)"
+    if (( end_epoch > best_epoch )); then
+      best="$hash"
+      best_epoch="$end_epoch"
+    fi
+  done
+  rm -rf "$dir"
+
+  printf '%s' "${best:-$name}"
+}
+
+if [[ -n "$IDENTITY" ]]; then
+  NAME="$IDENTITY"
+  IDENTITY="$(newest_with_name "$IDENTITY")"
+  if [[ "$IDENTITY" != "$NAME" ]]; then
+    echo "Using \"$NAME\" ($IDENTITY), the one that expires last."
+  fi
+fi
+
 if [[ -z "$IDENTITY" ]]; then
   IDENTITY="-"
   cat >&2 <<'EOF'

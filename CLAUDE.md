@@ -362,6 +362,15 @@ now, and dedupes by id. A pinned device (`Settings.input_device`, a cpal id) is
 looked up with `device_by_id`, never by enumerating, because that runs between
 key-down and the stream going live.
 
+**18. Signing fails with "ambiguous (matches … and …)".**
+A renewed Developer ID certificate sits in the keychain beside the one it
+replaces, under the same name, and `codesign` refuses a name that matches two.
+`dev-sign.sh` resolves the name to the fingerprint of the identity that expires
+last; anything else that signs by name (`APPLE_SIGNING_IDENTITY` for
+`release.sh`) needs the fingerprint. Permissions are unaffected: a Developer ID
+designated requirement names the team, not the certificate. Renewal steps are
+in RELEASING.md.
+
 ---
 
 ## Architecture in one screen
