@@ -1,0 +1,5 @@
+# `bun test` covers the desktop app's frontend only. functions/ has its own
+# Node test runner (`cd functions && npm test`), which builds before testing;
+# found from here, its tests ran against a lib/ that CI never builds.
+[test]
+root = "./src"
