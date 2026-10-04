@@ -274,8 +274,15 @@ jobs:
         run: |
           prerelease=()
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then prerelease=(--prerelease); fi
-          ls -l dist
-          gh release create "$GITHUB_REF_NAME" dist/* \
+          # The Linux artifact keeps its deb/ and appimage/ folders, so collect
+          # the files themselves rather than whatever sits at the top of dist.
+          mapfile -t files < <(find dist -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' \) | sort)
+          printf '%s\n' "${files[@]}"
+          if (( ${#files[@]} != 4 )); then
+            echo "::error::Expected 4 installers (dmg, exe, deb, AppImage), found ${#files[@]}."
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" "${files[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --title "TeleKey $VERSION" \
