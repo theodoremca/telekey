@@ -1,6 +1,6 @@
 [package]
 name = "telekey"
-version = "0.2.2"
+version = "0.2.3"
 description = "Push-to-talk dictation for macOS"
 authors = ["Theodore"]
 edition = "2021"

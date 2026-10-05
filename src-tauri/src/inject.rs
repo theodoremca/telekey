@@ -116,13 +116,30 @@ impl SystemKeystroke {
 #[cfg(target_os = "macos")]
 const KEYCODE_V: u16 = 0x09;
 
-/// `VK_V`, the Windows virtual-key code for V.
-#[cfg(target_os = "windows")]
-const KEYCODE_V: u16 = 0x56;
-
-/// `KEY_V` in the Linux input event codes.
+/// The X11 keycode for V: evdev's `KEY_V` (47) plus the 8 X adds to every
+/// evdev code. enigo's `raw` on Linux takes the X11 number, so 47 alone was
+/// the semicolon key.
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-const KEYCODE_V: u16 = 47;
+const KEYCODE_V: u16 = 47 + 8;
+
+/// Click V. Per OS, because enigo's `raw` takes a different kind of number on
+/// each, and passing the wrong kind presses a different key without an error.
+#[cfg(not(target_os = "windows"))]
+fn click_v(enigo: &mut enigo::Enigo) -> enigo::InputResult<()> {
+    use enigo::{Direction, Keyboard};
+    enigo.raw(KEYCODE_V, Direction::Click)
+}
+
+/// On Windows `raw` takes a hardware scan code, so `VK_V` (0x56) passed there
+/// pressed scan code 0x56 — the extra `<>|` key on ISO keyboards, absent on US
+/// ones — and Ctrl+V was never sent. `Key::V` is the virtual key itself, which
+/// is what Windows apps match Ctrl+V against, on any layout. There is no
+/// thread restriction here like macOS's Text Input Services.
+#[cfg(target_os = "windows")]
+fn click_v(enigo: &mut enigo::Enigo) -> enigo::InputResult<()> {
+    use enigo::{Direction, Key, Keyboard};
+    enigo.key(Key::V, Direction::Click)
+}
 
 impl Keystroke for SystemKeystroke {
     fn paste(&mut self) -> Result<()> {
@@ -140,10 +157,8 @@ impl Keystroke for SystemKeystroke {
             .key(modifier, Direction::Press)
             .map_err(|err| anyhow::anyhow!("could not press the modifier: {err}"))?;
 
-        let result = self
-            .enigo
-            .raw(KEYCODE_V, Direction::Click)
-            .map_err(|err| anyhow::anyhow!("could not press V: {err}"));
+        let result =
+            click_v(&mut self.enigo).map_err(|err| anyhow::anyhow!("could not press V: {err}"));
 
         // Always release the modifier, even if the V press failed. A synthetic
         // key-down with no matching key-up leaves ⌘ stuck down for the user.

@@ -407,6 +407,16 @@ macOS's answer is final (`microphone_denial_is_final`). Linux has no microphone
 permission, so it lists no row. Preview any platform's windows in the browser
 with `?platform=windows` or `?platform=linux`.
 
+**21. On Windows (or Linux), dictation transcribes and then pastes nothing.**
+enigo's `raw()` takes a different kind of number on each OS: a virtual
+keycode on macOS, a hardware *scan code* on Windows, an X11 keycode (evdev
++ 8) on Linux. Passing the wrong kind presses a different key with no error.
+TeleKey sent `VK_V` (0x56) to Windows' `raw`, which is scan code 0x56, the
+ISO `<>|` key, so Ctrl+`<` went out instead of Ctrl+V; Linux sent evdev 47,
+which X11 reads as `;`. `inject.rs` `click_v` is per OS: raw `kVK_ANSI_V` on
+macOS (rule 1 forbids the layout lookup there), `Key::V` on Windows, raw 55
+on Linux. No test can catch this; only a real paste on that OS does.
+
 ---
 
 ## Architecture in one screen
