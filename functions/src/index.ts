@@ -18,6 +18,7 @@ import OpenAI, { toFile } from "openai";
 import Stripe from "stripe";
 
 import { requireMember } from "./auth";
+import { parseList, parsePrompt } from "./headers";
 import { debit, ensureUser, packsCol, requireBalance, usersCol, type Prefix } from "./ledger";
 import { costCents, noUnits, type Units } from "./pricing";
 import { parseTesters } from "./testers";
@@ -106,18 +107,6 @@ function rawBody(req: express.Request): Buffer {
   return Buffer.alloc(0);
 }
 
-function parseList(header: string | undefined): string[] {
-  if (!header) return [];
-  try {
-    const parsed = JSON.parse(header);
-    return Array.isArray(parsed)
-      ? parsed.filter((item) => typeof item === "string")
-      : [];
-  } catch {
-    return [];
-  }
-}
-
 function usageSeconds(result: { usage?: { seconds?: number } }): number {
   const seconds = result.usage?.seconds;
   return typeof seconds === "number" ? Math.round(seconds) : 0;
@@ -184,6 +173,9 @@ function createApp(stage: Stage): express.Express {
       const file = await toFile(wav, "speech.wav", { type: "audio/wav" });
       const keywords = parseList(req.header("x-telekey-keywords"));
       const languages = parseList(req.header("x-telekey-languages"));
+      // Screen context ("Use what's on screen" in the app): forwarded, never
+      // stored or logged.
+      const prompt = parsePrompt(req.header("x-telekey-prompt"));
 
       const result = await openai.audio.transcriptions.create({
         file,
@@ -191,6 +183,7 @@ function createApp(stage: Stage): express.Express {
         // @ts-expect-error keywords is a documented gpt-transcribe field
         keywords: keywords.length ? keywords : undefined,
         language: languages[0],
+        prompt,
       });
 
       const units: Units = {
