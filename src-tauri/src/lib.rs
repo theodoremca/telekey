@@ -27,6 +27,7 @@ pub mod settings;
 pub mod setup;
 pub mod session;
 pub mod signing;
+pub mod smart;
 pub mod transcribe;
 pub mod usage;
 pub mod trigger;

@@ -40,29 +40,38 @@ impl Style {
         !matches!(self, Style::Literal)
     }
 
+    /// What this style asks of the model, without the rules every request
+    /// carries. The smart pass joins it with its own guidance into one call.
+    pub fn guidance(&self) -> Option<&str> {
+        match self {
+            Style::Literal => None,
+            Style::Terse => Some(
+                "Keep it short and direct. Drop greetings, sign-offs and hedging. \
+                 Prefer short sentences.",
+            ),
+            Style::Formal => Some(
+                "Use complete sentences and a polite, professional register \
+                 suitable for email.",
+            ),
+            Style::Custom(instruction) => Some(instruction.as_str()),
+        }
+    }
+
     /// The instruction sent to the model, for styles that need one.
     pub(crate) fn instruction(&self) -> Option<String> {
-        let guidance = match self {
-            Style::Literal => return None,
-            Style::Terse => {
-                "Keep it short and direct. Drop greetings, sign-offs and hedging. \
-                 Prefer short sentences."
-            }
-            Style::Formal => {
-                "Use complete sentences and a polite, professional register \
-                 suitable for email."
-            }
-            Style::Custom(instruction) => instruction.as_str(),
-        };
-
-        Some(format!(
-            "You reformat dictated text. {guidance}\n\n\
-             Rules: preserve the meaning exactly and never add information, \
-             facts, greetings or sign-offs that were not dictated. Return only \
-             the reformatted text — no commentary, no quotation marks, no \
-             preamble."
-        ))
+        self.guidance().map(wrap)
     }
+}
+
+/// Guidance wrapped in the rules every formatting request carries.
+pub fn wrap(guidance: &str) -> String {
+    format!(
+        "You reformat dictated text. {guidance}\n\n\
+         Rules: preserve the meaning exactly and never add information, \
+         facts, greetings or sign-offs that were not dictated. Return only \
+         the reformatted text — no commentary, no quotation marks, no \
+         preamble."
+    )
 }
 
 /// Which app a transcript is bound for, and how it should read there.
@@ -295,7 +304,7 @@ fn extract_text(value: &serde_json::Value) -> Option<String> {
 ///
 /// The transcript is already correct; formatting is a nicety. Pasting an empty
 /// or runaway result would turn a working dictation into a broken one.
-fn guard(original: &str, polished: String) -> String {
+pub fn guard(original: &str, polished: String) -> String {
     if polished.is_empty() {
         tracing::warn!("formatting returned nothing; keeping the transcript");
         return original.to_string();

@@ -21,6 +21,12 @@ pub trait Clipboard {
     /// say) or nothing at all.
     fn read_text(&mut self) -> Option<String>;
     fn write_text(&mut self, text: &str) -> Result<()>;
+    /// Rich text with a plain alternative: editors that take HTML make real
+    /// lists of it, plain fields paste `alt`. Plain text where unsupported.
+    fn write_html(&mut self, html: &str, alt: &str) -> Result<()> {
+        let _ = html;
+        self.write_text(alt)
+    }
 }
 
 pub trait Keystroke {
@@ -30,12 +36,16 @@ pub trait Keystroke {
 
 /// Save the clipboard, paste `text`, then put the clipboard back.
 ///
+/// With `html` (a list from the smart pass), the clipboard carries that too,
+/// with `text` as its plain alternative.
+///
 /// Restoring is best-effort: if the paste succeeded but the restore failed, the
 /// user still got their text, which matters more than a pristine clipboard.
 pub fn paste_via_clipboard<C, K>(
     clipboard: &mut C,
     keys: &mut K,
     text: &str,
+    html: Option<&str>,
     settle: Duration,
 ) -> Result<()>
 where
@@ -48,9 +58,11 @@ where
 
     let previous = clipboard.read_text();
 
-    clipboard
-        .write_text(text)
-        .context("could not put the transcript on the clipboard")?;
+    match html {
+        Some(html) => clipboard.write_html(html, text),
+        None => clipboard.write_text(text),
+    }
+    .context("could not put the transcript on the clipboard")?;
 
     let paste_result = keys.paste();
 
@@ -85,6 +97,12 @@ impl Clipboard for SystemClipboard {
     fn write_text(&mut self, text: &str) -> Result<()> {
         self.inner
             .set_text(text.to_string())
+            .context("could not write to the clipboard")
+    }
+
+    fn write_html(&mut self, html: &str, alt: &str) -> Result<()> {
+        self.inner
+            .set_html(html.to_string(), Some(alt.to_string()))
             .context("could not write to the clipboard")
     }
 }
@@ -242,6 +260,44 @@ mod tests {
     const NO_WAIT: Duration = Duration::from_millis(0);
 
     #[test]
+    fn a_list_goes_on_the_clipboard_as_html_with_the_plain_text_beside_it() {
+        #[derive(Default)]
+        struct Rich {
+            html: Option<(String, String)>,
+            text: Option<String>,
+        }
+        impl Clipboard for Rich {
+            fn read_text(&mut self) -> Option<String> {
+                None
+            }
+            fn write_text(&mut self, text: &str) -> Result<()> {
+                self.text = Some(text.into());
+                Ok(())
+            }
+            fn write_html(&mut self, html: &str, alt: &str) -> Result<()> {
+                self.html = Some((html.into(), alt.into()));
+                Ok(())
+            }
+        }
+        let mut clipboard = Rich::default();
+        let mut keys = FakeKeys::default();
+        paste_via_clipboard(
+            &mut clipboard,
+            &mut keys,
+            "- eggs\n- milk",
+            Some("<ul><li>eggs</li><li>milk</li></ul>"),
+            NO_WAIT,
+        )
+        .unwrap();
+        assert_eq!(
+            clipboard.html,
+            Some(("<ul><li>eggs</li><li>milk</li></ul>".into(), "- eggs\n- milk".into()))
+        );
+        assert!(clipboard.text.is_none());
+        assert_eq!(keys.pasted, 1);
+    }
+
+    #[test]
     fn pastes_then_restores_the_previous_clipboard() {
         let mut clipboard = FakeClipboard {
             contents: Some("something the user copied".into()),
@@ -249,7 +305,7 @@ mod tests {
         };
         let mut keys = FakeKeys::default();
 
-        paste_via_clipboard(&mut clipboard, &mut keys, "dictated text", NO_WAIT).unwrap();
+        paste_via_clipboard(&mut clipboard, &mut keys, "dictated text", None, NO_WAIT).unwrap();
 
         assert_eq!(keys.pasted, 1);
         assert_eq!(
@@ -309,7 +365,7 @@ mod tests {
         let mut clipboard = FakeClipboard::default();
         let mut keys = FakeKeys::default();
 
-        paste_via_clipboard(&mut clipboard, &mut keys, "text", NO_WAIT).unwrap();
+        paste_via_clipboard(&mut clipboard, &mut keys, "text", None, NO_WAIT).unwrap();
 
         assert_eq!(
             clipboard.log,
@@ -323,7 +379,7 @@ mod tests {
         let mut clipboard = FakeClipboard::default();
         let mut keys = FakeKeys::default();
 
-        paste_via_clipboard(&mut clipboard, &mut keys, "", NO_WAIT).unwrap();
+        paste_via_clipboard(&mut clipboard, &mut keys, "", None, NO_WAIT).unwrap();
 
         assert!(clipboard.log.is_empty());
         assert_eq!(keys.pasted, 0);
@@ -340,7 +396,7 @@ mod tests {
             ..Default::default()
         };
 
-        let err = paste_via_clipboard(&mut clipboard, &mut keys, "text", NO_WAIT).unwrap_err();
+        let err = paste_via_clipboard(&mut clipboard, &mut keys, "text", None, NO_WAIT).unwrap_err();
 
         assert!(err.to_string().contains("paste keystroke"), "got: {err}");
         assert_eq!(clipboard.contents.as_deref(), Some("original"));
@@ -354,7 +410,7 @@ mod tests {
         };
         let mut keys = FakeKeys::default();
 
-        let err = paste_via_clipboard(&mut clipboard, &mut keys, "text", NO_WAIT).unwrap_err();
+        let err = paste_via_clipboard(&mut clipboard, &mut keys, "text", None, NO_WAIT).unwrap_err();
 
         assert!(err.to_string().contains("clipboard"), "got: {err}");
         assert_eq!(keys.pasted, 0, "must not paste stale clipboard contents");

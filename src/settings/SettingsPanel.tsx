@@ -217,6 +217,18 @@ export function SettingsPanel({
         title="Formatting"
         note="Reformat dictation to match where it lands. Literal is applied on this computer; the other styles send one extra request."
       >
+        <Toggle
+          label="Turn spoken lists into bullets"
+          hint="Only when it sounds like a list. Adds a second or two, and 1¢ on credits."
+          checked={settings.smartLists}
+          onChange={(smartLists) => void onSave({ ...settings, smartLists })}
+        />
+        <Toggle
+          label="Fix self-corrections"
+          hint={'"My car, sorry, my bike" becomes "my bike". Same cost, only when heard.'}
+          checked={settings.fixCorrections}
+          onChange={(fixCorrections) => void onSave({ ...settings, fixCorrections })}
+        />
         <FormattingEditor
           profiles={settings.profiles}
           enabled={settings.polishEnabled}

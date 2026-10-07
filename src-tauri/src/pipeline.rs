@@ -19,6 +19,8 @@ use crate::history::History;
 use crate::inject::{self, PASTE_SETTLE_DELAY};
 use crate::context::{self as screen_context, ContextSlot};
 use crate::live::{LiveSession, Route, Streamed};
+use crate::polish::Style;
+use crate::smart;
 use crate::output_mute::{self, OutputMute};
 use crate::permissions::{self, Permission, Platform};
 use crate::hosted::{HostedPolisher, HostedTranscriber};
@@ -756,40 +758,113 @@ impl Pipeline {
         crate::replace::apply(&text, &replacements)
     }
 
-    /// Apply the target app's formatting profile, if it has one.
+    /// The formatting between the transcript and the paste: the app's style,
+    /// and the smart pass when a list or a correction is heard.
     ///
     /// Never fails the dictation: the transcript is already correct, so a
     /// formatting problem falls back to it rather than losing the user's words.
     fn format_for_target(&self, text: String) -> String {
-        let style = {
+        let (style, lists, corrections) = {
             let settings = self.settings.lock();
-            if !settings.polish_enabled {
-                return text;
-            }
-            let key = self.target.lock().profile_key().to_string();
-            match settings.profile_for(&key) {
-                Some(profile) => profile.style.clone(),
-                None => return text,
-            }
+            let target = self.target.lock();
+            let profile = settings.profile_for(target.profile_key());
+            let literal = matches!(profile.map(|p| &p.style), Some(Style::Literal));
+            let style = profile
+                .filter(|_| settings.polish_enabled)
+                .map(|profile| profile.style.clone());
+            let fits = smart::within_limit(&text);
+            // No lists where a list does harm: a terminal runs each line, an
+            // editor wants code, and a Literal profile asked for none.
+            let lists = settings.smart_lists
+                && fits
+                && !literal
+                && !smart::no_lists_in(&target)
+                && smart::sounds_like_a_list(&text);
+            let corrections =
+                settings.fix_corrections && fits && smart::sounds_like_a_correction(&text);
+            (style, lists, corrections)
+        };
+
+        let text = if lists || corrections {
+            self.smart_pass(text, style.as_ref(), lists, corrections)
+        } else if let Some(style) = style.as_ref().filter(|style| style.needs_model()) {
+            return self.polish_with(text, style);
+        } else {
+            text
         };
 
         // Deterministic styles need no client, and so work offline and instantly.
-        if !style.needs_model() {
-            return crate::polish::apply_literal(&text);
+        match style {
+            Some(Style::Literal) => crate::polish::apply_literal(&text),
+            _ => text,
         }
+    }
 
+    /// The app's model style, alone.
+    fn polish_with(&self, text: String, style: &Style) -> String {
         let started = Instant::now();
-        match self.polisher().and_then(|p| p.polish(&text, &style)) {
+        match self.polisher().and_then(|p| p.polish(&text, style)) {
             Ok(formatted) => {
                 tracing::debug!(
                     polish_ms = started.elapsed().as_millis() as u64,
                     "formatting applied"
                 );
                 self.meter(&formatted.units);
-                formatted.text
+                crate::polish::guard(&text, formatted.text)
             }
             Err(err) => {
                 tracing::warn!("formatting failed, keeping the transcript: {err:#}");
+                text
+            }
+        }
+    }
+
+    /// One model call for whatever was heard — a list, a correction, or both
+    /// — together with the app's model style, if it has one.
+    ///
+    /// Without a style, the answer is pasted only if it changed nothing but
+    /// what was asked for (`smart::acceptable`); otherwise the dictation goes
+    /// as spoken. With one, the user already chose to let the model reword
+    /// text in that app.
+    fn smart_pass(
+        &self,
+        text: String,
+        style: Option<&Style>,
+        lists: bool,
+        corrections: bool,
+    ) -> String {
+        let styled = style.and_then(Style::guidance);
+        let mut parts: Vec<&str> = styled.into_iter().collect();
+        if corrections {
+            parts.push(smart::CORRECTION_GUIDANCE);
+        }
+        if lists {
+            parts.push(smart::LIST_GUIDANCE);
+        }
+        let asked = Style::Custom(parts.join("\n\n"));
+
+        let started = Instant::now();
+        match self.polisher().and_then(|p| p.polish(&text, &asked)) {
+            Ok(formatted) => {
+                self.meter(&formatted.units);
+                let answer = crate::polish::guard(&text, formatted.text);
+                let accepted =
+                    styled.is_some() || smart::acceptable(&text, &answer, lists, corrections);
+                tracing::debug!(
+                    ms = started.elapsed().as_millis() as u64,
+                    lists,
+                    corrections,
+                    accepted,
+                    "smart pass"
+                );
+                if accepted {
+                    answer
+                } else {
+                    text
+                }
+            }
+            Err(err) => {
+                tracing::warn!("the smart pass failed, keeping the transcript: {err:#}");
                 text
             }
         }
@@ -847,7 +922,21 @@ impl Pipeline {
         let mut clipboard = inject::SystemClipboard::new()?;
         let mut keys = inject::SystemKeystroke::new()?;
 
-        inject::paste_via_clipboard(&mut clipboard, &mut keys, text, PASTE_SETTLE_DELAY)
+        // A list from the smart pass also goes as HTML, so Notes, Mail and
+        // Slack make real bullets of it.
+        let html = self
+            .settings
+            .lock()
+            .smart_lists
+            .then(|| smart::list_html(text))
+            .flatten();
+        inject::paste_via_clipboard(
+            &mut clipboard,
+            &mut keys,
+            text,
+            html.as_deref(),
+            PASTE_SETTLE_DELAY,
+        )
     }
 
     fn context(&self) -> TranscriptionContext {
@@ -1347,6 +1436,143 @@ mod tests {
         Clip {
             samples: vec![0.01; TARGET_SAMPLE_RATE as usize / 2],
         }
+    }
+
+    /// A formatting model that answers from a script and records each
+    /// instruction it was given.
+    struct ScriptedPolisher {
+        answer: String,
+        asked: Mutex<Vec<String>>,
+    }
+
+    impl ScriptedPolisher {
+        fn answering(answer: &str) -> Arc<Self> {
+            Arc::new(Self {
+                answer: answer.into(),
+                asked: Mutex::new(Vec::new()),
+            })
+        }
+    }
+
+    impl Polisher for ScriptedPolisher {
+        fn polish(&self, _text: &str, style: &Style) -> Result<crate::polish::Polished> {
+            self.asked.lock().push(style.instruction().unwrap_or_default());
+            Ok(crate::polish::Polished {
+                text: self.answer.clone(),
+                units: Units::default(),
+            })
+        }
+    }
+
+    fn smart_pipeline(
+        polisher: &Arc<ScriptedPolisher>,
+        app: &str,
+        configure: impl FnOnce(&mut Settings),
+    ) -> Pipeline {
+        let mut settings = Settings {
+            smart_lists: true,
+            fix_corrections: true,
+            ..Settings::default()
+        };
+        configure(&mut settings);
+        let pipeline = Pipeline::new(settings, Arc::new(NullSink), test_history(), test_usage());
+        *pipeline.polisher.lock() = Some(Arc::clone(polisher) as Arc<dyn Polisher>);
+        *pipeline.target.lock() = TargetApp {
+            bundle_id: Some(app.into()),
+            ..TargetApp::default()
+        };
+        pipeline
+    }
+
+    const CAR: &str = "I'm going to be using my car, sorry, my bike, to get to the office.";
+
+    #[test]
+    fn a_heard_correction_is_fixed_in_one_call() {
+        let polisher = ScriptedPolisher::answering("I'm going to be using my bike to get to the office.");
+        let pipeline = smart_pipeline(&polisher, "com.apple.mail", |_| {});
+        assert_eq!(
+            pipeline.finish_text(CAR.into()),
+            "I'm going to be using my bike to get to the office."
+        );
+        let asked = polisher.asked.lock();
+        assert_eq!(asked.len(), 1);
+        assert!(asked[0].contains("Self-corrections"));
+        assert!(!asked[0].contains("Lists:"), "no list was heard");
+    }
+
+    #[test]
+    fn nothing_heard_means_no_model_call() {
+        let polisher = ScriptedPolisher::answering("never");
+        let pipeline = smart_pipeline(&polisher, "com.apple.mail", |_| {});
+        let plain = "Can you send the contract over before lunch?";
+        assert_eq!(pipeline.finish_text(plain.into()), plain);
+        assert!(polisher.asked.lock().is_empty());
+    }
+
+    #[test]
+    fn with_the_toggles_off_nothing_changes() {
+        let polisher = ScriptedPolisher::answering("never");
+        let pipeline = smart_pipeline(&polisher, "com.apple.mail", |s| {
+            s.smart_lists = false;
+            s.fix_corrections = false;
+        });
+        assert_eq!(pipeline.finish_text(CAR.into()), CAR);
+        assert!(polisher.asked.lock().is_empty());
+    }
+
+    #[test]
+    fn a_list_and_a_correction_share_one_call() {
+        let text = "Agenda for tomorrow: first the budget, second the hiring plan, sorry, the hiring freeze, and third the offsite.";
+        let polisher = ScriptedPolisher::answering("Agenda for tomorrow:\n- the budget\n- the hiring freeze\n- the offsite");
+        let pipeline = smart_pipeline(&polisher, "com.apple.Notes", |_| {});
+        assert_eq!(
+            pipeline.finish_text(text.into()),
+            "Agenda for tomorrow:\n- the budget\n- the hiring freeze\n- the offsite"
+        );
+        let asked = polisher.asked.lock();
+        assert_eq!(asked.len(), 1);
+        assert!(asked[0].contains("Self-corrections") && asked[0].contains("Lists:"));
+    }
+
+    #[test]
+    fn an_answer_that_rewrote_more_than_asked_is_not_pasted() {
+        let polisher = ScriptedPolisher::answering("I'll cycle to the office.");
+        let pipeline = smart_pipeline(&polisher, "com.apple.mail", |_| {});
+        assert_eq!(pipeline.finish_text(CAR.into()), CAR);
+    }
+
+    #[test]
+    fn an_empty_answer_keeps_the_dictation() {
+        let polisher = ScriptedPolisher::answering("");
+        let pipeline = smart_pipeline(&polisher, "com.apple.mail", |_| {});
+        assert_eq!(pipeline.finish_text(CAR.into()), CAR);
+    }
+
+    #[test]
+    fn no_lists_in_a_terminal() {
+        let polisher = ScriptedPolisher::answering("never");
+        let pipeline = smart_pipeline(&polisher, "com.apple.Terminal", |s| s.fix_corrections = false);
+        let text = "To deploy, first run the tests, then build the bundle, and finally upload it.";
+        assert_eq!(pipeline.finish_text(text.into()), text);
+        assert!(polisher.asked.lock().is_empty());
+    }
+
+    #[test]
+    fn the_apps_own_style_rides_in_the_same_call() {
+        let polisher = ScriptedPolisher::answering("Using my bike tomorrow.");
+        let pipeline = smart_pipeline(&polisher, "com.tinyspeck.slackmacgap", |s| {
+            s.polish_enabled = true;
+            s.profiles = vec![crate::polish::AppProfile {
+                app: "com.tinyspeck.slackmacgap".into(),
+                label: "Slack".into(),
+                style: Style::Terse,
+            }];
+        });
+        // A style the user chose rewrites by design, so its answer is used.
+        assert_eq!(pipeline.finish_text(CAR.into()), "Using my bike tomorrow.");
+        let asked = polisher.asked.lock();
+        assert_eq!(asked.len(), 1, "one call, not two");
+        assert!(asked[0].contains("Keep it short") && asked[0].contains("Self-corrections"));
     }
 
     #[test]
