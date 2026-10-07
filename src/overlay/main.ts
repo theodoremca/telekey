@@ -11,6 +11,16 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 
 import { LEVEL_EVENT, STATUS_EVENT, type Status } from "../status";
+import { shortcutText } from "../settings/shortcut";
+
+/** Mirrors `PillState` in src-tauri/src/overlay.rs. */
+interface PillState {
+  shown: boolean;
+  hover: boolean;
+}
+
+const PILL_EVENT = "telekey://pill";
+const SETTINGS_EVENT = "telekey://settings";
 
 /** Roughly three seconds of history at the 30 Hz the backend emits. */
 const TRACE_SAMPLES = 88;
@@ -24,13 +34,22 @@ const timerEl = document.getElementById("timer") as HTMLElement;
 const messageEl = document.getElementById("message") as HTMLElement;
 const liveEl = document.getElementById("live") as HTMLElement;
 const cancelEl = document.getElementById("cancel") as HTMLButtonElement;
+const stopEl = document.getElementById("stop") as HTMLButtonElement;
+const stageEl = document.getElementById("stage") as HTMLElement;
+const pillEl = document.getElementById("pill") as HTMLButtonElement;
+const pillBodyEl = document.getElementById("pill-body") as HTMLElement;
+const pillKeysEl = document.getElementById("pill-keys") as HTMLElement;
 
 const context = canvas.getContext("2d");
 
 const samples: number[] = new Array(TRACE_SAMPLES).fill(0);
-let state: Status["kind"] = "recording";
+let state: Status["kind"] = "idle";
 let startedAt = 0;
 let frame = 0;
+let pill: PillState = { shown: false, hover: false };
+/** This dictation began with a click on the pill, so it needs a Stop button:
+ *  there is no key to let go of. */
+let clickStarted = false;
 
 function resizeCanvas() {
   const ratio = window.devicePixelRatio || 1;
@@ -123,6 +142,11 @@ function tick() {
 function setState(next: Status) {
   state = next.kind;
   capsule.dataset.state = next.kind;
+  if (next.kind !== "recording" && next.kind !== "transcribing") {
+    clickStarted = false;
+  }
+  capsule.dataset.click = String(clickStarted);
+  render();
 
   switch (next.kind) {
     case "recording":
@@ -167,6 +191,30 @@ function setState(next: Status) {
   }
 }
 
+/** Which of the two looks the window shows: a dictation's capsule, or (between
+ *  dictations) the resting pill — or nothing, when the pill is off and Rust
+ *  is about to hide the window anyway. */
+function render() {
+  stageEl.dataset.view =
+    state === "idle" ? (pill.shown ? "pill" : "none") : "capsule";
+  pillEl.dataset.hover = String(pill.hover && state === "idle");
+}
+
+function setPill(next: PillState) {
+  pill = next;
+  render();
+}
+
+/** The keys that also start a dictation, so the pill teaches the shortcut. */
+function showShortcut(accelerator: string | undefined) {
+  pillKeysEl.textContent = accelerator ? shortcutText(accelerator) : "";
+  // The pill widens to fit its contents exactly; measured, because CSS cannot
+  // animate a width of `auto`.
+  requestAnimationFrame(() => {
+    pillEl.style.setProperty("--pill-open", `${pillBodyEl.scrollWidth}px`);
+  });
+}
+
 function countWords(text: string): number {
   const trimmed = text.trim();
   return trimmed === "" ? 0 : trimmed.split(/\s+/).length;
@@ -189,6 +237,24 @@ function start() {
     });
   });
 
+  stopEl.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    invoke("stop_dictation").catch((error: unknown) => {
+      console.warn("could not stop dictation", error);
+    });
+  });
+
+  pillEl.addEventListener("click", (event) => {
+    event.preventDefault();
+    if (state !== "idle" || !pill.hover) return;
+    clickStarted = true;
+    invoke("start_dictation").catch((error: unknown) => {
+      clickStarted = false;
+      console.warn("could not start dictation", error);
+    });
+  });
+
   capsule.addEventListener("click", () => {
     if (state !== "failed") return;
     const text = messageEl.textContent ?? "";
@@ -203,6 +269,19 @@ function start() {
   try {
     listen<Status>(STATUS_EVENT, (event) => setState(event.payload)).catch(noBus);
     listen<number>(LEVEL_EVENT, (event) => pushSample(event.payload)).catch(noBus);
+    listen<PillState>(PILL_EVENT, (event) => setPill(event.payload)).catch(noBus);
+    listen<{ shortcut?: string }>(SETTINGS_EVENT, (event) =>
+      showShortcut(event.payload.shortcut),
+    ).catch(noBus);
+
+    // This page can finish loading after Rust first put the pill up, so ask
+    // rather than wait for the next change.
+    invoke<PillState>("pill_state")
+      .then(setPill)
+      .catch(noBus);
+    invoke<{ shortcut?: string }>("load_settings")
+      .then((settings) => showShortcut(settings.shortcut))
+      .catch(noBus);
   } catch (error) {
     noBus(error);
   }
@@ -222,8 +301,9 @@ declare global {
     __telekeyOverlay?: {
       setState: (status: Status) => void;
       pushSample: (level: number) => void;
+      setPill: (pill: PillState) => void;
     };
   }
 }
 
-window.__telekeyOverlay = { setState, pushSample };
+window.__telekeyOverlay = { setState, pushSample, setPill };

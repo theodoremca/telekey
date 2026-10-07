@@ -17,6 +17,8 @@ export interface Settings {
   muteWhileRecording: boolean;
   /** A pinned microphone's id, or null to follow the system default. */
   inputDevice: string | null;
+  /** Keep the dictation pill at the bottom of the screen between dictations. */
+  showPill: boolean;
 }
 
 /** A microphone, as cpal names it. Mirrors `InputDevice` in input_device.rs. */
@@ -44,6 +46,8 @@ export interface Platform {
   accessibility: boolean;
   microphone: boolean;
   holdFn: boolean;
+  /** The dictation pill can take a click without taking focus. Not on Linux. */
+  pill: boolean;
 }
 
 /** A row of the setup window. Mirrors `Step` in setup.rs. */
@@ -186,9 +190,21 @@ const previewFlags = () =>
     : new URLSearchParams();
 
 const PREVIEW_PLATFORMS: Record<Platform["os"], Platform> = {
-  macos: { os: "macos", accessibility: true, microphone: true, holdFn: true },
-  windows: { os: "windows", accessibility: false, microphone: true, holdFn: false },
-  linux: { os: "linux", accessibility: false, microphone: false, holdFn: false },
+  macos: { os: "macos", accessibility: true, microphone: true, holdFn: true, pill: true },
+  windows: {
+    os: "windows",
+    accessibility: false,
+    microphone: true,
+    holdFn: false,
+    pill: true,
+  },
+  linux: {
+    os: "linux",
+    accessibility: false,
+    microphone: false,
+    holdFn: false,
+    pill: false,
+  },
 };
 
 const previewPlatform = (): Platform => {
@@ -231,6 +247,7 @@ const previewState: {
     fnTrigger: true,
     muteWhileRecording: false,
     inputDevice: null,
+    showPill: true,
     profiles: [
       { app: "com.tinyspeck.slackmacgap", label: "Slack", style: { kind: "terse" } },
       { app: "com.apple.Terminal", label: "Terminal", style: { kind: "literal" } },

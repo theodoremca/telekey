@@ -103,13 +103,20 @@ Ready to dictate.
 
 Hold **⌃⌥Space**, speak, release. A capsule appears at the bottom of the screen
 with a live waveform of what the microphone is actually hearing, so you can tell
-at a glance whether it caught you.
+at a glance whether it caught you. With more than one screen, it appears on the
+one your pointer is on.
+
+Or use the mouse: a thin pill rests at the bottom of the screen between
+dictations. Point at it and it widens into a **Click to dictate** button; click,
+speak, then click **Stop** (or press the shortcut) and the text is pasted where
+your cursor was. **Esc** or **×** cancels.
 
 Everything below is optional — TeleKey works with none of it configured.
 
 | | |
 |---|---|
 | **Shortcut** | Rebindable. Click **Change** and press the combination you want. |
+| **Dictation pill** | On by default on macOS and Windows; switch it off in Settings › Shortcut and only the shortcut remains. Off on Linux for now, where clicking it would take focus from the app you are dictating into. |
 | **Vocabulary** | Names and jargon — "Kubernetes", your product names — sent to the model as recognition hints so they come back spelled right. |
 | **Formatting** | Per-app styles: literal in a terminal (no sentence capital, no full stop), terse in Slack, formal in Mail. Literal runs on your Mac; the others cost one extra request. |
 | **Mute while dictating** | Off by default. Silences whatever is playing for as long as you hold the key, so music and video cannot bleed into the microphone. Your volume comes back when you let go. macOS only for now. |
@@ -241,7 +248,8 @@ hold key → trigger → capture audio → [release] → WAV in memory
 | `transcribe.rs` | `gpt-transcribe` upload, with vocabulary as `keywords[]` |
 | `polish.rs` | Per-app formatting; local rules where a model is not needed |
 | `inject.rs` | Clipboard save → ⌘V → restore |
-| `panel.rs` | Non-activating `NSPanel` so the overlay never steals focus |
+| `panel.rs` | Non-activating `NSPanel` so the overlay never steals focus; which screen and where |
+| `overlay.rs` | The capsule and the resting pill, following the pointer between screens |
 | `signing.rs` | Detects a signature that cannot hold a permission (macOS) |
 | `usage.rs` | Billing units from the API, rolled up by age |
 

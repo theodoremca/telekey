@@ -25,6 +25,10 @@
   --text-dim: rgba(242, 240, 247, 0.52);
 
   --radius: 999px;
+  /* Gap between the window's bottom edge and the bottom of the capsule or the
+     pill, which share it so a dictation grows up out of the pill. PillZone in
+     src-tauri/src/panel.rs measures its hover zones up from the same edge. */
+  --rest: 14px;
   --enter: 360ms cubic-bezier(0.22, 1.4, 0.36, 1);
   --exit: 180ms cubic-bezier(0.4, 0, 1, 1);
 }
@@ -48,17 +52,20 @@ body {
 }
 
 .stage {
-  display: grid;
-  place-items: center;
+  position: relative;
   height: 100%;
-  padding: 8px;
 }
 
 .capsule {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: var(--rest);
+  margin-inline: auto;
   display: flex;
   align-items: center;
   gap: 12px;
-  width: 100%;
+  width: calc(100% - 16px);
   max-width: 280px;
   height: 44px;
   padding: 0 16px;
@@ -81,6 +88,13 @@ body {
   color: var(--text);
 
   animation: enter var(--enter) both;
+}
+
+/* One look at a time. The capsule's entrance replays each time it comes back,
+   because going from display:none restarts the animation. */
+.stage:not([data-view="capsule"]) .capsule,
+.stage:not([data-view="pill"]) .pill {
+  display: none;
 }
 
 .capsule[data-leaving="true"] {
@@ -274,6 +288,44 @@ body {
   margin-top: 5px;
 }
 
+/* Out of credits: the whole capsule opens Buy credits. Rust makes the window
+   clickable only for that failure, so this matters only then. */
+.capsule[data-state="failed"] {
+  pointer-events: auto;
+}
+
+/* ---- stop ------------------------------------------------------------ */
+
+/* Only for a dictation started from the pill: with the keyboard, letting go
+   of the key is the stop. */
+.stop {
+  display: none;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-right: -4px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--voice);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.stop span {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--ink);
+}
+
+.capsule[data-state="recording"][data-click="true"] .stop {
+  display: flex;
+}
+
 /* ---- cancel ---------------------------------------------------------- */
 
 .cancel {
@@ -311,6 +363,110 @@ body {
   display: flex;
 }
 
+/* ---- the resting pill ------------------------------------------------ */
+
+/* Between dictations: a thin bar, quiet enough to forget, that widens into a
+   button when the pointer reaches it. Rust decides when that is (PILL_EVENT)
+   and makes only this part of the window take clicks. */
+.pill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: var(--rest);
+  margin-inline: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 7px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  overflow: hidden;
+
+  /* Translucent, with a light hairline, so it reads over light and dark
+     content alike without becoming the brightest thing on screen. */
+  background: rgba(21, 20, 27, 0.55);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.3),
+    0 1px 3px rgba(0, 0, 0, 0.16);
+
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  color: var(--text);
+  cursor: default;
+
+  transition:
+    width 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    height 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    background 200ms ease;
+}
+
+.pill[data-hover="true"] {
+  /* Set from main.ts to the measured width of the contents. */
+  width: var(--pill-open, 220px);
+  height: 34px;
+  background: linear-gradient(180deg, var(--ink-lift), var(--ink));
+  box-shadow:
+    inset 0 0 0 0.5px var(--hairline),
+    0 6px 18px rgba(0, 0, 0, 0.28),
+    0 1px 2px rgba(0, 0, 0, 0.22);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.pill-body {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px 0 5px;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.pill[data-hover="true"] .pill-body {
+  opacity: 1;
+  transition-delay: 90ms;
+}
+
+.mic {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--voice);
+  color: var(--ink);
+}
+
+.mic svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+.mic rect {
+  fill: currentColor;
+  stroke: none;
+}
+
+.pill-hint {
+  font-size: 12.5px;
+  letter-spacing: -0.01em;
+}
+
+.pill-keys {
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.pill-keys:empty {
+  display: none;
+}
+
 /* ---- accessibility --------------------------------------------------- */
 
 .sr-only {
@@ -333,6 +489,11 @@ body {
 
   [data-state="transcribing"] .sweep {
     animation: none;
+  }
+
+  .pill,
+  .pill-body {
+    transition: none;
   }
 
   @keyframes fade {

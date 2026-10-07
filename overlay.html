@@ -7,8 +7,10 @@
     <link rel="stylesheet" href="/src/overlay/overlay.css" />
   </head>
   <body>
-    <!-- The capsule is a child of a transparent body so its shadow has room to fall. -->
-    <div class="stage">
+    <!-- The capsule is a child of a transparent body so its shadow has room to fall.
+         The stage is the whole window; data-view says which of the capsule and
+         the resting pill is drawn in it. -->
+    <div class="stage" id="stage" data-view="none">
       <div class="capsule" id="capsule" data-state="recording">
         <span class="indicator" aria-hidden="true"></span>
 
@@ -19,10 +21,26 @@
 
         <span class="timer" id="timer">0:00</span>
         <p class="message" id="message"></p>
+        <button type="button" class="stop" id="stop" aria-label="Stop and paste" tabindex="-1">
+          <span aria-hidden="true"></span>
+        </button>
         <button type="button" class="cancel" id="cancel" aria-label="Cancel dictation" tabindex="-1">
           <span aria-hidden="true">×</span>
         </button>
       </div>
+
+      <button type="button" class="pill" id="pill" data-hover="false" aria-label="Start dictating" tabindex="-1">
+        <span class="pill-body" id="pill-body">
+          <span class="mic" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="14" height="14">
+              <rect x="9" y="3" width="6" height="11" rx="3" />
+              <path d="M6 11a6 6 0 0 0 12 0M12 17v4" />
+            </svg>
+          </span>
+          <span class="pill-hint">Click to dictate</span>
+          <span class="pill-keys" id="pill-keys"></span>
+        </span>
+      </button>
     </div>
 
     <p class="sr-only" id="live" role="status" aria-live="polite"></p>

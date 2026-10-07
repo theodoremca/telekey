@@ -54,6 +54,10 @@ pub struct Platform {
     /// Hold-Fn exists, and with it Input Monitoring. macOS only: elsewhere the
     /// Fn key is handled by the keyboard itself and never reaches the system.
     pub hold_fn: bool,
+    /// The dictation pill can take a click without taking focus from the app
+    /// being dictated into. Not on Linux yet: the overlay there is an ordinary
+    /// window, so a click would move focus and the paste would miss.
+    pub pill: bool,
 }
 
 impl Platform {
@@ -62,18 +66,21 @@ impl Platform {
         accessibility: true,
         microphone: true,
         hold_fn: true,
+        pill: true,
     };
     pub const WINDOWS: Self = Self {
         os: "windows",
         accessibility: false,
         microphone: true,
         hold_fn: false,
+        pill: true,
     };
     pub const LINUX: Self = Self {
         os: "linux",
         accessibility: false,
         microphone: false,
         hold_fn: false,
+        pill: false,
     };
 
     pub const fn current() -> Self {
@@ -460,6 +467,13 @@ mod tests {
     }
 
     #[test]
+    fn the_pill_is_off_where_a_click_would_take_focus() {
+        assert!(Platform::MACOS.pill);
+        assert!(Platform::WINDOWS.pill);
+        assert!(!Platform::LINUX.pill, "the Linux overlay is an ordinary window");
+    }
+
+    #[test]
     fn the_platform_serialises_for_the_ui() {
         let json = serde_json::to_value(Platform::WINDOWS).unwrap();
         assert_eq!(
@@ -469,6 +483,7 @@ mod tests {
                 "accessibility": false,
                 "microphone": true,
                 "holdFn": false,
+                "pill": true,
             })
         );
     }

@@ -84,6 +84,23 @@ pub struct Settings {
     /// A pinned device that is not connected falls back to the default.
     #[serde(alias = "input_device")]
     pub input_device: Option<String>,
+    /// Keep the dictation pill at the bottom of the screen between
+    /// dictations: hover it for a microphone button, click to dictate without
+    /// the shortcut.
+    ///
+    /// On by default where the overlay can take a click without taking focus
+    /// (macOS, Windows). Off on Linux, where it cannot yet: clicking the pill
+    /// there would move focus, and the paste would land in the pill instead
+    /// of the user's app. See [`pill_supported`].
+    #[serde(alias = "show_pill")]
+    pub show_pill: bool,
+}
+
+/// Whether the dictation pill can work on this OS. On Linux the overlay is an
+/// ordinary window (`panel.rs` has no non-activating version there), so a
+/// click on it would take focus from the app the text is meant for.
+pub const fn pill_supported() -> bool {
+    crate::permissions::Platform::current().pill
 }
 
 impl Default for Settings {
@@ -101,6 +118,7 @@ impl Default for Settings {
             fn_trigger: true,
             mute_while_recording: false,
             input_device: None,
+            show_pill: pill_supported(),
         }
     }
 }
@@ -424,6 +442,7 @@ mod tests {
             fn_trigger: false,
             mute_while_recording: true,
             input_device: Some("coreaudio:BuiltInMicrophoneDevice".to_string()),
+            show_pill: false,
         };
 
         original.save(dir.path()).unwrap();
@@ -446,7 +465,13 @@ mod tests {
         }
 
         // Spot-check the ones that actually broke.
-        for expected in ["fnTrigger", "historyEnabled", "polishEnabled", "ratesUpdated"] {
+        for expected in [
+            "fnTrigger",
+            "historyEnabled",
+            "polishEnabled",
+            "ratesUpdated",
+            "showPill",
+        ] {
             assert!(
                 keys.iter().any(|k| k.as_str() == expected),
                 "missing `{expected}` in {keys:?}"
@@ -504,6 +529,8 @@ mod tests {
         assert_eq!(settings.shortcut, "Cmd+D");
         assert_eq!(settings.languages, vec!["en".to_string()]);
         assert!(!settings.polish_enabled);
+        // A file from before the pill existed gets it where it works.
+        assert_eq!(settings.show_pill, pill_supported());
     }
 
     #[test]

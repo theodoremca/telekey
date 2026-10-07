@@ -102,9 +102,11 @@ impl StatusSink for TauriSink {
                 self.overlay.set_clickable(false);
                 self.overlay.linger_after_cancel();
             }
+            // Resting announces "idle" itself, after telling the webview
+            // whether the pill is showing.
             Status::Idle => {
-                self.overlay.set_clickable(false);
-                self.overlay.hide();
+                self.overlay.rest();
+                return;
             }
             // The overlay decides when a notice may take the capsule, and
             // emits it itself at that moment — so not here, where it would
@@ -212,6 +214,9 @@ pub fn run() {
             commands::prompt_for_microphone,
             commands::restart_app,
             commands::cancel_dictation,
+            commands::start_dictation,
+            commands::stop_dictation,
+            commands::pill_state,
             commands::session_status,
             commands::set_session,
             commands::clear_session,
@@ -234,7 +239,7 @@ pub fn run() {
             let permissions_at_launch = permissions::current();
             app.manage(commands::LaunchPermissions(permissions_at_launch));
 
-            let overlay = overlay::Overlay::create(app.handle())?;
+            let overlay = overlay::Overlay::create(app.handle(), loaded.show_pill)?;
             match panel::can_become_key(overlay.window()) {
                 Ok(false) => tracing::info!("overlay is non-activating"),
                 Ok(true) => tracing::error!(
@@ -242,6 +247,12 @@ pub fn run() {
                 ),
                 Err(err) => tracing::warn!("could not verify overlay focus behaviour: {err:#}"),
             }
+
+            // The resting pill, if it is on; out of sight otherwise. Then
+            // follow the pointer, so the pill is on whichever screen it is.
+            overlay.rest();
+            overlay.watch_pointer();
+            app.manage(Arc::clone(&overlay));
 
             let sink = Arc::new(TauriSink {
                 app: app.handle().clone(),

@@ -417,6 +417,34 @@ which X11 reads as `;`. `inject.rs` `click_v` is per OS: raw `kVK_ANSI_V` on
 macOS (rule 1 forbids the layout lookup there), `Key::V` on Windows, raw 55
 on Linux. No test can catch this; only a real paste on that OS does.
 
+**22. With two screens, the capsule shows up on the one you are not looking at.**
+Tauri's monitor numbers are in three different units on a Mac with a Retina
+screen beside an ordinary one: each screen's position and size are its
+points times *its own* scale factor, and the pointer is points times the
+*primary* screen's. `monitor_from_point(cursor_position())` therefore compared
+a pointer on the right half of a Retina laptop against a 1× monitor's numbers.
+`overlay.rs` `read_desk` divides each back by the factor it was multiplied by,
+which gives points, one space across every screen; `panel.rs` does the
+choosing and placing as pure, tested functions. Windows and X11 are one space
+of pixels and are used unchanged. Place the window with `LogicalPosition` on
+macOS and `PhysicalPosition` elsewhere: Tauri converts the other kind with the
+scale of the screen the window is on *now*, which is the wrong screen at the
+moment of moving it. The `screens` log line shows the layout as read.
+
+**23. The pill shows, but hovering it does nothing, or it blocks clicks.**
+The overlay window stays on screen between dictations, transparent and
+click-through. The webview is not told about the pointer by the system: an
+accessory app is never active, and a page in a window of an inactive app
+cannot rely on seeing the pointer move. So `Overlay::watch_pointer` polls the
+pointer (every 50 ms near the pill, 250 ms otherwise, never during a
+dictation), turns click-through off only inside `PillZone` (`panel.rs`), and
+tells the page with `telekey://pill`. Those zones are measured up from the
+window's bottom edge and must match `--rest` and the pill's sizes in
+`overlay.css`. The window is built with `accept_first_mouse(true)`; without it
+the first click is spent on the window, not the button. Linux has no pill
+(`Platform.pill`): its overlay is an ordinary window, so a click takes focus
+and the paste lands in the wrong place.
+
 ---
 
 ## Architecture in one screen

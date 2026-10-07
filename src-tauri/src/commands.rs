@@ -124,7 +124,10 @@ pub fn set_fn_trigger(
 /// Every window reloads its settings on this, so no window can save a stale
 /// copy over another's change.
 fn announce_settings(app: &AppHandle, saved: &Settings) {
-    use tauri::Emitter;
+    use tauri::{Emitter, Manager};
+    if let Some(overlay) = app.try_state::<Arc<crate::overlay::Overlay>>() {
+        overlay.set_pill(saved.show_pill);
+    }
     if let Err(err) = app.emit(crate::SETTINGS_EVENT, saved) {
         tracing::warn!("could not announce the settings change: {err}");
     }
@@ -317,6 +320,32 @@ pub fn cancel_dictation(
 ) {
     pipeline.mark_cancel();
     bus.emit(crate::trigger::TriggerEvent::Cancel);
+}
+
+/// The pill's microphone button: start a dictation without the shortcut.
+///
+/// The same event the shortcut sends on key-down, so everything after it —
+/// recording, muting, transcribing, pasting — is the path the keyboard takes.
+/// A click is a toggle rather than a hold: [`stop_dictation`] ends it, and so
+/// does pressing and releasing the shortcut, whose key-down is ignored while a
+/// recording is already running.
+#[tauri::command]
+pub fn start_dictation(bus: State<'_, crate::trigger::Bus>) {
+    bus.emit(crate::trigger::TriggerEvent::Start);
+}
+
+/// The capsule's Stop button: transcribe and paste, as letting go of the key does.
+#[tauri::command]
+pub fn stop_dictation(bus: State<'_, crate::trigger::Bus>) {
+    bus.emit(crate::trigger::TriggerEvent::Stop);
+}
+
+/// Whether the resting pill is up, for the overlay page when it loads.
+#[tauri::command]
+pub fn pill_state(
+    overlay: State<'_, Arc<crate::overlay::Overlay>>,
+) -> crate::overlay::PillState {
+    overlay.pill_state()
 }
 
 /// Whether this build's signature can hold a permission grant.

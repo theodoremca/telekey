@@ -141,6 +141,21 @@ export function SettingsPanel({
           />
         )}
 
+        {/* Not on Linux: the overlay there takes focus when clicked, so the
+            paste would miss the app it was meant for. */}
+        {platform.pill && (
+          <Toggle
+            label="Show the dictation pill"
+            hint={
+              settings.showPill
+                ? "Click the bar at the bottom of the screen to dictate; Stop pastes."
+                : "Dictate with a click, from a bar at the bottom of the screen."
+            }
+            checked={settings.showPill}
+            onChange={(showPill) => void onSave({ ...settings, showPill })}
+          />
+        )}
+
         {canMuteOutput && (
           <Toggle
             label="Mute other audio while dictating"

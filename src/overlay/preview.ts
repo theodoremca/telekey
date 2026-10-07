@@ -11,7 +11,30 @@ const ROWS: Array<{
   state: string;
   message?: string;
   dark?: boolean;
+  /** The resting pill instead of the capsule, plain or with the pointer over it. */
+  pill?: "rest" | "hover";
+  /** Started from the pill, so the capsule carries a Stop button. */
+  click?: boolean;
 }> = [
+  { label: "Pill — resting between dictations", state: "idle", pill: "rest" },
+  {
+    label: "Pill — resting, over a dark app",
+    state: "idle",
+    pill: "rest",
+    dark: true,
+  },
+  { label: "Pill — pointer over it", state: "idle", pill: "hover" },
+  {
+    label: "Pill — pointer over it, over a dark app",
+    state: "idle",
+    pill: "hover",
+    dark: true,
+  },
+  {
+    label: "Recording — started from the pill, with Stop",
+    state: "recording",
+    click: true,
+  },
   { label: "Recording", state: "recording" },
   { label: "Recording — over a dark app", state: "recording", dark: true },
   { label: "Transcribing", state: "transcribing" },
@@ -109,6 +132,14 @@ for (const row of ROWS) {
   const stage = template.content.cloneNode(true) as DocumentFragment;
   const capsule = stage.querySelector(".capsule") as HTMLElement;
   capsule.dataset.state = row.state;
+  capsule.dataset.click = String(row.click === true);
+
+  if (row.pill) {
+    const stageEl = stage.querySelector(".stage") as HTMLElement;
+    const pill = stage.querySelector(".pill") as HTMLElement;
+    stageEl.dataset.view = "pill";
+    pill.dataset.hover = String(row.pill === "hover");
+  }
 
   if (row.message) {
     (stage.querySelector(".message") as HTMLElement).textContent = row.message;
@@ -121,5 +152,14 @@ for (const row of ROWS) {
   if (row.state === "recording" || row.state === "transcribing") {
     const canvas = plate.querySelector("canvas") as HTMLCanvasElement;
     requestAnimationFrame(() => paint(canvas, row.state === "transcribing"));
+  }
+
+  if (row.pill === "hover") {
+    // As main.ts does: the open width is the measured width of the contents.
+    const pill = plate.querySelector(".pill") as HTMLElement;
+    const body = plate.querySelector(".pill-body") as HTMLElement;
+    requestAnimationFrame(() => {
+      pill.style.setProperty("--pill-open", `${body.scrollWidth}px`);
+    });
   }
 }

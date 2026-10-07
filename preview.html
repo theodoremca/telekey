@@ -56,9 +56,11 @@
         );
         border: 1px solid #e6e4ea;
       }
+      /* The real window's size, so where the capsule and the pill sit in it
+         is what the app shows. */
       .plate .stage {
         width: 296px;
-        height: auto;
+        height: 88px;
       }
       .plate.dark {
         background: repeating-linear-gradient(
@@ -81,7 +83,7 @@
     </div>
 
     <template id="capsule-template">
-      <div class="stage">
+      <div class="stage" data-view="capsule">
         <div class="capsule" data-state="recording">
           <span class="indicator"></span>
           <div class="trace">
@@ -90,10 +92,25 @@
           </div>
           <span class="timer">0:07</span>
           <p class="message"></p>
+          <button type="button" class="stop" tabindex="-1" aria-label="Stop and paste">
+            <span aria-hidden="true"></span>
+          </button>
           <button type="button" class="cancel" tabindex="-1" aria-label="Cancel dictation">
             <span aria-hidden="true">×</span>
           </button>
         </div>
+        <button type="button" class="pill" data-hover="false" tabindex="-1" aria-label="Start dictating">
+          <span class="pill-body">
+            <span class="mic" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="14" height="14">
+                <rect x="9" y="3" width="6" height="11" rx="3" />
+                <path d="M6 11a6 6 0 0 0 12 0M12 17v4" />
+              </svg>
+            </span>
+            <span class="pill-hint">Click to dictate</span>
+            <span class="pill-keys">⌃ ⌥ Space</span>
+          </span>
+        </button>
       </div>
     </template>
 
