@@ -4979,6 +4979,7 @@ dependencies = [
  "objc2-core-graphics",
  "objc2-foundation",
  "parking_lot",
+ "regex",
  "reqwest",
  "rubato",
  "serde",

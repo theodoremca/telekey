@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   api,
   messageFrom,
+  MAX_REPLACEMENTS,
   MAX_VOCABULARY,
   type ApiKeyStatus,
   type CreditPack,
@@ -10,6 +11,7 @@ import {
   type InputDevice,
   type Permission,
   type Permissions,
+  type Replacement,
   type Platform,
   type SessionStatus,
   type Settings,
@@ -191,6 +193,10 @@ export function SettingsPanel({
         <VocabularyEditor
           terms={settings.vocabulary}
           onChange={(vocabulary) => onSave({ ...settings, vocabulary })}
+        />
+        <ReplacementsEditor
+          rules={settings.replacements}
+          onChange={(replacements) => onSave({ ...settings, replacements })}
         />
       </Section>
 
@@ -749,6 +755,89 @@ function VocabularyEditor({
         {terms.length} of {MAX_VOCABULARY}
         {full && " — remove one to add another."}
       </p>
+    </div>
+  );
+}
+
+/**
+ * "When I say … write …". Vocabulary is a hint the model usually takes; these
+ * are the guaranteed fix for a word it keeps getting wrong, applied on this
+ * computer after everything else.
+ */
+function ReplacementsEditor({
+  rules,
+  onChange,
+}: {
+  rules: Replacement[];
+  onChange: (rules: Replacement[]) => Promise<boolean>;
+}) {
+  const [said, setSaid] = useState("");
+  const [write, setWrite] = useState("");
+  const full = rules.length >= MAX_REPLACEMENTS;
+  const ready = said.trim() !== "" && write.trim() !== "" && !full;
+
+  const add = () => {
+    if (!ready) return;
+    const key = said.trim().toLowerCase();
+    // One rule per phrase: adding it again replaces what it writes.
+    const others = rules.filter((rule) => rule.said.trim().toLowerCase() !== key);
+    void onChange([...others, { said: said.trim(), write: write.trim() }]);
+    setSaid("");
+    setWrite("");
+  };
+
+  return (
+    <div className="row column">
+      <span className="rowLabel">Replacements</span>
+      <span className="rowHint">
+        When the model keeps writing a word wrong, fix it here. Applied last, on
+        this computer.
+      </span>
+      <div className="row tight">
+        <input
+          className="input"
+          placeholder="When I say"
+          value={said}
+          spellCheck={false}
+          disabled={full}
+          onChange={(event) => setSaid(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") add();
+          }}
+        />
+        <input
+          className="input"
+          placeholder="Write"
+          value={write}
+          spellCheck={false}
+          disabled={full}
+          onChange={(event) => setWrite(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") add();
+          }}
+        />
+        <button className="ghost" onClick={add} disabled={!ready}>
+          Add
+        </button>
+      </div>
+
+      {rules.length > 0 && (
+        <ul className="chips">
+          {rules.map((rule) => (
+            <li key={rule.said}>
+              <span>
+                {rule.said} → {rule.write}
+              </span>
+              <button
+                aria-label={`Remove ${rule.said}`}
+                onClick={() => void onChange(rules.filter((r) => r !== rule))}
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

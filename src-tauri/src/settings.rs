@@ -30,6 +30,19 @@ pub const DEFAULT_SHORTCUT: &str = "Ctrl+Alt+Space";
 /// make unspoken terms appear in the transcript. Cap it.
 pub const MAX_KEYWORDS: usize = 100;
 
+/// Plenty for the words a model keeps getting wrong, few enough to scan.
+pub const MAX_REPLACEMENTS: usize = 100;
+
+/// "When I say `said`, write `write`": a fix applied to the finished text,
+/// for a word the model keeps getting wrong despite Vocabulary. See
+/// `replace.rs`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Replacement {
+    pub said: String,
+    pub write: String,
+}
+
 /// Note the `rename_all`: every type crossing into the webview is camelCase, and
 /// this one silently was not. The frontend read `settings.fnTrigger` as
 /// `undefined` and sent it back under a name serde did not recognise, so
@@ -94,6 +107,9 @@ pub struct Settings {
     /// of the user's app. See [`pill_supported`].
     #[serde(alias = "show_pill")]
     pub show_pill: bool,
+    /// Fixes applied to the finished text, last, just before pasting.
+    /// Empty by default, which is the same as off.
+    pub replacements: Vec<Replacement>,
     /// Instant: stream the audio while the user speaks, so the text is ready
     /// as they let go, at OpenAI's live rate (about four times Standard).
     ///
@@ -127,6 +143,7 @@ impl Default for Settings {
             input_device: None,
             show_pill: pill_supported(),
             instant: false,
+            replacements: Vec::new(),
         }
     }
 }
@@ -452,6 +469,10 @@ mod tests {
             input_device: Some("coreaudio:BuiltInMicrophoneDevice".to_string()),
             show_pill: false,
             instant: true,
+            replacements: vec![Replacement {
+                said: "cloud code".into(),
+                write: "Claude Code".into(),
+            }],
         };
 
         original.save(dir.path()).unwrap();

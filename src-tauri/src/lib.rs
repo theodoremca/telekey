@@ -21,6 +21,7 @@ pub mod panel;
 pub mod permissions;
 pub mod pipeline;
 pub mod polish;
+pub mod replace;
 pub mod settings;
 pub mod setup;
 pub mod session;

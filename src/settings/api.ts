@@ -21,6 +21,14 @@ export interface Settings {
   showPill: boolean;
   /** Stream while speaking, so text is ready on release, at the live rate. */
   instant: boolean;
+  /** "When I say … write …", applied last, just before pasting. */
+  replacements: Replacement[];
+}
+
+/** Mirrors `Replacement` in settings.rs. */
+export interface Replacement {
+  said: string;
+  write: string;
 }
 
 /** A microphone, as cpal names it. Mirrors `InputDevice` in input_device.rs. */
@@ -177,6 +185,8 @@ export interface HostedAccount {
 
 /** Matches `MAX_KEYWORDS` in settings.rs. */
 export const MAX_VOCABULARY = 100;
+/** Mirrors MAX_REPLACEMENTS in settings.rs. */
+export const MAX_REPLACEMENTS = 100;
 
 /**
  * Whether the Tauri command bridge exists.
@@ -260,6 +270,7 @@ const previewState: {
     inputDevice: null,
     showPill: true,
     instant: false,
+    replacements: [{ said: "cloud code", write: "Claude Code" }],
     profiles: [
       { app: "com.tinyspeck.slackmacgap", label: "Slack", style: { kind: "terse" } },
       { app: "com.apple.Terminal", label: "Terminal", style: { kind: "literal" } },

@@ -46,6 +46,10 @@ tungstenite = { version = "0.30", default-features = false, features = [
 ] }
 base64 = "0.22"
 
+# Replacements ("when I say … write …"); already compiled in through
+# tracing-subscriber, so this costs nothing new.
+regex = "1.10"
+
 # text injection
 enigo = "0.6"
 arboard = "3.6"

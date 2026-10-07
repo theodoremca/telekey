@@ -617,7 +617,7 @@ impl Pipeline {
             return Ok(None);
         }
 
-        let text = self.format_for_target(text);
+        let text = self.finish_text(text);
 
         if self.cancelled.load(Ordering::SeqCst) {
             return Ok(None);
@@ -723,6 +723,14 @@ impl Pipeline {
         };
         cached.clone_from(&route);
         route
+    }
+
+    /// Everything between the transcript and the paste: formatting, then the
+    /// user's replacements — last, so nothing after them can undo their fix.
+    fn finish_text(&self, text: String) -> String {
+        let text = self.format_for_target(text);
+        let replacements = self.settings.lock().replacements.clone();
+        crate::replace::apply(&text, &replacements)
     }
 
     /// Apply the target app's formatting profile, if it has one.
@@ -1316,6 +1324,30 @@ mod tests {
         Clip {
             samples: vec![0.01; TARGET_SAMPLE_RATE as usize / 2],
         }
+    }
+
+    #[test]
+    fn replacements_come_after_formatting_so_it_cannot_undo_them() {
+        let mut settings = Settings::default();
+        settings.polish_enabled = true;
+        settings.profiles = vec![crate::polish::AppProfile {
+            app: "com.apple.Terminal".into(),
+            label: "Terminal".into(),
+            style: crate::polish::Style::Literal,
+        }];
+        settings.replacements = vec![crate::settings::Replacement {
+            said: "cloud code".into(),
+            write: "Claude Code".into(),
+        }];
+        let pipeline = Pipeline::new(settings, Arc::new(NullSink), test_history(), test_usage());
+        *pipeline.target.lock() = TargetApp {
+            bundle_id: Some("com.apple.Terminal".into()),
+            ..TargetApp::default()
+        };
+        // Literal lowercases the first word; the replacement, applied after,
+        // still writes "Claude Code" exactly.
+        assert_eq!(pipeline.finish_text("Cloud code.".into()), "Claude Code");
+        assert_eq!(pipeline.finish_text("Run cloud code now.".into()), "run Claude Code now");
     }
 
     #[test]
