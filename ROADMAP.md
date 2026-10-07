@@ -253,15 +253,15 @@ unrestricted. Hosted mode is the paid convenience, not a feature gate.
 
 ---
 
-## Phase 7 — Instant mode — **planned, not started**
+## Phase 7 — Pill, multi-monitor, Instant — **planned, not started**
 
-An opt-in toggle that streams audio to OpenAI's live transcription while the
-key is held, so text appears almost the moment you let go instead of 3–4
-seconds later. Costs about 4× more per minute; Standard stays the default, and
-a failed stream falls back to Standard. Credits go through a small relay of
-TeleKey's own. Full plan, prices and open questions:
-[docs/instant-mode.md](docs/instant-mode.md). About 4–5 days, starting with a
-half-day spike to measure the real speed gain.
+Three pieces, to be built together: the capsule follows the mouse to whichever
+monitor you are on (a bug today: it can appear on the other screen); a small
+dictation pill at the bottom of the screen that shows a microphone on hover, so
+you can click to dictate without the shortcut; and an opt-in Instant mode that
+streams audio while you speak, so text appears almost as you let go, at about 4×
+the price per minute. Full plan, prices and open questions:
+[docs/next-features.md](docs/next-features.md). About 7–9 days.
 
 ---
 
