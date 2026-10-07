@@ -25,7 +25,10 @@ const MAX_UPLOAD_BYTES: usize = 25 * 1024 * 1024;
 const MIN_CLIP_SECONDS: f32 = 0.20;
 
 /// Per-request hints that improve recognition.
-#[derive(Debug, Clone, Default, PartialEq)]
+///
+/// `Debug` is written by hand: `prompt` can hold text read off the screen,
+/// which never belongs in a log.
+#[derive(Clone, Default, PartialEq)]
 pub struct TranscriptionContext {
     /// Literal terms expected in the audio — names, jargon, product names.
     pub keywords: Vec<String>,
@@ -33,6 +36,16 @@ pub struct TranscriptionContext {
     pub languages: Vec<String>,
     /// Free-text context about the recording.
     pub prompt: Option<String>,
+}
+
+impl std::fmt::Debug for TranscriptionContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TranscriptionContext")
+            .field("keywords", &self.keywords.len())
+            .field("languages", &self.languages)
+            .field("prompt_bytes", &self.prompt.as_ref().map(String::len))
+            .finish()
+    }
 }
 
 /// A transcript, plus what the API says it billed for producing it.

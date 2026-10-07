@@ -7,6 +7,7 @@
 pub mod audio;
 pub mod cli;
 pub mod commands;
+pub mod context;
 pub mod escape;
 pub mod fn_key;
 pub mod frontmost;

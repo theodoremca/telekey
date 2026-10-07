@@ -2961,6 +2961,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-application-services"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69282c2b5bc58fba07cb9de2113619532eb551e98efe3d8d695509ef45fbd53b"
+dependencies = [
+ "bitflags 2.13.1",
+ "libc",
+ "objc2-core-foundation",
+]
+
+[[package]]
 name = "objc2-audio-toolbox"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4973,6 +4984,7 @@ dependencies = [
  "keyring",
  "objc2",
  "objc2-app-kit",
+ "objc2-application-services",
  "objc2-av-foundation",
  "objc2-core-audio",
  "objc2-core-foundation",

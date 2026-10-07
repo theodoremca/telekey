@@ -86,6 +86,18 @@ objc2-core-graphics = { version = "0.3", features = [
 objc2-core-foundation = { version = "0.3", features = [
   "CFMachPort",
   "CFRunLoop",
+  "CFString",
+  "CFNumber",
+] }
+# Screen context: reading the focused window's title and the text around the
+# cursor through the Accessibility API, under the grant pasting already has.
+objc2-application-services = { version = "0.3", default-features = false, features = [
+  "std",
+  "libc",
+  "HIServices",
+  "AXUIElement",
+  "AXValue",
+  "AXError",
 ] }
 objc2-foundation = { version = "0.3", features = [
   "NSString",

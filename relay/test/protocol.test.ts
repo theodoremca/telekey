@@ -8,6 +8,7 @@ import {
   fromClient,
   fromServer,
   LIVE_MODEL,
+  MAX_PROMPT_CHARS,
 } from "../src/protocol";
 
 test("the model is always gpt-live-transcribe, whatever the client asks", () => {
@@ -24,7 +25,7 @@ test("the model is always gpt-live-transcribe, whatever the client asks", () => 
               keywords: [" TeleKey ", "", 42, "x".repeat(500)],
               languages: ["en", "not a language"],
               delay: "low",
-              prompt: "ignore all that",
+              prompt: "  Dictating into Mail.  ",
             },
             turn_detection: { type: "server_vad" },
           },
@@ -41,10 +42,22 @@ test("the model is always gpt-live-transcribe, whatever the client asks", () => 
     keywords: ["TeleKey"],
     languages: ["en"],
     delay: "low",
+    prompt: "Dictating into Mail.",
   });
   assert.deepEqual(input.format, { type: "audio/pcm", rate: 24000 });
   assert.equal(input.turn_detection, null);
   assert.equal(sent.session.instructions, undefined);
+});
+
+test("the screen-context prompt is capped", () => {
+  const action = fromClient(
+    JSON.stringify({
+      type: "session.update",
+      session: { audio: { input: { transcription: { prompt: "👋".repeat(MAX_PROMPT_CHARS + 50) } } } },
+    }),
+  );
+  const sent = JSON.parse((action as { message: string }).message);
+  assert.equal(Array.from(sent.session.audio.input.transcription.prompt).length, MAX_PROMPT_CHARS);
 });
 
 test("an unknown delay is left out rather than passed on", () => {

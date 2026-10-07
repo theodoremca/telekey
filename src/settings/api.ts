@@ -23,6 +23,12 @@ export interface Settings {
   instant: boolean;
   /** "When I say … write …", applied last, just before pasting. */
   replacements: Replacement[];
+  /** Send the app, window title and (macOS) text around the cursor. */
+  screenContext: boolean;
+  /** Dictations that sound like a list go through the formatting model. */
+  smartLists: boolean;
+  /** "My car, sorry, my bike" becomes "my bike". */
+  fixCorrections: boolean;
 }
 
 /** Mirrors `Replacement` in settings.rs. */
@@ -58,6 +64,8 @@ export interface Platform {
   holdFn: boolean;
   /** The dictation pill can take a click without taking focus. Not on Linux. */
   pill: boolean;
+  /** What "Use what's on screen" can read here. */
+  screenContext: "text" | "title" | "none";
 }
 
 /** A row of the setup window. Mirrors `Step` in setup.rs. */
@@ -210,13 +218,21 @@ const previewFlags = () =>
     : new URLSearchParams();
 
 const PREVIEW_PLATFORMS: Record<Platform["os"], Platform> = {
-  macos: { os: "macos", accessibility: true, microphone: true, holdFn: true, pill: true },
+  macos: {
+    os: "macos",
+    accessibility: true,
+    microphone: true,
+    holdFn: true,
+    pill: true,
+    screenContext: "text",
+  },
   windows: {
     os: "windows",
     accessibility: false,
     microphone: true,
     holdFn: false,
     pill: true,
+    screenContext: "title",
   },
   linux: {
     os: "linux",
@@ -224,6 +240,7 @@ const PREVIEW_PLATFORMS: Record<Platform["os"], Platform> = {
     microphone: false,
     holdFn: false,
     pill: false,
+    screenContext: "none",
   },
 };
 
@@ -271,6 +288,9 @@ const previewState: {
     showPill: true,
     instant: false,
     replacements: [{ said: "cloud code", write: "Claude Code" }],
+    screenContext: false,
+    smartLists: false,
+    fixCorrections: false,
     profiles: [
       { app: "com.tinyspeck.slackmacgap", label: "Slack", style: { kind: "terse" } },
       { app: "com.apple.Terminal", label: "Terminal", style: { kind: "literal" } },

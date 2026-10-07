@@ -58,6 +58,10 @@ pub struct Platform {
     /// being dictated into. Not on Linux yet: the overlay there is an ordinary
     /// window, so a click would move focus and the paste would miss.
     pub pill: bool,
+    /// What "Use what's on screen" can read: `"text"` (app, window title and
+    /// the text around the cursor; macOS), `"title"` (app and window title;
+    /// Windows) or `"none"` (Linux, which hides the setting).
+    pub screen_context: &'static str,
 }
 
 impl Platform {
@@ -67,6 +71,7 @@ impl Platform {
         microphone: true,
         hold_fn: true,
         pill: true,
+        screen_context: "text",
     };
     pub const WINDOWS: Self = Self {
         os: "windows",
@@ -74,6 +79,7 @@ impl Platform {
         microphone: true,
         hold_fn: false,
         pill: true,
+        screen_context: "title",
     };
     pub const LINUX: Self = Self {
         os: "linux",
@@ -81,6 +87,7 @@ impl Platform {
         microphone: false,
         hold_fn: false,
         pill: false,
+        screen_context: "none",
     };
 
     pub const fn current() -> Self {
@@ -484,6 +491,7 @@ mod tests {
                 "microphone": true,
                 "holdFn": false,
                 "pill": true,
+                "screenContext": "title",
             })
         );
     }

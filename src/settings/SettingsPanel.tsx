@@ -198,6 +198,19 @@ export function SettingsPanel({
           rules={settings.replacements}
           onChange={(replacements) => onSave({ ...settings, replacements })}
         />
+        {/* Linux has no way to read the frontmost app yet. */}
+        {platform.screenContext !== "none" && (
+          <Toggle
+            label="Use what's on screen"
+            hint={
+              platform.screenContext === "text"
+                ? "Sends the window title and text near your cursor. Never passwords."
+                : "Sends the app and window title with the audio."
+            }
+            checked={settings.screenContext}
+            onChange={(screenContext) => void onSave({ ...settings, screenContext })}
+          />
+        )}
       </Section>
 
       <Section

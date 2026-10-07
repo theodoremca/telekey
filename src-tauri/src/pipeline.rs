@@ -17,6 +17,7 @@ use crate::audio::{AudioEngine, Clip};
 use crate::frontmost::{frontmost_app, TargetApp};
 use crate::history::History;
 use crate::inject::{self, PASTE_SETTLE_DELAY};
+use crate::context::{self as screen_context, ContextSlot};
 use crate::live::{LiveSession, Route, Streamed};
 use crate::output_mute::{self, OutputMute};
 use crate::permissions::{self, Permission, Platform};
@@ -97,7 +98,15 @@ pub struct Pipeline {
     /// Instant failed and Standard stood in: worth a word after the result,
     /// since the user is paying for speed they did not get this time.
     instant_note: Mutex<Option<String>>,
+    /// Where this dictation's screen context arrives, when "Use what's on
+    /// screen" is on. Taken with the dictation it belongs to, so a slow read
+    /// can never be used by the next one.
+    screen: Mutex<Option<Arc<ContextSlot>>>,
 }
+
+/// How long the transcribe step waits for a screen read still in progress.
+/// By the time a key comes up the read has normally finished long ago.
+const SCREEN_WAIT: Duration = Duration::from_millis(250);
 
 /// Said after a dictation that Instant could not handle, once Standard has.
 pub const INSTANT_FELL_BACK: &str = "Instant was unavailable, so this one used Standard";
@@ -133,6 +142,7 @@ impl Pipeline {
             live: Mutex::new(None),
             live_route: Mutex::new(None),
             instant_note: Mutex::new(None),
+            screen: Mutex::new(None),
         }
     }
 
@@ -408,6 +418,7 @@ impl Pipeline {
         if let Some(live) = self.live.lock().take() {
             live.cancel();
         }
+        self.screen.lock().take();
         self.restore_output();
         match self.engine.stop() {
             Ok(mut recording) => recording.clip.samples.zeroize(),
@@ -427,6 +438,7 @@ impl Pipeline {
         // step or cancels it. The engine stops first: the tap then holds the
         // very end of the recording for the stream's last message.
         let live = self.live.lock().take();
+        let screen = self.screen.lock().take();
         let recording = match self.engine.stop() {
             Ok(recording) => recording,
             Err(err) => {
@@ -465,7 +477,7 @@ impl Pipeline {
             .name("telekey-transcribe".into())
             .spawn(move || {
                 let result = me
-                    .transcribe_and_insert_with(clip, live)
+                    .transcribe_and_insert_with(clip, live, screen)
                     .map_err(|err| format!("{err:#}"));
                 if let Ok(Some(text)) = &result {
                     tracing::info!(
@@ -545,6 +557,13 @@ impl Pipeline {
         // Capture the target app before anything else can steal focus.
         let target = frontmost_app();
         tracing::info!(target = target.profile_key(), "dictation started");
+        // Read in parallel with opening the microphone; nothing waits on it.
+        let screen = self
+            .settings
+            .lock()
+            .screen_context
+            .then(|| screen_context::start(target.clone()));
+        *self.screen.lock() = screen.clone();
         *self.target.lock() = target;
 
         // Blocks until the stream is actually live. Announcing "recording"
@@ -575,7 +594,7 @@ impl Pipeline {
         if let Some(tap) = tap {
             match self.live_route() {
                 Some(route) => {
-                    let session = LiveSession::start(route, tap, self.context());
+                    let session = LiveSession::start(route, tap, self.context(), screen);
                     *self.live.lock() = Some(Box::new(session));
                 }
                 None => drop(tap),
@@ -592,15 +611,16 @@ impl Pipeline {
 
     #[cfg(test)]
     fn transcribe_and_insert(&self, clip: Clip) -> Result<Option<String>> {
-        self.transcribe_and_insert_with(clip, None)
+        self.transcribe_and_insert_with(clip, None, None)
     }
 
     fn transcribe_and_insert_with(
         &self,
         clip: Clip,
         live: Option<Box<dyn Streamed>>,
+        screen: Option<Arc<ContextSlot>>,
     ) -> Result<Option<String>> {
-        let Some(transcription) = self.transcribe(clip, live)? else {
+        let Some(transcription) = self.transcribe(clip, live, screen)? else {
             return Ok(None);
         };
         if self.cancelled.load(Ordering::SeqCst) {
@@ -639,6 +659,7 @@ impl Pipeline {
         &self,
         mut clip: Clip,
         live: Option<Box<dyn Streamed>>,
+        screen: Option<Arc<ContextSlot>>,
     ) -> Result<Option<Transcription>> {
         if self.cancelled.load(Ordering::SeqCst) {
             clip.samples.zeroize();
@@ -678,7 +699,9 @@ impl Pipeline {
                 return Err(err);
             }
         };
-        let context = self.context();
+        let mut context = self.context();
+        // The same screen read Instant used, if it got that far.
+        context.prompt = screen.and_then(|slot| slot.get_within(SCREEN_WAIT));
         let upload_started = Instant::now();
         if self.cancelled.load(Ordering::SeqCst) {
             clip.samples.zeroize();
@@ -1358,7 +1381,7 @@ mod tests {
         let (stream, _) = ScriptedStream::ok("streamed", 2);
 
         // A gated transcriber would block forever if it were called.
-        let result = pipeline.transcribe(half_second_clip(), Some(stream)).unwrap().unwrap();
+        let result = pipeline.transcribe(half_second_clip(), Some(stream), None).unwrap().unwrap();
 
         assert_eq!(result.text, "streamed");
         assert_eq!(result.units, Units::live_transcription(2));
@@ -1374,7 +1397,7 @@ mod tests {
         );
         let (stream, _) = ScriptedStream::failing("Instant took too long to get ready");
 
-        let result = pipeline.transcribe(half_second_clip(), Some(stream)).unwrap().unwrap();
+        let result = pipeline.transcribe(half_second_clip(), Some(stream), None).unwrap().unwrap();
 
         assert_eq!(result.text, "from the upload");
         assert_eq!(result.units, Units::transcription(1));
@@ -1408,7 +1431,7 @@ mod tests {
         inject(&pipeline, ScriptedTranscriber::immediate("x", Units::transcription(1)));
         let (stream, _) = ScriptedStream::failing("too short for Instant");
         let tap = Clip { samples: vec![0.01; TARGET_SAMPLE_RATE as usize / 10] };
-        let _ = pipeline.transcribe(tap, Some(stream));
+        let _ = pipeline.transcribe(tap, Some(stream), None);
         assert!(pipeline.instant_note.lock().is_none());
     }
 
@@ -1420,8 +1443,51 @@ mod tests {
         let (stream, cancelled) = ScriptedStream::ok("streamed", 2);
         pipeline.mark_cancel();
 
-        assert!(pipeline.transcribe(half_second_clip(), Some(stream)).unwrap().is_none());
+        assert!(pipeline.transcribe(half_second_clip(), Some(stream), None).unwrap().is_none());
         assert!(cancelled.load(Ordering::SeqCst));
+    }
+
+    /// Records the context each upload was given.
+    #[derive(Default)]
+    struct ContextRecorder {
+        prompts: Mutex<Vec<Option<String>>>,
+    }
+
+    impl Transcriber for ContextRecorder {
+        fn transcribe(&self, _clip: &Clip, context: &TranscriptionContext) -> Result<Transcription> {
+            self.prompts.lock().push(context.prompt.clone());
+            Ok(Transcription {
+                text: "uploaded".into(),
+                units: Units::transcription(1),
+            })
+        }
+    }
+
+    #[test]
+    fn the_screen_context_goes_with_the_upload_even_after_instant_read_it() {
+        let pipeline = Pipeline::new(Settings::default(), Arc::new(NullSink), test_history(), test_usage());
+        let recorder = Arc::new(ContextRecorder::default());
+        inject(&pipeline, Arc::clone(&recorder) as Arc<dyn Transcriber>);
+        let slot = ContextSlot::new();
+        slot.fill(Some("Dictating into Mail.".into()));
+        // Instant read it, then failed: Standard still has it.
+        assert_eq!(slot.try_get(), Some(Some("Dictating into Mail.".into())));
+        let (stream, _) = ScriptedStream::failing("no connection");
+
+        pipeline
+            .transcribe(half_second_clip(), Some(stream), Some(Arc::clone(&slot)))
+            .unwrap();
+
+        assert_eq!(*recorder.prompts.lock(), vec![Some("Dictating into Mail.".to_string())]);
+    }
+
+    #[test]
+    fn without_screen_context_the_upload_carries_no_prompt() {
+        let pipeline = Pipeline::new(Settings::default(), Arc::new(NullSink), test_history(), test_usage());
+        let recorder = Arc::new(ContextRecorder::default());
+        inject(&pipeline, Arc::clone(&recorder) as Arc<dyn Transcriber>);
+        pipeline.transcribe(half_second_clip(), None, None).unwrap();
+        assert_eq!(*recorder.prompts.lock(), vec![None]);
     }
 
     #[test]

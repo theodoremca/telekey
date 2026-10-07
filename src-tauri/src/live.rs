@@ -29,6 +29,7 @@ use tungstenite::{Message, WebSocket};
 use zeroize::Zeroize;
 
 use crate::audio::{pcm16_le, StreamResampler, Tap, LIVE_SAMPLE_RATE};
+use crate::context::ContextSlot;
 use crate::transcribe::{Transcription, TranscriptionContext};
 use crate::usage::Units;
 
@@ -52,6 +53,10 @@ const SETUP_GRACE_AFTER_STOP: Duration = Duration::from_secs(2);
 /// From the commit to the final text. Measured at under a second; anything
 /// past this is better spent on Standard.
 const RESULT_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long the settings wait for the screen context, if it is still being
+/// read when the session is ready. Every millisecond here delays the first
+/// audio sent.
+const CONTEXT_WAIT: Duration = Duration::from_millis(250);
 /// How long to keep the connection for the relay to write its charge.
 const CHARGE_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long each wait for a message lasts, and so how often audio is sent.
@@ -144,10 +149,14 @@ impl LiveSession {
     /// Connect and start streaming `tap`. Returns at once: connecting happens
     /// on the session's thread while the user speaks, and the audio captured
     /// meanwhile waits in the tap.
+    /// `screen`, when "Use what's on screen" is on, is where the screen
+    /// context for this dictation arrives; it is read when the session is
+    /// ready for its settings, a second or two after key-down.
     pub fn start(
         route: Route,
         tap: impl AudioSource + 'static,
         context: TranscriptionContext,
+        screen: Option<std::sync::Arc<ContextSlot>>,
     ) -> Self {
         let (commands, inbox) = mpsc::channel();
         let (report, outcome) = mpsc::channel();
@@ -167,7 +176,14 @@ impl LiveSession {
                     ms = started.elapsed().as_millis() as u64,
                     "instant connected"
                 );
-                let result = stream(socket.as_mut(), &tap, &context, &inbox, started);
+                let result = stream(
+                    socket.as_mut(),
+                    &tap,
+                    &context,
+                    screen.as_deref(),
+                    &inbox,
+                    started,
+                );
                 drop(tap);
                 let delivered = result.is_ok();
                 // The text goes to the pipeline now; staying connected below
@@ -222,6 +238,8 @@ fn connect_route(route: &Route) -> Result<Box<dyn Socket>> {
 enum Phase {
     /// Connected; waiting for `session.created`.
     Connected,
+    /// Ready for settings, but the screen context is still being read.
+    AwaitingContext,
     /// Settings sent; waiting for `session.updated` before the first audio.
     Configuring,
     Streaming,
@@ -234,10 +252,13 @@ fn stream(
     socket: &mut dyn Socket,
     audio: &dyn AudioSource,
     context: &TranscriptionContext,
+    screen: Option<&ContextSlot>,
     commands: &Receiver<Command>,
     started: Instant,
 ) -> Result<Transcription> {
+    let mut context = context.clone();
     let mut phase = Phase::Connected;
+    let mut context_deadline = Instant::now();
     let mut stopped_at: Option<Instant> = None;
     let mut committed_at: Option<Instant> = None;
     let mut resampler = StreamResampler::new(audio.source_rate(), LIVE_SAMPLE_RATE)?;
@@ -273,6 +294,15 @@ fn stream(
             }
         }
 
+        if phase == Phase::AwaitingContext {
+            let ready = screen.and_then(ContextSlot::try_get);
+            if ready.is_some() || now > context_deadline {
+                context.prompt = ready.flatten();
+                socket.send(&session_update(&context).to_string())?;
+                phase = Phase::Configuring;
+            }
+        }
+
         if phase == Phase::Streaming {
             let mut fresh = audio.drain();
             let mut out = resampler.push(&fresh)?;
@@ -300,10 +330,26 @@ fn stream(
             continue;
         };
         match event["type"].as_str().unwrap_or_default() {
-            "session.created" if phase == Phase::Connected => {
-                socket.send(&session_update(context).to_string())?;
-                phase = Phase::Configuring;
-            }
+            "session.created" if phase == Phase::Connected => match screen {
+                // The screen is normally read long before this; if not, wait
+                // a moment for it, polled above so Finish and Cancel still
+                // get through, then go without.
+                Some(slot) => match slot.try_get() {
+                    Some(prompt) => {
+                        context.prompt = prompt;
+                        socket.send(&session_update(&context).to_string())?;
+                        phase = Phase::Configuring;
+                    }
+                    None => {
+                        context_deadline = Instant::now() + CONTEXT_WAIT;
+                        phase = Phase::AwaitingContext;
+                    }
+                },
+                None => {
+                    socket.send(&session_update(&context).to_string())?;
+                    phase = Phase::Configuring;
+                }
+            },
             "session.updated" if phase == Phase::Configuring => {
                 tracing::debug!(
                     ms = started.elapsed().as_millis() as u64,
@@ -347,6 +393,9 @@ fn session_update(context: &TranscriptionContext) -> Value {
     }
     if !context.languages.is_empty() {
         transcription["languages"] = json!(context.languages);
+    }
+    if let Some(prompt) = context.prompt.as_deref().filter(|p| !p.is_empty()) {
+        transcription["prompt"] = json!(prompt);
     }
     json!({
         "type": "session.update",
@@ -650,7 +699,7 @@ mod tests {
     fn finished(socket: &mut FakeSocket, audio: &FakeAudio) -> Result<Transcription> {
         let (tx, rx) = mpsc::channel();
         tx.send(Command::Finish).unwrap();
-        stream(socket, audio, &context(), &rx, Instant::now())
+        stream(socket, audio, &context(), None, &rx, Instant::now())
     }
 
     #[test]
@@ -719,6 +768,37 @@ mod tests {
     }
 
     #[test]
+    fn the_screen_context_rides_in_the_settings() {
+        let mut socket = FakeSocket::openai("x", json!(null));
+        let slot = ContextSlot::new();
+        slot.fill(Some("Dictating into Mail — Re: invoice.".into()));
+        let (tx, rx) = mpsc::channel();
+        tx.send(Command::Finish).unwrap();
+        stream(&mut socket, &FakeAudio::seconds(0.5), &context(), Some(&slot), &rx, Instant::now())
+            .unwrap();
+        let sent = socket.sent.lock();
+        assert_eq!(
+            sent[0]["session"]["audio"]["input"]["transcription"]["prompt"],
+            "Dictating into Mail — Re: invoice."
+        );
+    }
+
+    #[test]
+    fn a_screen_read_that_is_late_is_waited_for_briefly_then_skipped() {
+        let mut socket = FakeSocket::openai("x", json!(null));
+        let slot = ContextSlot::new(); // never filled
+        let (tx, rx) = mpsc::channel();
+        tx.send(Command::Finish).unwrap();
+        let started = Instant::now();
+        let result =
+            stream(&mut socket, &FakeAudio::seconds(0.5), &context(), Some(&slot), &rx, Instant::now());
+        assert!(result.is_ok(), "{result:?}");
+        assert!(started.elapsed() >= CONTEXT_WAIT);
+        let sent = socket.sent.lock();
+        assert!(sent[0]["session"]["audio"]["input"]["transcription"]["prompt"].is_null());
+    }
+
+    #[test]
     fn after_the_text_the_relay_gets_time_to_charge() {
         let mut socket = FakeSocket::default();
         socket.inbox.lock().push_back(json!({ "type": "conversation.item.done" }).to_string());
@@ -770,7 +850,7 @@ mod tests {
         let audio = FakeAudio::seconds(0.5);
         let (tx, rx) = mpsc::channel();
         let sent = Arc::clone(&socket.sent);
-        let handle = std::thread::spawn(move || stream(&mut socket, &audio, &context(), &rx, Instant::now()));
+        let handle = std::thread::spawn(move || stream(&mut socket, &audio, &context(), None, &rx, Instant::now()));
         // Let it configure and stream, then cancel.
         let deadline = Instant::now() + Duration::from_secs(2);
         while !sent.lock().iter().any(|e| e["type"] == "input_audio_buffer.append") {
@@ -846,7 +926,7 @@ mod tests {
         let audio = FakeAudio::seconds(1.0);
         let (tx, rx) = mpsc::channel();
         tx.send(Command::Finish).unwrap();
-        let result = stream(&mut socket, &audio, &context(), &rx, Instant::now()).unwrap();
+        let result = stream(&mut socket, &audio, &context(), None, &rx, Instant::now()).unwrap();
         socket.close();
 
         let (auth, appended) = server.join().unwrap();

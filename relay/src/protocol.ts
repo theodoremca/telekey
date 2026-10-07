@@ -7,7 +7,8 @@
  * Pure, so they are tested without a network: test/protocol.test.ts.
  *
  * Three rules keep TeleKey's key from being spent on anything but a paid
- * dictation:
+ * dictation (the vocabulary, languages, delay and a capped screen-context
+ * prompt are the only settings the app chooses):
  *   - the session settings are rebuilt here, so the model is always
  *     gpt-live-transcribe whatever the client asked for;
  *   - partial text (`…transcription.delta`) is never forwarded, so the only
@@ -26,6 +27,8 @@ const DELAYS = new Set(["minimal", "low", "medium", "high", "xhigh"]);
 const MAX_KEYWORDS = 100;
 const MAX_KEYWORD_LENGTH = 120;
 const MAX_LANGUAGES = 10;
+/** Screen context ("Use what's on screen" in the app); the server caps it alike. */
+export const MAX_PROMPT_CHARS = 1500;
 const LANGUAGE = /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/;
 
 export type ClientAction =
@@ -107,6 +110,12 @@ export function sessionUpdate(event: Json): Json {
 
   if (typeof asked.delay === "string" && DELAYS.has(asked.delay)) {
     transcription.delay = asked.delay;
+  }
+
+  // Text from the user's screen, to spell names right. Forwarded, capped,
+  // never stored or logged.
+  if (typeof asked.prompt === "string" && asked.prompt.trim()) {
+    transcription.prompt = Array.from(asked.prompt.trim()).slice(0, MAX_PROMPT_CHARS).join("");
   }
 
   return {

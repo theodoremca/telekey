@@ -33,23 +33,54 @@ impl HostedTranscriber {
     }
 }
 
+/// What the context headers may add up to, in bytes. Node refuses a request
+/// whose headers pass 16 KiB in all, and the sign-in token takes a good part
+/// of that; past this, the screen context is left off rather than the whole
+/// dictation failing.
+const CONTEXT_HEADER_BUDGET: usize = 6 * 1024;
+
+/// The screen context as a header value: base64 of the UTF-8, so nothing
+/// outside ASCII has to survive the trip.
+fn prompt_header(context: &TranscriptionContext, others: usize) -> Option<String> {
+    use base64::Engine as _;
+    let prompt = context.prompt.as_deref().filter(|p| !p.is_empty())?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(prompt);
+    if others + encoded.len() > CONTEXT_HEADER_BUDGET {
+        tracing::debug!(bytes = encoded.len(), "screen context left off: headers too large");
+        return None;
+    }
+    Some(encoded)
+}
+
 impl Transcriber for HostedTranscriber {
     fn transcribe(&self, clip: &Clip, context: &TranscriptionContext) -> Result<Transcription> {
         let wav = encode_wav_16bit_mono(&clip.samples, TARGET_SAMPLE_RATE);
         let token = session::fresh_id_token()?;
         let keywords = serde_json::to_string(&context.keywords).unwrap_or_else(|_| "[]".into());
         let languages = serde_json::to_string(&context.languages).unwrap_or_else(|_| "[]".into());
+        let prompt = prompt_header(context, keywords.len() + languages.len());
 
-        let response = self
-            .client
-            .post(&self.endpoint)
-            .bearer_auth(token)
-            .header("content-type", "audio/wav")
-            .header("x-telekey-keywords", keywords)
-            .header("x-telekey-languages", languages)
-            .body(wav)
-            .send()
-            .context("could not reach TeleKey")?;
+        let send = |prompt: Option<&str>| {
+            let mut request = self
+                .client
+                .post(&self.endpoint)
+                .bearer_auth(&token)
+                .header("content-type", "audio/wav")
+                .header("x-telekey-keywords", keywords.as_str())
+                .header("x-telekey-languages", languages.as_str());
+            if let Some(prompt) = prompt {
+                request = request.header("x-telekey-prompt", prompt);
+            }
+            request.body(wav.clone()).send().context("could not reach TeleKey")
+        };
+
+        let mut response = send(prompt.as_deref())?;
+        // Headers too large after all: the screen context is a nicety, the
+        // dictation is not. Once more without it.
+        if response.status().as_u16() == 431 && prompt.is_some() {
+            tracing::warn!("TeleKey refused the headers; retrying without the screen context");
+            response = send(None)?;
+        }
 
         let status = response.status();
         let body = response.text().unwrap_or_default();
@@ -217,6 +248,30 @@ pub fn create_checkout(pack_id: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn with_prompt(prompt: &str) -> TranscriptionContext {
+        TranscriptionContext {
+            keywords: vec![],
+            languages: vec![],
+            prompt: Some(prompt.into()),
+        }
+    }
+
+    #[test]
+    fn the_prompt_header_is_base64_of_the_utf8() {
+        use base64::Engine as _;
+        let header = prompt_header(&with_prompt("Dictating into Mail — Zoë"), 0).unwrap();
+        assert!(header.is_ascii());
+        let decoded = base64::engine::general_purpose::STANDARD.decode(header).unwrap();
+        assert_eq!(String::from_utf8(decoded).unwrap(), "Dictating into Mail — Zoë");
+    }
+
+    #[test]
+    fn the_prompt_is_left_off_when_the_headers_would_be_too_large() {
+        assert!(prompt_header(&with_prompt("short"), CONTEXT_HEADER_BUDGET).is_none());
+        assert!(prompt_header(&with_prompt("short"), 0).is_some());
+        assert!(prompt_header(&TranscriptionContext::default(), 0).is_none());
+    }
 
     #[test]
     fn hosted_error_maps_out_of_credits() {

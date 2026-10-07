@@ -189,7 +189,7 @@ pub fn instant_check(path: Option<&str>, compare: bool) -> Result<()> {
     println!("Instant check: {seconds:.1} s of audio via {}", route.describe());
     let paced = Paced::new(samples.clone(), rate);
     let started = Instant::now();
-    let session = crate::live::LiveSession::start(route, paced, context.clone());
+    let session = crate::live::LiveSession::start(route, paced, context.clone(), None);
     // Released in real time, as a microphone would; the key "comes up" when
     // the last sample has been.
     std::thread::sleep(Duration::from_secs_f64(seconds) + Duration::from_millis(40));

@@ -110,6 +110,22 @@ pub struct Settings {
     /// Fixes applied to the finished text, last, just before pasting.
     /// Empty by default, which is the same as off.
     pub replacements: Vec<Replacement>,
+    /// "Use what's on screen": send the app, the window title and the text
+    /// around the cursor with the audio, so names on screen are spelled
+    /// right. Off by default: it sends on-screen text to OpenAI. See
+    /// `context.rs` for what is never read.
+    #[serde(alias = "screen_context")]
+    pub screen_context: bool,
+    /// "Turn spoken lists into bullets": dictations that sound like a list go
+    /// through the formatting model once. Off by default: it adds a second or
+    /// two, and a cent on credits, to those dictations. See `smart.rs`.
+    #[serde(alias = "smart_lists")]
+    pub smart_lists: bool,
+    /// "Fix self-corrections": "my car, sorry, my bike" becomes "my bike".
+    /// Same cost and the same single model call as lists, only when a
+    /// correction is heard.
+    #[serde(alias = "fix_corrections")]
+    pub fix_corrections: bool,
     /// Instant: stream the audio while the user speaks, so the text is ready
     /// as they let go, at OpenAI's live rate (about four times Standard).
     ///
@@ -144,6 +160,9 @@ impl Default for Settings {
             show_pill: pill_supported(),
             instant: false,
             replacements: Vec::new(),
+            screen_context: false,
+            smart_lists: false,
+            fix_corrections: false,
         }
     }
 }
@@ -473,6 +492,9 @@ mod tests {
                 said: "cloud code".into(),
                 write: "Claude Code".into(),
             }],
+            screen_context: true,
+            smart_lists: true,
+            fix_corrections: true,
         };
 
         original.save(dir.path()).unwrap();
@@ -502,6 +524,9 @@ mod tests {
             "ratesUpdated",
             "showPill",
             "instant",
+            "screenContext",
+            "smartLists",
+            "fixCorrections",
         ] {
             assert!(
                 keys.iter().any(|k| k.as_str() == expected),
@@ -562,8 +587,12 @@ mod tests {
         assert!(!settings.polish_enabled);
         // A file from before the pill existed gets it where it works.
         assert_eq!(settings.show_pill, pill_supported());
-        // Instant costs more, so nobody is moved onto it by an upgrade.
+        // Instant costs more, so nobody is moved onto it by an upgrade; screen
+        // context sends on-screen text, so nobody is either.
         assert!(!settings.instant);
+        assert!(!settings.screen_context);
+        assert!(!settings.smart_lists);
+        assert!(!settings.fix_corrections);
     }
 
     #[test]

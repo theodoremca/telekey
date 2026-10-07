@@ -10,6 +10,12 @@ pub struct TargetApp {
     pub bundle_id: Option<String>,
     /// e.g. `Slack`. For display and logging only.
     pub name: Option<String>,
+    /// The process, for reading where the cursor is (`context.rs`).
+    pub pid: Option<i32>,
+    /// The focused window's title, where reading it costs nothing (Windows
+    /// has the window in hand already). Only ever sent when the user has
+    /// switched on "Use what's on screen".
+    pub title: Option<String>,
 }
 
 impl TargetApp {
@@ -32,6 +38,8 @@ pub fn frontmost_app() -> TargetApp {
         Some(app) => TargetApp {
             bundle_id: app.bundleIdentifier().map(|id| id.to_string()),
             name: app.localizedName().map(|name| name.to_string()),
+            pid: Some(app.processIdentifier()),
+            title: None,
         },
         None => TargetApp::default(),
     }
@@ -51,7 +59,7 @@ pub fn frontmost_app() -> TargetApp {
         OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetWindowThreadProcessId,
+        GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
     };
 
     unsafe {
@@ -87,10 +95,20 @@ pub fn frontmost_app() -> TargetApp {
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned());
 
+        // The window's own title bar text: no message is sent to the other
+        // process for a top-level window, so this cannot hang.
+        let mut title = [0u16; 512];
+        let copied = GetWindowTextW(window, title.as_mut_ptr(), title.len() as i32);
+        let title = (copied > 0)
+            .then(|| String::from_utf16_lossy(&title[..copied as usize]))
+            .filter(|title| !title.trim().is_empty());
+
         TargetApp {
             // No bundle identifier on Windows; the name is the stable key.
             bundle_id: None,
             name,
+            pid: i32::try_from(pid).ok(),
+            title,
         }
     }
 }
@@ -118,6 +136,7 @@ pub fn running_apps() -> Vec<TargetApp> {
         .map(|app| TargetApp {
             bundle_id: app.bundleIdentifier().map(|id| id.to_string()),
             name: app.localizedName().map(|name| name.to_string()),
+            ..TargetApp::default()
         })
         .filter(|app| app.name.is_some())
         .collect();
@@ -154,6 +173,7 @@ mod tests {
         let app = TargetApp {
             bundle_id: Some("com.tinyspeck.slackmacgap".into()),
             name: Some("Slack".into()),
+            ..TargetApp::default()
         };
         assert_eq!(app.profile_key(), "com.tinyspeck.slackmacgap");
     }
@@ -163,6 +183,7 @@ mod tests {
         let app = TargetApp {
             bundle_id: None,
             name: Some("Some Helper".into()),
+            ..TargetApp::default()
         };
         assert_eq!(app.profile_key(), "Some Helper");
     }
