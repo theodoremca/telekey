@@ -116,6 +116,7 @@ Everything below is optional — TeleKey works with none of it configured.
 | | |
 |---|---|
 | **Shortcut** | Rebindable. Click **Change** and press the combination you want. |
+| **Instant** | Off by default, in Settings › Speed. Streams your voice while you speak, so the text lands about a second after you let go instead of 3–4. Costs about four times as much: 5.1¢ a minute on credits, or OpenAI's $0.017 a minute with your own key. If it cannot connect, that dictation quietly uses Standard. |
 | **Dictation pill** | On by default on macOS and Windows; switch it off in Settings › Shortcut and only the shortcut remains. Off on Linux for now, where clicking it would take focus from the app you are dictating into. |
 | **Vocabulary** | Names and jargon — "Kubernetes", your product names — sent to the model as recognition hints so they come back spelled right. |
 | **Formatting** | Per-app styles: literal in a terminal (no sentence capital, no full stop), terse in Slack, formal in Mail. Literal runs on your Mac; the others cost one extra request. |
@@ -128,7 +129,11 @@ Everything below is optional — TeleKey works with none of it configured.
 
 - **Audio never touches disk.** It is captured to memory, uploaded for
   transcription, and the buffer is zeroed — whether or not the request worked.
-- **Audio goes to OpenAI.** That is where transcription happens. Nowhere else.
+- **Audio goes to OpenAI.** That is where transcription happens. With your
+  own key it goes there directly; with credits it passes through TeleKey's
+  server on the way (the Cloud Function, or the relay for Instant), which
+  forwards it and stores none of it. Instant streams it while you speak
+  instead of after.
 - **Transcripts stay local.** History is a file on your Mac, owner-readable
   only. Turn it off in Settings and existing entries are deleted immediately.
 - **Your API key** lives in the Keychain, and is never logged or printed.
@@ -246,6 +251,7 @@ hold key → trigger → capture audio → [release] → WAV in memory
 | `trigger.rs` | Global shortcut, press and release |
 | `audio.rs` | Capture → 16 kHz mono → WAV, all in memory |
 | `transcribe.rs` | `gpt-transcribe` upload, with vocabulary as `keywords[]` |
+| `live.rs` | Instant: streams to `gpt-live-transcribe` while you speak, through `relay/` on credits |
 | `polish.rs` | Per-app formatting; local rules where a model is not needed |
 | `inject.rs` | Clipboard save → ⌘V → restore |
 | `panel.rs` | Non-activating `NSPanel` so the overlay never steals focus; which screen and where |

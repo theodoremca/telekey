@@ -128,6 +128,14 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
+Before the first release with Instant, deploy the production relay, or Instant
+on credits will fall back to Standard on every dictation (own-key Instant does
+not need it):
+
+```bash
+./relay/deploy.sh production    # telekey-relay-production; the app already knows its address
+```
+
 A tag that does not match the version stops the run before anything is built.
 To rehearse without publishing, run the workflow by hand (Actions › release ›
 Run workflow): it builds everything and attaches the installers to the run.
@@ -236,7 +244,7 @@ The API key is read in this order:
    `~/Library/Application Support/telekey/.env`
 3. the Keychain
 
-Hosted URLs (`TELEKEY_API_BASE`, `TELEKEY_SITE_URL`) come from `.env` plus
+Hosted URLs (`TELEKEY_API_BASE`, `TELEKEY_SITE_URL`, `TELEKEY_RELAY_URL`) come from `.env` plus
 `.env.staging` or `.env.production`, chosen by `TELEKEY_STAGE` in `.env`
 (`staging` is the daily default). `$TELEKEY_ENV_FILE` replaces that stage
 overlay. Stripe never belongs in these files.

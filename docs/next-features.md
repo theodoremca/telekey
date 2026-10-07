@@ -1,8 +1,9 @@
 # Next features — plan
 
-**Status:** planned, not started. Instant mode written 2026-10-04, the
-dictation pill and the multi-monitor fix 2026-10-07. Prices and API facts were
-checked against OpenAI's docs on 2026-10-04; re-check them before building.
+**Status:** built, 2026-10-07. The plan below is kept as written; what was
+decided and measured while building it is in [Built](#built) at the end.
+Instant mode was planned 2026-10-04, the dictation pill and the
+multi-monitor fix 2026-10-07.
 
 Three pieces of work, to be built together once planning is done:
 
@@ -327,7 +328,7 @@ built, ROADMAP status.
 
 About 7–9 days for all three.
 
-## Open questions
+## Open questions (answered at build time; see Built)
 
 For Theodore:
 
@@ -353,6 +354,59 @@ For the Instant spike (OpenAI's docs did not answer these on 2026-10-04):
   corrections arrive.
 - The minimum audio length for a commit, and any maximum session length.
 - Real latency numbers; OpenAI publishes none.
+
+## Built
+
+### Decisions
+
+The open questions were settled with the proposed answers, to be revisited:
+
+- **Pill name:** "Show the dictation pill" (Settings › Shortcut).
+- **Clicking the pill:** click to start, click Stop (or press and release the
+  shortcut) to paste. No press-and-hold on the microphone.
+- **Instant markup:** 3×, like Standard: 5.1¢ a minute, $3.06 an hour.
+- **Instant name:** "Instant", under a new Settings › Speed section.
+- **Live words in the capsule:** later. The relay does not forward partial text
+  at all (see below), so adding them means relaying deltas only after a session
+  is known to be paid for.
+- **A failed Instant session:** costs nothing; the Standard fallback is charged
+  at the Standard rate.
+- **Instant is charged after the text is delivered,** not before. Waiting for
+  the Firestore transaction first cost 330–560 ms, a third of Instant's whole
+  advantage. A dictation that costs more than the balance takes it below zero;
+  the next purchase pays it off, and nothing can be dictated until then.
+
+### The spike's answers (2026-10-07)
+
+- URL: `wss://api.openai.com/v1/realtime?intent=transcription`, `Authorization:
+  Bearer`, no beta header. Naming a model in the URL is refused.
+- `session.update` as planned, with `delay: "low"`. `usage` on `completed` is
+  `{"type":"duration","seconds":12}` for an 11.9 s clip: whole seconds.
+- Deltas are incremental; only `completed.transcript` is pasted.
+- OpenAI sends `session.created` the moment the socket opens. The relay holds
+  everything OpenAI says from that moment, or the first event is lost before
+  the app's side is connected (this broke the relay's first test run).
+
+### Measured, 12 s clip
+
+| | Text after letting go |
+|---|---|
+| Standard, `gpt-transcribe` direct | 3.2 s |
+| Instant direct, `delay: low` | 0.95 s |
+| Instant direct, `delay: minimal` | 0.83 s, but heard "Hi" as "High" |
+| Instant through the relay, charging first | 1.23–1.46 s |
+| Instant through the relay, charging after | 0.71–1.08 s |
+
+Connecting takes ~2–3 s, spent while the user speaks; audio captured meanwhile
+waits in the tap and goes as soon as the session is ready.
+
+### Not done
+
+- The production relay is not deployed: `./relay/deploy.sh production` before
+  the first release with Instant (RELEASING.md).
+- The pill on Linux, which needs a non-activating overlay there.
+- Real checks still owed: click-speak-stop pasting into another app, and
+  hold-speak-release on each of several monitors, on macOS and Windows.
 
 ## Sources
 

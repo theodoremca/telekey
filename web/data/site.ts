@@ -72,7 +72,7 @@ export const HERO = {
     tooShort: "Hold it down while you speak",
     /** Said on the page so nobody wonders whether the tab is listening. */
     disclosure:
-      "A demo: this page never touches your microphone. The real thing takes three to four seconds.",
+      "A demo: this page never touches your microphone. The real thing takes three to four seconds, or about one with Instant.",
     lines: [
       "Running ten minutes late. Start without me and I'll catch up from the notes.",
       "Move the launch to Thursday and tell the team.",
@@ -105,12 +105,14 @@ export const COMPARE = {
 
 /**
  * Four figures between the hero and the walkthrough. Each traces to a source:
- * the paste time is the one quoted in HOW; the rate is PRICING's; audio on
- * disk is README's privacy section and the zeroed buffer in audio.rs; the
- * licence is LICENSE.
+ * the paste time is the one quoted in HOW, and Instant's is measured in
+ * docs/next-features.md (0.7–1.1 s through the relay); the rate is PRICING's;
+ * audio on disk is README's privacy section and the zeroed buffer in
+ * audio.rs; the licence is LICENSE.
  */
 export const NUMBERS = [
-  { value: "3–4 s", label: "from letting go to pasted text" },
+  // A no-break space keeps "1 s" on one line.
+  { value: "3–4 s", label: "to pasted text, or ~1\u00a0s with Instant" },
   { value: "1.4¢", label: "a minute of speech, on credits" },
   { value: "0 bytes", label: "of audio ever written to disk" },
   { value: "MIT", label: "licensed; the code is public", href: REPO },
@@ -168,9 +170,16 @@ export const FAQ = {
       a: "Any the model handles. Set the ones you speak in Settings so it knows what to expect, and add names and jargon to Vocabulary so they come back spelled right.",
     },
     {
+      id: "instant",
+      q: "What is Instant?",
+      // live.rs and relay/; the price is LIVE_TRANSCRIBE_PER_MINUTE (0.017)
+      // x MARKUP (3) in functions/src/pricing.ts.
+      a: "A setting that streams your voice while you speak, so the text lands about a second after you let go instead of three or four. It costs about four times as much: 5.1¢ a minute on credits, or OpenAI's $0.017 a minute with your own key. It is off until you turn it on, and if it cannot connect, that dictation uses the normal way.",
+    },
+    {
       id: "hold",
       q: "Why hold a key instead of toggling?",
-      a: "So you always know when it is listening. The capsule shows a live trace while you hold, and letting go is the only way to send. Press Esc and nothing is pasted.",
+      a: "So you always know when it is listening. The capsule shows a live trace while you hold, and letting go is the only way to send. Press Esc and nothing is pasted. If your hand is on the mouse, click the pill at the bottom of the screen instead, and click Stop when you are done.",
     },
     {
       id: "windows",
@@ -188,7 +197,7 @@ export const HOW = {
       id: "hold",
       state: "recording",
       name: "Hold",
-      body: "Hold ⌃⌥Space, or just fn. A capsule appears with a live trace of what the microphone is actually hearing, so you can see at a glance that it caught you.",
+      body: "Hold ⌃⌥Space, or just fn, or click the pill at the bottom of the screen. A capsule appears with a live trace of what the microphone is actually hearing, on whichever screen you are working.",
     },
     {
       id: "speak",
@@ -200,7 +209,7 @@ export const HOW = {
       id: "land",
       state: "inserted",
       name: "Let go",
-      body: "Release, and the text lands at your cursor three to four seconds later: Mail, Slack, a browser, a terminal. Press Esc at any point and nothing is pasted.",
+      body: "Release, and the text lands at your cursor three to four seconds later, or about one with Instant on: Mail, Slack, a browser, a terminal. Press Esc at any point and nothing is pasted.",
     },
   ],
 } as const;
@@ -252,7 +261,8 @@ export const PRIVACY = {
       id: "openai",
       name: "Audio goes to OpenAI, and nowhere else",
       // functions/src/index.ts: the body is an in-memory buffer handed straight
-      // to the transcription request; only usage units are written.
+      // to the transcription request; only usage units are written. The
+      // Instant relay (relay/src/relay.ts) forwards audio and stores none.
       body: "That is where transcription happens. With TeleKey credits it passes through our server on the way, in memory only.",
     },
     {
@@ -312,6 +322,8 @@ export const PRICING = {
         "No OpenAI account or key",
         "Sign in with Google or an email link",
         "Packs through Stripe; balance shows in the app",
+        // LIVE_TRANSCRIBE_PER_MINUTE (0.017) x MARKUP (3) = 5.1¢ a minute.
+        "Instant, when you want the text on release: about 5¢ a minute",
       ],
       action: BUY_CREDITS,
     },

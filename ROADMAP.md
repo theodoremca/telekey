@@ -253,15 +253,22 @@ unrestricted. Hosted mode is the paid convenience, not a feature gate.
 
 ---
 
-## Phase 7 — Pill, multi-monitor, Instant — **planned, not started**
+## Phase 7 — Pill, multi-monitor, Instant — **built (October 2026)**
 
-Three pieces, to be built together: the capsule follows the mouse to whichever
-monitor you are on (a bug today: it can appear on the other screen); a small
-dictation pill at the bottom of the screen that shows a microphone on hover, so
-you can click to dictate without the shortcut; and an opt-in Instant mode that
-streams audio while you speak, so text appears almost as you let go, at about 4×
-the price per minute. Full plan, prices and open questions:
-[docs/next-features.md](docs/next-features.md). About 7–9 days.
+- **The capsule follows the pointer** to whichever screen it is on, placed in
+  that screen's work area. Tauri's monitor numbers mix units on a Mac with a
+  Retina screen beside a 1× one; `panel.rs` does the geometry in points.
+- **The dictation pill** rests at the bottom of the pointer's screen; point at it
+  for "Click to dictate", click, speak, click Stop. On by default on macOS and
+  Windows, off on Linux, whose overlay takes focus when clicked.
+- **Instant** streams audio to `gpt-live-transcribe` while you speak: text 0.7–1.1 s
+  after release, against 3–4 s, at about 4× the price. Off by default; falls back
+  to Standard on any failure. Credits go through `relay/` on Cloud Run.
+
+Still to do: deploy the production relay before the first release with
+Instant; a real two-monitor and click-to-dictate check on Windows; a way to
+make the Linux overlay non-activating so the pill can ship there. Plan,
+decisions and measurements: [docs/next-features.md](docs/next-features.md).
 
 ---
 

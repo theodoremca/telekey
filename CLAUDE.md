@@ -155,6 +155,22 @@ before handing a session to the app, so a non-tester is told on the login
 page. None of the refusal messages may contain "credit": the desktop overlay
 opens the Buy credits window for failures that do.
 
+### Instant relay (`relay/`)
+
+```bash
+cd relay && npm test                 # bundles, then node --test against a fake OpenAI
+./relay/deploy.sh staging            # or production; Cloud Run, us-east1
+gcloud logging read 'resource.labels.service_name="telekey-relay-staging"' --project telekey-app --limit 20
+```
+
+Instant on credits streams to this service, which forwards to OpenAI's live
+transcription with TeleKey's key and charges per transcript. It bundles the
+shared billing code from `functions/src` (`pricing.ts`, `ledger.ts`,
+`auth.ts`, `testers.ts`), so a change there needs both `functions:staging`
+and the relay redeployed. `deploy.sh` takes `OPENAI_API_KEY` and
+`STAGING_ALLOWED_EMAILS` from `functions/.env`. The gcloud CLI's default
+project on this Mac is another one; the script passes `--project telekey-app`.
+
 ### Tests — run all three before claiming anything works
 
 ```bash
@@ -171,6 +187,7 @@ it compiles; it does not prove it works.
 
 ```bash
 /Applications/TeleKey.app/Contents/MacOS/TeleKey check          # key, permissions, signature, mic
+/Applications/TeleKey.app/Contents/MacOS/TeleKey instant-check clip.wav --compare   # time Instant (and Standard) on a recording
 /Applications/TeleKey.app/Contents/MacOS/TeleKey set-api-key    # reads from stdin → Keychain
 /Applications/TeleKey.app/Contents/MacOS/TeleKey clear-api-key
 ```
@@ -220,6 +237,7 @@ Desktop loads **`.env` then `.env.staging` or `.env.production`**, chosen by `TE
 | `TELEKEY_FIREBASE_API_KEY` | desktop `.env` | Firebase **web** API key, for ID-token refresh |
 | `TELEKEY_API_BASE` | `.env.staging` / `.env.production` | Functions origin, e.g. `…cloudfunctions.net/staging` |
 | `TELEKEY_SITE_URL` | `.env.staging` / `.env.production` | Live website origin for Sign in (`https://telekey-staging.vercel.app` / `https://telekey.vercel.app`) |
+| `TELEKEY_RELAY_URL` | `.env.staging` / `.env.production` | Instant relay, `wss://…/v1/realtime?intent=transcription`. Optional: each stage's Cloud Run address is built in (`session.rs`) |
 | `NEXT_PUBLIC_TELEKEY_API_BASE` | `web/.env.development` or `web/.env.production` | Same Functions origin for the website |
 | Functions secrets | `functions/.env` | `OPENAI_API_KEY`, `STRIPE_SECRET_KEY_STAGING`, `STRIPE_SECRET_KEY_PRODUCTION`, `STRIPE_WEBHOOK_SECRET_STAGING`, `STRIPE_WEBHOOK_SECRET_PRODUCTION`. Gitignored; `firebase deploy` reads it from disk. Copy `functions/.env.example`. |
 | `TELEKEY_SITE_URL_STAGING` / `_PRODUCTION` | `functions/.env` | Checkout return URLs |
@@ -445,6 +463,27 @@ the first click is spent on the window, not the button. Linux has no pill
 (`Platform.pill`): its overlay is an ordinary window, so a click takes focus
 and the paste lands in the wrong place.
 
+**24. Instant on credits falls back to Standard every time.**
+First check the relay is deployed for that stage (`relay/deploy.sh`). Then the
+ways it broke while being built. OpenAI sends `session.created` the instant
+its socket opens, before the relay has accepted the app's side, so the relay
+holds every upstream message from the first moment (`openUpstream`); without
+that the first event vanished and every session timed out. Cloud Run answers
+any path ending in `z` itself, so the health check is `/health`, not
+`/healthz`. A refused handshake reaches the app with only the part of the
+error body that arrived with the headers, so `live.rs` `refusal` words each
+status on its own too. The fallback note in the capsule is the symptom; the
+reason is in the log as `Instant failed, using Standard instead`.
+
+**25. An Instant dictation is pasted but never charged.**
+The relay hands over the transcript first and charges after, because waiting
+on Firestore cost a third of a second. It then sends `telekey.charged` and
+closes. The app must keep the socket open until then (`await_charge`, on the
+session's own thread, after the text has gone to the pipeline): Cloud Run
+throttles a service's CPU once its last connection closes, which can stall the
+write. The charge cannot refuse, so a balance can go below zero; every session
+first requires a positive balance, and the next purchase pays the debt.
+
 ---
 
 ## Architecture in one screen
@@ -456,6 +495,7 @@ escape.rs   (Esc)    ┴─► mpsc ─► pipeline.rs (worker thread)
                                     │  frontmost.rs   which app to paste into
                                     │  audio.rs       cpal → 16 kHz mono → WAV in memory
                                     │  transcribe.rs  Transcriber trait → OpenAI
+                                    │  live.rs        Instant: stream while speaking (relay/ for credits)
                                     │  hosted.rs      same traits, via Cloud Functions
                                     │  polish.rs      Polisher trait, optional
                                     │  inject.rs      clipboard save → ⌘V → restore
