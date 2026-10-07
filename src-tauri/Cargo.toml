@@ -37,6 +37,15 @@ reqwest = { version = "0.13", default-features = false, features = [
   "http2",
 ] }
 
+# Instant mode: a WebSocket to OpenAI's live transcription, or to TeleKey's
+# relay. Blocking, on its own thread per dictation, like the rest of the
+# pipeline; TLS through the same rustls (and aws-lc-rs) reqwest already uses.
+tungstenite = { version = "0.30", default-features = false, features = [
+  "handshake",
+  "rustls-tls-native-roots",
+] }
+base64 = "0.22"
+
 # text injection
 enigo = "0.6"
 arboard = "3.6"

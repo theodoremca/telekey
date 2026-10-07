@@ -94,6 +94,13 @@ pub struct Settings {
     /// of the user's app. See [`pill_supported`].
     #[serde(alias = "show_pill")]
     pub show_pill: bool,
+    /// Instant: stream the audio while the user speaks, so the text is ready
+    /// as they let go, at OpenAI's live rate (about four times Standard).
+    ///
+    /// Off by default, because it costs more. Whatever goes wrong with it, the
+    /// dictation falls back to Standard with the audio already recorded, so
+    /// turning it on can never lose one. See `live.rs`.
+    pub instant: bool,
 }
 
 /// Whether the dictation pill can work on this OS. On Linux the overlay is an
@@ -119,6 +126,7 @@ impl Default for Settings {
             mute_while_recording: false,
             input_device: None,
             show_pill: pill_supported(),
+            instant: false,
         }
     }
 }
@@ -443,6 +451,7 @@ mod tests {
             mute_while_recording: true,
             input_device: Some("coreaudio:BuiltInMicrophoneDevice".to_string()),
             show_pill: false,
+            instant: true,
         };
 
         original.save(dir.path()).unwrap();
@@ -471,6 +480,7 @@ mod tests {
             "polishEnabled",
             "ratesUpdated",
             "showPill",
+            "instant",
         ] {
             assert!(
                 keys.iter().any(|k| k.as_str() == expected),
@@ -531,6 +541,8 @@ mod tests {
         assert!(!settings.polish_enabled);
         // A file from before the pill existed gets it where it works.
         assert_eq!(settings.show_pill, pill_supported());
+        // Instant costs more, so nobody is moved onto it by an upgrade.
+        assert!(!settings.instant);
     }
 
     #[test]

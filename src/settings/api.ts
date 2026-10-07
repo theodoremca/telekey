@@ -19,6 +19,8 @@ export interface Settings {
   inputDevice: string | null;
   /** Keep the dictation pill at the bottom of the screen between dictations. */
   showPill: boolean;
+  /** Stream while speaking, so text is ready on release, at the live rate. */
+  instant: boolean;
 }
 
 /** A microphone, as cpal names it. Mirrors `InputDevice` in input_device.rs. */
@@ -104,15 +106,21 @@ export interface HistoryEntry {
 /** Billing units as reported by OpenAI, not measured locally. */
 export interface Units {
   dictations: number;
+  /** Standard: seconds uploaded to gpt-transcribe. */
   transcribeSeconds: number;
   transcribeTokens: number;
+  /** Instant: seconds streamed to gpt-live-transcribe, priced apart. */
+  liveTranscribeSeconds: number;
   polishInputTokens: number;
   polishCachedTokens: number;
   polishOutputTokens: number;
 }
 
 export interface Cost {
+  /** Standard and Instant together. */
   transcription: number;
+  /** The Instant part of `transcription`. */
+  instant: number;
   formatting: number;
   total: number;
 }
@@ -133,6 +141,8 @@ export type Period = "today" | "month" | "lifetime";
 /** What the user pays per unit. Editable, because published prices change. */
 export interface Rates {
   transcribePerMinute: number;
+  /** Instant, gpt-live-transcribe. */
+  instantPerMinute: number;
   polishInputPerMillion: number;
   polishOutputPerMillion: number;
 }
@@ -240,6 +250,7 @@ const previewState: {
     historyEnabled: true,
     rates: {
       transcribePerMinute: 0.0045,
+      instantPerMinute: 0.017,
       polishInputPerMillion: 0.2,
       polishOutputPerMillion: 1.2,
     },
@@ -248,6 +259,7 @@ const previewState: {
     muteWhileRecording: false,
     inputDevice: null,
     showPill: true,
+    instant: false,
     profiles: [
       { app: "com.tinyspeck.slackmacgap", label: "Slack", style: { kind: "terse" } },
       { app: "com.apple.Terminal", label: "Terminal", style: { kind: "literal" } },
@@ -455,19 +467,21 @@ const preview = {
       dictations: 11 * scale,
       transcribeSeconds: 214 * scale,
       transcribeTokens: 0,
+      liveTranscribeSeconds: 48 * scale,
       polishInputTokens: 1900 * scale,
       polishCachedTokens: 420 * scale,
       polishOutputTokens: 1400 * scale,
     };
-    const transcription = (units.transcribeSeconds / 60) * 0.0045;
+    const instant = (units.liveTranscribeSeconds / 60) * 0.017;
+    const transcription = (units.transcribeSeconds / 60) * 0.0045 + instant;
     const formatting =
       ((units.polishInputTokens - units.polishCachedTokens) / 1e6) * 0.2 +
       (units.polishCachedTokens / 1e6) * 0.02 +
       (units.polishOutputTokens / 1e6) * 1.2;
     return {
       units,
-      minutes: units.transcribeSeconds / 60,
-      cost: { transcription, formatting, total: transcription + formatting },
+      minutes: (units.transcribeSeconds + units.liveTranscribeSeconds) / 60,
+      cost: { transcription, instant, formatting, total: transcription + formatting },
     };
   },
   usageDaily: async (days: number): Promise<DailyPoint[]> =>
@@ -484,6 +498,7 @@ const preview = {
           dictations: Math.round(seconds / 20),
           transcribeSeconds: seconds,
           transcribeTokens: 0,
+          liveTranscribeSeconds: 0,
           polishInputTokens: 0,
           polishCachedTokens: 0,
           polishOutputTokens: 0,

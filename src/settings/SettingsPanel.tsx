@@ -169,6 +169,22 @@ export function SettingsPanel({
       </Section>
 
       <Section
+        title="Speed"
+        note="Instant streams your voice while you speak, so the text lands as you let go instead of 3–4 seconds later. It costs about four times as much: 5.1¢ a minute on credits, or OpenAI's $0.017 a minute with your own key."
+      >
+        <Toggle
+          label="Instant"
+          hint={
+            settings.instant
+              ? "If it cannot connect, that dictation uses Standard. Nothing is lost."
+              : "Standard: the recording is sent when you let go."
+          }
+          checked={settings.instant}
+          onChange={(instant) => void onSave({ ...settings, instant })}
+        />
+      </Section>
+
+      <Section
         title="Vocabulary"
         note="Names and terms the model should expect to hear. Sent with every dictation."
       >

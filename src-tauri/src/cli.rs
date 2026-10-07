@@ -153,3 +153,168 @@ fn on_off(value: bool) -> &'static str {
         "off"
     }
 }
+
+/// Stream a recording through Instant as if it were being spoken, and say how
+/// long the text took after the end of it.
+///
+/// Uses the same route a dictation would: the signed-in account through
+/// TeleKey's relay (which charges it, as a dictation would), or the stored
+/// OpenAI key. The audio is released at the pace it was recorded, so the
+/// timing is what a user would see. `--compare` also uploads it the Standard
+/// way and times that.
+pub fn instant_check(path: Option<&str>, compare: bool) -> Result<()> {
+    use std::time::{Duration, Instant};
+
+    let path = path.context("usage: telekey instant-check <recording.wav> [--compare]")?;
+    crate::session::hydrate_env();
+
+    let (samples, rate) = read_wav(std::path::Path::new(path))?;
+    let seconds = samples.len() as f64 / f64::from(rate);
+    let settings = Settings::load(&settings::config_dir()?).unwrap_or_default();
+    let context = crate::transcribe::TranscriptionContext {
+        keywords: settings.keywords(),
+        languages: settings.languages.clone(),
+        prompt: None,
+    };
+
+    let route = if crate::session::is_signed_in() {
+        let url = crate::session::relay_url().context("no Instant relay is configured")?;
+        crate::live::Route::Relay { url }
+    } else if let Some(key) = settings::load_api_key()? {
+        crate::live::Route::OpenAi { key }
+    } else {
+        bail!("sign in or add an OpenAI key first");
+    };
+
+    println!("Instant check: {seconds:.1} s of audio via {}", route.describe());
+    let paced = Paced::new(samples.clone(), rate);
+    let started = Instant::now();
+    let session = crate::live::LiveSession::start(route, paced, context.clone());
+    // Released in real time, as a microphone would; the key "comes up" when
+    // the last sample has been.
+    std::thread::sleep(Duration::from_secs_f64(seconds) + Duration::from_millis(40));
+    let released = Instant::now();
+    let result = session.finish();
+    let after = released.elapsed();
+    match result {
+        Ok(transcription) => {
+            println!("  text after release   {:.2} s", after.as_secs_f64());
+            println!("  whole session        {:.2} s", started.elapsed().as_secs_f64());
+            println!(
+                "  billed               {} s at the Instant rate",
+                transcription.units.live_transcribe_seconds
+            );
+            println!("  transcript           {}", transcription.text);
+        }
+        Err(err) => println!("  FAILED after {:.2} s: {err:#}", after.as_secs_f64()),
+    }
+    // The relay charges just after handing over the text, while the session
+    // thread holds the connection open for it; leaving at once would cut it.
+    std::thread::sleep(Duration::from_secs(2));
+
+    if compare {
+        let clip = crate::audio::Clip {
+            samples: resample_for_upload(&samples, rate)?,
+        };
+        let transcriber: Box<dyn crate::transcribe::Transcriber> = if crate::session::is_signed_in() {
+            Box::new(crate::hosted::HostedTranscriber::new()?)
+        } else {
+            let key = settings::load_api_key()?.context("no OpenAI key")?;
+            Box::new(crate::transcribe::OpenAiTranscriber::new(key)?)
+        };
+        let uploaded = Instant::now();
+        match transcriber.transcribe(&clip, &context) {
+            Ok(transcription) => {
+                println!("Standard for comparison");
+                println!("  text after release   {:.2} s", uploaded.elapsed().as_secs_f64());
+                println!("  transcript           {}", transcription.text);
+            }
+            Err(err) => println!("Standard FAILED: {err:#}"),
+        }
+    }
+    Ok(())
+}
+
+/// Releases a recording at the pace it was made, like a microphone.
+struct Paced {
+    samples: Vec<f32>,
+    rate: u32,
+    started: std::time::Instant,
+    taken: std::sync::atomic::AtomicUsize,
+}
+
+impl Paced {
+    fn new(samples: Vec<f32>, rate: u32) -> Self {
+        Self {
+            samples,
+            rate,
+            started: std::time::Instant::now(),
+            taken: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+}
+
+impl crate::live::AudioSource for Paced {
+    fn drain(&self) -> Vec<f32> {
+        use std::sync::atomic::Ordering;
+        let due = ((self.started.elapsed().as_secs_f64() * f64::from(self.rate)) as usize)
+            .min(self.samples.len());
+        let from = self.taken.swap(due, Ordering::SeqCst).min(due);
+        self.samples[from..due].to_vec()
+    }
+
+    fn source_rate(&self) -> u32 {
+        self.rate
+    }
+}
+
+fn resample_for_upload(samples: &[f32], rate: u32) -> Result<Vec<f32>> {
+    let mut resampler =
+        crate::audio::StreamResampler::new(rate, crate::audio::TARGET_SAMPLE_RATE)?;
+    let mut out = resampler.push(samples)?;
+    out.extend(resampler.finish()?);
+    Ok(out)
+}
+
+/// A 16-bit PCM WAV, mixed down to mono: what `afconvert -d LEI16` writes.
+fn read_wav(path: &std::path::Path) -> Result<(Vec<f32>, u32)> {
+    let bytes = std::fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
+    if bytes.len() < 12 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        bail!("{} is not a WAV file", path.display());
+    }
+    let mut at = 12;
+    let mut format: Option<(u16, u16, u32, u16)> = None;
+    while at + 8 <= bytes.len() {
+        let id = &bytes[at..at + 4];
+        let len = u32::from_le_bytes(bytes[at + 4..at + 8].try_into()?) as usize;
+        let body = &bytes[at + 8..(at + 8 + len).min(bytes.len())];
+        if id == b"fmt " && body.len() >= 16 {
+            format = Some((
+                u16::from_le_bytes(body[0..2].try_into()?),
+                u16::from_le_bytes(body[2..4].try_into()?),
+                u32::from_le_bytes(body[4..8].try_into()?),
+                u16::from_le_bytes(body[14..16].try_into()?),
+            ));
+        } else if id == b"data" {
+            let (kind, channels, rate, bits) = format.context("the WAV has no format chunk")?;
+            if kind != 1 || bits != 16 || channels == 0 {
+                bail!("only 16-bit PCM WAV is supported (convert with afconvert -d LEI16)");
+            }
+            let channels = channels as usize;
+            let samples = body
+                .chunks_exact(2 * channels)
+                .map(|frame| {
+                    frame
+                        .chunks_exact(2)
+                        .map(|s| f32::from(i16::from_le_bytes([s[0], s[1]])) / f32::from(i16::MAX))
+                        .sum::<f32>()
+                        / channels as f32
+                })
+                .collect();
+            return Ok((samples, rate));
+        }
+        at += 8 + len + (len & 1);
+    }
+    bail!("the WAV has no audio")
+}
+

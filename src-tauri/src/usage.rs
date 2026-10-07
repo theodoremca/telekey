@@ -45,6 +45,10 @@ pub struct Units {
     /// Some models bill transcription by token rather than duration; kept so a
     /// future model's usage is not silently dropped on the floor.
     pub transcribe_tokens: u64,
+    /// Audio seconds streamed in Instant mode, billed at the live rate. Kept
+    /// apart from `transcribe_seconds` because the two are priced differently
+    /// and the rates are editable: mixing them would make re-pricing wrong.
+    pub live_transcribe_seconds: u64,
     pub polish_input_tokens: u64,
     pub polish_cached_tokens: u64,
     pub polish_output_tokens: u64,
@@ -60,17 +64,28 @@ impl Units {
         }
     }
 
+    /// One dictation streamed in Instant mode.
+    pub fn live_transcription(seconds: u64) -> Self {
+        Self {
+            dictations: 1,
+            live_transcribe_seconds: seconds,
+            ..Default::default()
+        }
+    }
+
     pub fn add(&mut self, other: &Units) {
         self.dictations += other.dictations;
         self.transcribe_seconds += other.transcribe_seconds;
         self.transcribe_tokens += other.transcribe_tokens;
+        self.live_transcribe_seconds += other.live_transcribe_seconds;
         self.polish_input_tokens += other.polish_input_tokens;
         self.polish_cached_tokens += other.polish_cached_tokens;
         self.polish_output_tokens += other.polish_output_tokens;
     }
 
+    /// Minutes dictated, Standard and Instant together.
     pub fn minutes(&self) -> f64 {
-        self.transcribe_seconds as f64 / 60.0
+        (self.transcribe_seconds + self.live_transcribe_seconds) as f64 / 60.0
     }
 
     pub fn is_empty(&self) -> bool {
@@ -80,19 +95,25 @@ impl Units {
 
 /// What the user pays per unit. Editable, because published prices change and a
 /// hardcoded rate would keep reporting a confident wrong number.
+///
+/// `default` on the struct: a settings file from before a rate existed fills
+/// it in rather than failing to load — which would stop the app starting.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct Rates {
     pub transcribe_per_minute: f64,
+    /// Instant's rate, `gpt-live-transcribe`.
+    pub instant_per_minute: f64,
     pub polish_input_per_million: f64,
     pub polish_output_per_million: f64,
 }
 
 impl Default for Rates {
     fn default() -> Self {
-        // OpenAI's published rates as of August 2026.
+        // OpenAI's published rates as of August 2026; Instant's as of October.
         Self {
             transcribe_per_minute: 0.0045,
+            instant_per_minute: 0.017,
             polish_input_per_million: 0.20,
             polish_output_per_million: 1.20,
         }
@@ -103,14 +124,19 @@ impl Default for Rates {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Cost {
+    /// Standard and Instant together.
     pub transcription: f64,
+    /// The Instant part of `transcription`, so the UI can show it apart.
+    pub instant: f64,
     pub formatting: f64,
     pub total: f64,
 }
 
 impl Rates {
     pub fn cost_of(&self, units: &Units) -> Cost {
-        let transcription = units.minutes() * self.transcribe_per_minute;
+        let instant = units.live_transcribe_seconds as f64 / 60.0 * self.instant_per_minute;
+        let transcription =
+            units.transcribe_seconds as f64 / 60.0 * self.transcribe_per_minute + instant;
 
         // Cached tokens are included in input_tokens by the API, so they are
         // subtracted out and re-added at the discounted rate. Charging them in
@@ -132,6 +158,7 @@ impl Rates {
         // is the UI's job.
         Cost {
             transcription,
+            instant,
             formatting,
             total: transcription + formatting,
         }

@@ -468,9 +468,9 @@ mod tests {
 
     #[test]
     fn the_pill_is_off_where_a_click_would_take_focus() {
-        assert!(Platform::MACOS.pill);
-        assert!(Platform::WINDOWS.pill);
-        assert!(!Platform::LINUX.pill, "the Linux overlay is an ordinary window");
+        let pill = [Platform::MACOS.pill, Platform::WINDOWS.pill, Platform::LINUX.pill];
+        // Linux last and off: the overlay there is an ordinary window.
+        assert_eq!(pill, [true, true, false]);
     }
 
     #[test]

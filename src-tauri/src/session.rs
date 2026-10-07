@@ -296,6 +296,13 @@ const DEFAULT_STAGING_API: &str = "https://us-east1-telekey-app.cloudfunctions.n
 const DEFAULT_PRODUCTION_API: &str = "https://us-east1-telekey-app.cloudfunctions.net/api";
 const DEFAULT_STAGING_SITE: &str = "https://telekey-staging.vercel.app";
 const DEFAULT_PRODUCTION_SITE: &str = "https://telekey.vercel.app";
+/// The Instant relay (`relay/`) on Cloud Run. Cloud Run addresses are
+/// `<service>-<project number>.<region>.run.app`, so these are known before
+/// either service is deployed.
+const DEFAULT_STAGING_RELAY: &str =
+    "wss://telekey-relay-staging-502266841237.us-east1.run.app/v1/realtime?intent=transcription";
+const DEFAULT_PRODUCTION_RELAY: &str =
+    "wss://telekey-relay-production-502266841237.us-east1.run.app/v1/realtime?intent=transcription";
 
 pub fn firebase_web_api_key() -> Option<String> {
     env_value("TELEKEY_FIREBASE_API_KEY")
@@ -308,6 +315,19 @@ pub fn api_base() -> Option<String> {
 
 pub fn site_url() -> Option<String> {
     env_value("TELEKEY_SITE_URL").or_else(|| Some(default_site_url_for(stage()).to_string()))
+}
+
+/// Where Instant streams to when the dictation is paid for with credits.
+pub fn relay_url() -> Option<String> {
+    env_value("TELEKEY_RELAY_URL").or_else(|| Some(default_relay_url_for(stage()).to_string()))
+}
+
+pub(crate) fn default_relay_url_for(stage: &str) -> &'static str {
+    if stage == "production" {
+        DEFAULT_PRODUCTION_RELAY
+    } else {
+        DEFAULT_STAGING_RELAY
+    }
 }
 
 pub(crate) fn default_api_base_for(stage: &str) -> &'static str {
@@ -351,6 +371,7 @@ fn baked_in(name: &str) -> Option<String> {
         "TELEKEY_FIREBASE_API_KEY" => option_env!("TELEKEY_FIREBASE_API_KEY").map(str::to_string),
         "TELEKEY_API_BASE" => option_env!("TELEKEY_API_BASE").map(str::to_string),
         "TELEKEY_SITE_URL" => option_env!("TELEKEY_SITE_URL").map(str::to_string),
+        "TELEKEY_RELAY_URL" => option_env!("TELEKEY_RELAY_URL").map(str::to_string),
         _ => None,
     }
     .filter(|value| !value.is_empty())
@@ -373,7 +394,11 @@ fn apply_telekey_env(path: &std::path::Path, overlay: bool) {
         if !overlay && std::env::var(&key).is_ok() {
             continue;
         }
-        if overlay && key != "TELEKEY_API_BASE" && key != "TELEKEY_SITE_URL" {
+        if overlay
+            && key != "TELEKEY_API_BASE"
+            && key != "TELEKEY_SITE_URL"
+            && key != "TELEKEY_RELAY_URL"
+        {
             continue;
         }
         // SAFETY: called once at process start, before other threads.
@@ -781,5 +806,18 @@ mod tests {
             default_site_url_for("production"),
             "https://telekey.vercel.app"
         );
+    }
+
+    #[test]
+    fn each_stage_streams_to_its_own_relay() {
+        // Staging's relay spends test credits and admits listed testers only;
+        // a mix-up would bill real users at staging's prices, or the reverse.
+        assert!(default_relay_url_for("staging").contains("telekey-relay-staging-"));
+        assert!(default_relay_url_for("production").contains("telekey-relay-production-"));
+        for stage in ["staging", "production"] {
+            let url = default_relay_url_for(stage);
+            assert!(url.starts_with("wss://"), "{url}");
+            assert!(url.ends_with("/v1/realtime?intent=transcription"), "{url}");
+        }
     }
 }

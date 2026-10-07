@@ -8,6 +8,7 @@ import {
   type Period,
   type Rates,
   type Settings,
+  type Units,
   type UsageSummary,
 } from "./api";
 
@@ -80,12 +81,17 @@ export function UsagePanel({
 
   const { units, cost } = summary;
   const polishTokens = units.polishInputTokens + units.polishOutputTokens;
+  // Instant is priced apart, so its row appears once it is on or has been used.
+  const showInstant = (units.liveTranscribeSeconds ?? 0) > 0 || settings.instant;
 
   // The headline is the sum of what the rows actually display. Rounding each
   // part independently against an exactly-rounded total can show $1.19 + $0.15
   // under a $1.33 heading, which reads as a bug. Rounding stays here rather than
   // in the pricing itself, where it would lose real money on sub-cent amounts.
-  const shownTotal = roundCents(cost.transcription) + roundCents(cost.formatting);
+  const instantCost = cost.instant ?? 0;
+  const standardCost = cost.transcription - instantCost;
+  const shownTotal =
+    roundCents(standardCost) + roundCents(instantCost) + roundCents(cost.formatting);
 
   return (
     <>
@@ -153,7 +159,7 @@ export function UsagePanel({
             <span className="figureLabel">estimated spend</span>
           </div>
           <div>
-            <span className="figure">{duration(units.transcribeSeconds)}</span>
+            <span className="figure">{duration(audioSeconds(units))}</span>
             <span className="figureLabel">dictated</span>
           </div>
           <div>
@@ -166,11 +172,26 @@ export function UsagePanel({
 
         <div className="row">
           <div className="rowText">
-            <span className="rowLabel">Transcription</span>
+            <span className="rowLabel">{showInstant ? "Standard" : "Transcription"}</span>
             <span className="rowHint">{duration(units.transcribeSeconds)} of audio</span>
           </div>
-          <span className="rowValue">{money(cost.transcription)}</span>
+          <span className="rowValue">{money(standardCost)}</span>
         </div>
+
+        {/* Apart from Standard: the same minute costs about four times as much. */}
+        {showInstant && (
+          <div className="row">
+            <div className="rowText">
+              <span className="rowLabel">Instant</span>
+              <span className="rowHint">
+                {units.liveTranscribeSeconds > 0
+                  ? `${duration(units.liveTranscribeSeconds)} of audio, streamed`
+                  : "Not used in this period"}
+              </span>
+            </div>
+            <span className="rowValue">{money(instantCost)}</span>
+          </div>
+        )}
 
         <div className="row">
           <div className="rowText">
@@ -257,6 +278,7 @@ function RatesEditor({
 
   const dirty =
     draft.transcribePerMinute !== rates.transcribePerMinute ||
+    draft.instantPerMinute !== rates.instantPerMinute ||
     draft.polishInputPerMillion !== rates.polishInputPerMillion ||
     draft.polishOutputPerMillion !== rates.polishOutputPerMillion;
 
@@ -303,6 +325,12 @@ function RatesEditor({
           "US$ per minute of audio",
           "transcribePerMinute",
           "0.0001",
+        )}
+        {field(
+          "Instant",
+          "US$ per minute of audio, streamed",
+          "instantPerMinute",
+          "0.001",
         )}
         {field(
           "Formatting input",
@@ -363,13 +391,13 @@ function DailyChart({ points }: { points: DailyPoint[] }) {
 
       const accent =
         getComputedStyle(element).getPropertyValue("--voice").trim() || "#b57d0a";
-      const peak = Math.max(...points.map((p) => p.units.transcribeSeconds), 1);
+      const peak = Math.max(...points.map((p) => audioSeconds(p.units)), 1);
 
       const gap = 3;
       const barWidth = Math.max(2, (rect.width - gap * (points.length - 1)) / points.length);
 
       points.forEach((point, index) => {
-        const value = point.units.transcribeSeconds;
+        const value = audioSeconds(point.units);
         const x = index * (barWidth + gap);
         // A day with no activity still draws a baseline, so the axis reads as
         // continuous time rather than a gap in the data.
@@ -389,9 +417,9 @@ function DailyChart({ points }: { points: DailyPoint[] }) {
     return () => window.removeEventListener("resize", draw);
   }, [points]);
 
-  const total = points.reduce((sum, p) => sum + p.units.transcribeSeconds, 0);
+  const total = points.reduce((sum, p) => sum + audioSeconds(p.units), 0);
   const busiest = points.reduce(
-    (best, p) => (p.units.transcribeSeconds > best.units.transcribeSeconds ? p : best),
+    (best, p) => (audioSeconds(p.units) > audioSeconds(best.units) ? p : best),
     points[0],
   );
 
@@ -400,7 +428,7 @@ function DailyChart({ points }: { points: DailyPoint[] }) {
       <canvas ref={canvas} height={72} />
       <div className="chartMeta">
         <span>{duration(total)} over 30 days</span>
-        {busiest && busiest.units.transcribeSeconds > 0 && (
+        {busiest && audioSeconds(busiest.units) > 0 && (
           <span>busiest {shortDate(busiest.date)}</span>
         )}
       </div>
@@ -446,4 +474,10 @@ export function compact(value: number): string {
 function shortDate(iso: string): string {
   const [, month, day] = iso.split("-");
   return `${day}/${month}`;
+}
+
+/** Seconds dictated, Standard and Instant together. Older usage files have no
+ *  Instant count, hence the fallback. */
+function audioSeconds(units: Units): number {
+  return units.transcribeSeconds + (units.liveTranscribeSeconds ?? 0);
 }

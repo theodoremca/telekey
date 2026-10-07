@@ -14,6 +14,7 @@ pub mod history;
 pub mod hosted;
 pub mod inject;
 pub mod input_device;
+pub mod live;
 pub mod output_mute;
 pub mod overlay;
 pub mod panel;

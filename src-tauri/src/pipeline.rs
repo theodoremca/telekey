@@ -17,6 +17,7 @@ use crate::audio::{AudioEngine, Clip};
 use crate::frontmost::{frontmost_app, TargetApp};
 use crate::history::History;
 use crate::inject::{self, PASTE_SETTLE_DELAY};
+use crate::live::{LiveSession, Route, Streamed};
 use crate::output_mute::{self, OutputMute};
 use crate::permissions::{self, Permission, Platform};
 use crate::hosted::{HostedPolisher, HostedTranscriber};
@@ -24,7 +25,7 @@ use crate::polish::{OpenAiPolisher, Polisher};
 use crate::session;
 use crate::usage::{Units, Usage};
 use crate::settings::{self, Settings};
-use crate::transcribe::{OpenAiTranscriber, TranscriptionContext, Transcriber};
+use crate::transcribe::{OpenAiTranscriber, Transcription, TranscriptionContext, Transcriber};
 use crate::trigger::TriggerEvent;
 
 /// What the pipeline is doing, for the overlay to render.
@@ -87,7 +88,19 @@ pub struct Pipeline {
     /// recording started. Not proof, so the recording went ahead; if it comes
     /// back as pure silence, that is the answer, and nothing is uploaded.
     microphone_switched_off: AtomicBool,
+    /// The dictation being streamed in Instant mode, from key-down until the
+    /// transcribe step collects it (or a cancel drops it).
+    live: Mutex<Option<Box<dyn Streamed>>>,
+    /// Where Instant streams to, worked out on first use like the clients
+    /// below, and forgotten with them when the key or the sign-in changes.
+    live_route: Mutex<Option<Route>>,
+    /// Instant failed and Standard stood in: worth a word after the result,
+    /// since the user is paying for speed they did not get this time.
+    instant_note: Mutex<Option<String>>,
 }
+
+/// Said after a dictation that Instant could not handle, once Standard has.
+pub const INSTANT_FELL_BACK: &str = "Instant was unavailable, so this one used Standard";
 
 /// What the user sees when they hold the key before allowing the microphone.
 /// The setup window opens alongside it (see `TauriSink`), so "in Setup" is a
@@ -117,6 +130,9 @@ impl Pipeline {
             warmed: AtomicBool::new(false),
             device_warning: Mutex::new(None),
             microphone_switched_off: AtomicBool::new(false),
+            live: Mutex::new(None),
+            live_route: Mutex::new(None),
+            instant_note: Mutex::new(None),
         }
     }
 
@@ -238,6 +254,7 @@ impl Pipeline {
     pub fn invalidate_transcriber(&self) {
         *self.transcriber.lock() = None;
         *self.polisher.lock() = None;
+        *self.live_route.lock() = None;
     }
 
     /// Current input level, for the level meter.
@@ -388,6 +405,9 @@ impl Pipeline {
 
     fn abort_recording(&self) {
         self.recording.store(false, Ordering::Relaxed);
+        if let Some(live) = self.live.lock().take() {
+            live.cancel();
+        }
         self.restore_output();
         match self.engine.stop() {
             Ok(mut recording) => recording.clip.samples.zeroize(),
@@ -403,10 +423,17 @@ impl Pipeline {
         // rather than holding the room silent for the transcription too.
         self.restore_output();
 
+        // Taken now, so every way out below either hands it to the transcribe
+        // step or cancels it. The engine stops first: the tap then holds the
+        // very end of the recording for the stream's last message.
+        let live = self.live.lock().take();
         let recording = match self.engine.stop() {
             Ok(recording) => recording,
             Err(err) => {
                 tracing::error!("could not stop recording: {err:#}");
+                if let Some(live) = live {
+                    live.cancel();
+                }
                 self.fail(format!("Recording failed: {err}"));
                 return None;
             }
@@ -419,6 +446,9 @@ impl Pipeline {
         {
             tracing::warn!("the microphone is switched off in Windows privacy settings");
             clip.samples.zeroize();
+            if let Some(live) = live {
+                live.cancel();
+            }
             self.fail(MICROPHONE_NEEDED.to_string());
             return None;
         }
@@ -426,6 +456,7 @@ impl Pipeline {
         *self.device_warning.lock() = recording.warning;
 
         let duration = clip.duration_secs();
+        let instant = live.is_some();
         self.announce(Status::Transcribing);
 
         let (tx, rx) = mpsc::channel();
@@ -434,13 +465,14 @@ impl Pipeline {
             .name("telekey-transcribe".into())
             .spawn(move || {
                 let result = me
-                    .transcribe_and_insert(clip)
+                    .transcribe_and_insert_with(clip, live)
                     .map_err(|err| format!("{err:#}"));
                 if let Ok(Some(text)) = &result {
                     tracing::info!(
                         audio_secs = duration,
                         total_ms = started.elapsed().as_millis() as u64,
                         chars = text.len(),
+                        instant,
                         "dictation complete"
                     );
                 }
@@ -476,6 +508,9 @@ impl Pipeline {
         // worth knowing about whether the words made it or not, but it is
         // never the headline.
         if let Some(text) = self.device_warning.lock().take() {
+            self.sink.publish(Status::Notice { text });
+        }
+        if let Some(text) = self.instant_note.lock().take() {
             self.sink.publish(Status::Notice { text });
         }
     }
@@ -515,17 +550,36 @@ impl Pipeline {
         // Blocks until the stream is actually live. Announcing "recording"
         // before that point is what made the user speak into a microphone that
         // was not yet open.
-        let preferred = self.settings.lock().input_device.clone();
-        if let Err(err) = self.engine.start(preferred) {
-            tracing::error!("could not start recording: {err:#}");
-            // With the privacy switch off, Windows refuses the device with
-            // "Access is denied"; the setup window says where the switch is.
-            if switched_off {
-                self.fail(MICROPHONE_NEEDED.to_string());
-            } else {
-                self.fail(format!("Could not start recording: {err}"));
+        let (preferred, instant) = {
+            let settings = self.settings.lock();
+            (settings.input_device.clone(), settings.instant)
+        };
+        let tap = match self.engine.start(preferred, instant) {
+            Ok(tap) => tap,
+            Err(err) => {
+                tracing::error!("could not start recording: {err:#}");
+                // With the privacy switch off, Windows refuses the device with
+                // "Access is denied"; the setup window says where the switch is.
+                if switched_off {
+                    self.fail(MICROPHONE_NEEDED.to_string());
+                } else {
+                    self.fail(format!("Could not start recording: {err}"));
+                }
+                return;
             }
-            return;
+        };
+
+        // Instant: connect now, while the user speaks. Without a key or a
+        // sign-in to stream with, the tap is dropped and this is a Standard
+        // dictation, which then reports the missing credential as usual.
+        if let Some(tap) = tap {
+            match self.live_route() {
+                Some(route) => {
+                    let session = LiveSession::start(route, tap, self.context());
+                    *self.live.lock() = Some(Box::new(session));
+                }
+                None => drop(tap),
+            }
         }
 
         // After the stream is live, so a device that refuses to mute cannot
@@ -536,32 +590,22 @@ impl Pipeline {
         self.announce(Status::Recording);
     }
 
-    fn transcribe_and_insert(&self, mut clip: Clip) -> Result<Option<String>> {
-        let transcriber = self.transcriber()?;
-        let context = self.context();
+    #[cfg(test)]
+    fn transcribe_and_insert(&self, clip: Clip) -> Result<Option<String>> {
+        self.transcribe_and_insert_with(clip, None)
+    }
 
-        let upload_started = Instant::now();
-        if self.cancelled.load(Ordering::SeqCst) {
-            clip.samples.zeroize();
+    fn transcribe_and_insert_with(
+        &self,
+        clip: Clip,
+        live: Option<Box<dyn Streamed>>,
+    ) -> Result<Option<String>> {
+        let Some(transcription) = self.transcribe(clip, live)? else {
             return Ok(None);
-        }
-
-        let result = transcriber.transcribe(&clip, &context);
-
-        // The audio has served its purpose; wipe it whether or not the call
-        // worked. It was never written to disk, so this is the only copy.
-        clip.samples.zeroize();
-
-        let transcription = result?;
+        };
         if self.cancelled.load(Ordering::SeqCst) {
             return Ok(None);
         }
-
-        tracing::debug!(
-            api_ms = upload_started.elapsed().as_millis() as u64,
-            billed_seconds = transcription.units.transcribe_seconds,
-            "transcription returned"
-        );
         self.meter(&transcription.units);
 
         let text = transcription.text;
@@ -587,6 +631,98 @@ impl Pipeline {
         );
 
         Ok(Some(text))
+    }
+
+    /// The transcript: Instant's, when it was streaming and came through, and
+    /// otherwise Standard's from the recording. `None` when cancelled.
+    fn transcribe(
+        &self,
+        mut clip: Clip,
+        live: Option<Box<dyn Streamed>>,
+    ) -> Result<Option<Transcription>> {
+        if self.cancelled.load(Ordering::SeqCst) {
+            clip.samples.zeroize();
+            if let Some(live) = live {
+                live.cancel();
+            }
+            return Ok(None);
+        }
+
+        if let Some(live) = live {
+            let waited = Instant::now();
+            match live.finish() {
+                Ok(transcription) => {
+                    clip.samples.zeroize();
+                    tracing::debug!(
+                        after_release_ms = waited.elapsed().as_millis() as u64,
+                        billed_seconds = transcription.units.live_transcribe_seconds,
+                        "instant transcript"
+                    );
+                    return Ok(Some(transcription));
+                }
+                Err(err) => {
+                    tracing::warn!("Instant failed, using Standard instead: {err:#}");
+                    // A tap on the key is too short for either; saying Instant
+                    // was unavailable would only confuse that.
+                    if clip.duration_secs() >= 0.3 {
+                        *self.instant_note.lock() = Some(INSTANT_FELL_BACK.to_string());
+                    }
+                }
+            }
+        }
+
+        let transcriber = match self.transcriber() {
+            Ok(transcriber) => transcriber,
+            Err(err) => {
+                clip.samples.zeroize();
+                return Err(err);
+            }
+        };
+        let context = self.context();
+        let upload_started = Instant::now();
+        if self.cancelled.load(Ordering::SeqCst) {
+            clip.samples.zeroize();
+            return Ok(None);
+        }
+
+        let result = transcriber.transcribe(&clip, &context);
+
+        // The audio has served its purpose; wipe it whether or not the call
+        // worked. It was never written to disk, so this is the only copy.
+        clip.samples.zeroize();
+
+        let transcription = result?;
+        tracing::debug!(
+            api_ms = upload_started.elapsed().as_millis() as u64,
+            billed_seconds = transcription.units.transcribe_seconds,
+            "transcription returned"
+        );
+        Ok(Some(transcription))
+    }
+
+    /// Where Instant should stream, or `None` for a Standard dictation.
+    ///
+    /// Same order as [`Self::transcriber`]: a sign-in wins over a stored key,
+    /// and pays through the relay; a key alone goes straight to OpenAI.
+    fn live_route(&self) -> Option<Route> {
+        let mut cached = self.live_route.lock();
+        if let Some(route) = cached.as_ref() {
+            return Some(route.clone());
+        }
+        let route = if session::is_signed_in() {
+            session::relay_url().map(|url| Route::Relay { url })
+        } else {
+            match settings::load_api_key() {
+                Ok(Some(key)) => Some(Route::OpenAi { key }),
+                Ok(None) => None,
+                Err(err) => {
+                    tracing::warn!("Instant has no key to stream with: {err:#}");
+                    None
+                }
+            }
+        };
+        cached.clone_from(&route);
+        route
     }
 
     /// Apply the target app's formatting profile, if it has one.
@@ -1135,6 +1271,138 @@ mod tests {
     fn cancelled_status_serialises_for_the_overlay() {
         let json = serde_json::to_value(Status::Cancelled).unwrap();
         assert_eq!(json, serde_json::json!({ "kind": "cancelled" }));
+    }
+
+    /// Instant's side of a dictation, scripted: what `finish` returns, and
+    /// whether the pipeline cancelled it.
+    struct ScriptedStream {
+        outcome: Result<Transcription, String>,
+        cancelled: Arc<AtomicBool>,
+    }
+
+    impl ScriptedStream {
+        fn ok(text: &str, seconds: u64) -> (Box<dyn Streamed>, Arc<AtomicBool>) {
+            Self::boxed(Ok(Transcription {
+                text: text.into(),
+                units: Units::live_transcription(seconds),
+            }))
+        }
+
+        fn failing(reason: &str) -> (Box<dyn Streamed>, Arc<AtomicBool>) {
+            Self::boxed(Err(reason.into()))
+        }
+
+        fn boxed(outcome: Result<Transcription, String>) -> (Box<dyn Streamed>, Arc<AtomicBool>) {
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let stream = Self {
+                outcome,
+                cancelled: Arc::clone(&cancelled),
+            };
+            (Box::new(stream), cancelled)
+        }
+    }
+
+    impl Streamed for ScriptedStream {
+        fn finish(self: Box<Self>) -> Result<Transcription> {
+            self.outcome.map_err(|reason| anyhow::anyhow!(reason))
+        }
+
+        fn cancel(self: Box<Self>) {
+            self.cancelled.store(true, Ordering::SeqCst);
+        }
+    }
+
+    fn half_second_clip() -> Clip {
+        Clip {
+            samples: vec![0.01; TARGET_SAMPLE_RATE as usize / 2],
+        }
+    }
+
+    #[test]
+    fn instant_text_is_used_and_nothing_is_uploaded() {
+        let pipeline = Pipeline::new(Settings::default(), Arc::new(NullSink), test_history(), test_usage());
+        let standard = ScriptedTranscriber::gated("from the upload", Units::transcription(3));
+        inject(&pipeline, Arc::clone(&standard) as Arc<dyn Transcriber>);
+        let (stream, _) = ScriptedStream::ok("streamed", 2);
+
+        // A gated transcriber would block forever if it were called.
+        let result = pipeline.transcribe(half_second_clip(), Some(stream)).unwrap().unwrap();
+
+        assert_eq!(result.text, "streamed");
+        assert_eq!(result.units, Units::live_transcription(2));
+        assert!(pipeline.instant_note.lock().is_none());
+    }
+
+    #[test]
+    fn a_failed_stream_falls_back_to_standard_and_says_so_after() {
+        let pipeline = Pipeline::new(Settings::default(), Arc::new(NullSink), test_history(), test_usage());
+        inject(
+            &pipeline,
+            ScriptedTranscriber::immediate("from the upload", Units::transcription(1)),
+        );
+        let (stream, _) = ScriptedStream::failing("Instant took too long to get ready");
+
+        let result = pipeline.transcribe(half_second_clip(), Some(stream)).unwrap().unwrap();
+
+        assert_eq!(result.text, "from the upload");
+        assert_eq!(result.units, Units::transcription(1));
+        assert_eq!(pipeline.instant_note.lock().as_deref(), Some(INSTANT_FELL_BACK));
+    }
+
+    #[test]
+    fn the_fallback_note_comes_after_the_result() {
+        let sink = Arc::new(RecordingSink::default());
+        let pipeline = Pipeline::new(
+            Settings::default(),
+            Arc::clone(&sink) as Arc<dyn StatusSink>,
+            test_history(),
+            test_usage(),
+        );
+        *pipeline.instant_note.lock() = Some(INSTANT_FELL_BACK.to_string());
+        pipeline.settle_transcribe(Ok(Some("hello".into())));
+        let seen = sink.seen.lock();
+        assert_eq!(
+            *seen,
+            vec![
+                Status::Inserted { text: "hello".into() },
+                Status::Notice { text: INSTANT_FELL_BACK.into() },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_tap_too_short_for_either_gets_no_fallback_note() {
+        let pipeline = Pipeline::new(Settings::default(), Arc::new(NullSink), test_history(), test_usage());
+        inject(&pipeline, ScriptedTranscriber::immediate("x", Units::transcription(1)));
+        let (stream, _) = ScriptedStream::failing("too short for Instant");
+        let tap = Clip { samples: vec![0.01; TARGET_SAMPLE_RATE as usize / 10] };
+        let _ = pipeline.transcribe(tap, Some(stream));
+        assert!(pipeline.instant_note.lock().is_none());
+    }
+
+    #[test]
+    fn a_cancel_before_the_text_stops_the_stream_and_uploads_nothing() {
+        let pipeline = Pipeline::new(Settings::default(), Arc::new(NullSink), test_history(), test_usage());
+        let standard = ScriptedTranscriber::gated("never", Units::transcription(3));
+        inject(&pipeline, Arc::clone(&standard) as Arc<dyn Transcriber>);
+        let (stream, cancelled) = ScriptedStream::ok("streamed", 2);
+        pipeline.mark_cancel();
+
+        assert!(pipeline.transcribe(half_second_clip(), Some(stream)).unwrap().is_none());
+        assert!(cancelled.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn instant_minutes_are_metered_at_their_own_rate() {
+        let usage = test_usage();
+        let pipeline = Pipeline::new(Settings::default(), Arc::new(NullSink), test_history(), Arc::clone(&usage));
+        pipeline.meter(&Units::live_transcription(60));
+        let today = usage.today();
+        assert_eq!(today.live_transcribe_seconds, 60);
+        assert_eq!(today.transcribe_seconds, 0);
+        let cost = crate::usage::Rates::default().cost_of(&today);
+        assert!((cost.instant - 0.017).abs() < 1e-9, "{cost:?}");
+        assert!((cost.total - 0.017).abs() < 1e-9, "{cost:?}");
     }
 
     #[test]
