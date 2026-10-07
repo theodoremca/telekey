@@ -75,6 +75,12 @@ pub struct Pipeline {
     /// Set as soon as the user cancels, so the transcribe worker will not paste
     /// even if the pipeline thread has not yet drained the Cancel event.
     cancelled: AtomicBool,
+    /// Which dictation is current, bumped on every start. A transcribe thread
+    /// remembers its own: once the user has cancelled one and started the
+    /// next, `cancelled` is cleared for the new one, and without this the old
+    /// thread would carry on and paste the words they cancelled into the
+    /// middle of the new recording.
+    generation: std::sync::atomic::AtomicU64,
     /// True only while Recording or Transcribing — Escape is a no-op otherwise.
     escape_arm: crate::escape::Arm,
     /// Silences whatever is playing for the length of the hold, when the user
@@ -136,6 +142,7 @@ impl Pipeline {
             usage,
             recording: AtomicBool::new(false),
             cancelled: AtomicBool::new(false),
+            generation: std::sync::atomic::AtomicU64::new(0),
             escape_arm: crate::escape::new_arm(),
             output: output_mute::for_this_platform(),
             warmed: AtomicBool::new(false),
@@ -335,6 +342,7 @@ impl Pipeline {
 
             match events.recv() {
                 Ok(TriggerEvent::Start) if !recording => {
+                    self.generation.fetch_add(1, Ordering::SeqCst);
                     self.cancelled.store(false, Ordering::SeqCst);
                     recording = true;
                     self.begin();
@@ -410,6 +418,12 @@ impl Pipeline {
         }
     }
 
+    /// Whether dictation `mine` must not paste: it was cancelled, or a newer
+    /// one has started since (which is only possible after a cancel).
+    fn stale(&self, mine: u64) -> bool {
+        self.cancelled.load(Ordering::SeqCst) || self.generation.load(Ordering::SeqCst) != mine
+    }
+
     fn announce_cancelled(&self) {
         self.recording.store(false, Ordering::Relaxed);
         self.announce(Status::Cancelled);
@@ -471,6 +485,7 @@ impl Pipeline {
 
         let duration = clip.duration_secs();
         let instant = live.is_some();
+        let mine = self.generation.load(Ordering::SeqCst);
         self.announce(Status::Transcribing);
 
         let (tx, rx) = mpsc::channel();
@@ -479,7 +494,7 @@ impl Pipeline {
             .name("telekey-transcribe".into())
             .spawn(move || {
                 let result = me
-                    .transcribe_and_insert_with(clip, live, screen)
+                    .transcribe_and_insert_with(clip, live, screen, mine)
                     .map_err(|err| format!("{err:#}"));
                 if let Ok(Some(text)) = &result {
                     tracing::info!(
@@ -613,7 +628,8 @@ impl Pipeline {
 
     #[cfg(test)]
     fn transcribe_and_insert(&self, clip: Clip) -> Result<Option<String>> {
-        self.transcribe_and_insert_with(clip, None, None)
+        let mine = self.generation.load(Ordering::SeqCst);
+        self.transcribe_and_insert_with(clip, None, None, mine)
     }
 
     fn transcribe_and_insert_with(
@@ -621,11 +637,12 @@ impl Pipeline {
         clip: Clip,
         live: Option<Box<dyn Streamed>>,
         screen: Option<Arc<ContextSlot>>,
+        mine: u64,
     ) -> Result<Option<String>> {
-        let Some(transcription) = self.transcribe(clip, live, screen)? else {
+        let Some(transcription) = self.transcribe(clip, live, screen, mine)? else {
             return Ok(None);
         };
-        if self.cancelled.load(Ordering::SeqCst) {
+        if self.stale(mine) {
             return Ok(None);
         }
         self.meter(&transcription.units);
@@ -635,13 +652,13 @@ impl Pipeline {
             anyhow::bail!("nothing was transcribed — try speaking a little longer");
         }
 
-        if self.cancelled.load(Ordering::SeqCst) {
+        if self.stale(mine) {
             return Ok(None);
         }
 
         let text = self.finish_text(text);
 
-        if self.cancelled.load(Ordering::SeqCst) {
+        if self.stale(mine) {
             return Ok(None);
         }
 
@@ -662,8 +679,9 @@ impl Pipeline {
         mut clip: Clip,
         live: Option<Box<dyn Streamed>>,
         screen: Option<Arc<ContextSlot>>,
+        mine: u64,
     ) -> Result<Option<Transcription>> {
-        if self.cancelled.load(Ordering::SeqCst) {
+        if self.stale(mine) {
             clip.samples.zeroize();
             if let Some(live) = live {
                 live.cancel();
@@ -705,7 +723,7 @@ impl Pipeline {
         // The same screen read Instant used, if it got that far.
         context.prompt = screen.and_then(|slot| slot.get_within(SCREEN_WAIT));
         let upload_started = Instant::now();
-        if self.cancelled.load(Ordering::SeqCst) {
+        if self.stale(mine) {
             clip.samples.zeroize();
             return Ok(None);
         }
@@ -1607,7 +1625,7 @@ mod tests {
         let (stream, _) = ScriptedStream::ok("streamed", 2);
 
         // A gated transcriber would block forever if it were called.
-        let result = pipeline.transcribe(half_second_clip(), Some(stream), None).unwrap().unwrap();
+        let result = pipeline.transcribe(half_second_clip(), Some(stream), None, 0).unwrap().unwrap();
 
         assert_eq!(result.text, "streamed");
         assert_eq!(result.units, Units::live_transcription(2));
@@ -1623,7 +1641,7 @@ mod tests {
         );
         let (stream, _) = ScriptedStream::failing("Instant took too long to get ready");
 
-        let result = pipeline.transcribe(half_second_clip(), Some(stream), None).unwrap().unwrap();
+        let result = pipeline.transcribe(half_second_clip(), Some(stream), None, 0).unwrap().unwrap();
 
         assert_eq!(result.text, "from the upload");
         assert_eq!(result.units, Units::transcription(1));
@@ -1657,7 +1675,7 @@ mod tests {
         inject(&pipeline, ScriptedTranscriber::immediate("x", Units::transcription(1)));
         let (stream, _) = ScriptedStream::failing("too short for Instant");
         let tap = Clip { samples: vec![0.01; TARGET_SAMPLE_RATE as usize / 10] };
-        let _ = pipeline.transcribe(tap, Some(stream), None);
+        let _ = pipeline.transcribe(tap, Some(stream), None, 0);
         assert!(pipeline.instant_note.lock().is_none());
     }
 
@@ -1669,7 +1687,7 @@ mod tests {
         let (stream, cancelled) = ScriptedStream::ok("streamed", 2);
         pipeline.mark_cancel();
 
-        assert!(pipeline.transcribe(half_second_clip(), Some(stream), None).unwrap().is_none());
+        assert!(pipeline.transcribe(half_second_clip(), Some(stream), None, 0).unwrap().is_none());
         assert!(cancelled.load(Ordering::SeqCst));
     }
 
@@ -1701,7 +1719,7 @@ mod tests {
         let (stream, _) = ScriptedStream::failing("no connection");
 
         pipeline
-            .transcribe(half_second_clip(), Some(stream), Some(Arc::clone(&slot)))
+            .transcribe(half_second_clip(), Some(stream), Some(Arc::clone(&slot)), 0)
             .unwrap();
 
         assert_eq!(*recorder.prompts.lock(), vec![Some("Dictating into Mail.".to_string())]);
@@ -1712,7 +1730,7 @@ mod tests {
         let pipeline = Pipeline::new(Settings::default(), Arc::new(NullSink), test_history(), test_usage());
         let recorder = Arc::new(ContextRecorder::default());
         inject(&pipeline, Arc::clone(&recorder) as Arc<dyn Transcriber>);
-        pipeline.transcribe(half_second_clip(), None, None).unwrap();
+        pipeline.transcribe(half_second_clip(), None, None, 0).unwrap();
         assert_eq!(*recorder.prompts.lock(), vec![None]);
     }
 
@@ -1727,6 +1745,27 @@ mod tests {
         let cost = crate::usage::Rates::default().cost_of(&today);
         assert!((cost.instant - 0.017).abs() < 1e-9, "{cost:?}");
         assert!((cost.total - 0.017).abs() < 1e-9, "{cost:?}");
+    }
+
+    #[test]
+    fn a_cancelled_dictation_never_pastes_after_the_next_one_starts() {
+        // Esc during transcribing, then the shortcut again at once: the new
+        // start clears `cancelled`, and the old thread must still stand down.
+        let pipeline = Pipeline::new(Settings::default(), Arc::new(NullSink), test_history(), test_usage());
+        let mine = pipeline.generation.load(Ordering::SeqCst);
+        pipeline.mark_cancel();
+        assert!(pipeline.stale(mine));
+        // What the run loop does on the next Start.
+        pipeline.generation.fetch_add(1, Ordering::SeqCst);
+        pipeline.cancelled.store(false, Ordering::SeqCst);
+        assert!(pipeline.stale(mine), "the old dictation must stay cancelled");
+        assert!(!pipeline.stale(mine + 1), "the new one is live");
+
+        inject(&pipeline, ScriptedTranscriber::immediate("cancelled words", Units::transcription(1)));
+        let result = pipeline
+            .transcribe_and_insert_with(half_second_clip(), None, None, mine)
+            .unwrap();
+        assert!(result.is_none(), "nothing pasted for the cancelled dictation");
     }
 
     #[test]

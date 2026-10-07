@@ -484,6 +484,43 @@ throttles a service's CPU once its last connection closes, which can stall the
 write. The charge cannot refuse, so a balance can go below zero; every session
 first requires a positive balance, and the next purchase pays the debt.
 
+**26. "Use what's on screen" is on, and names still come back wrong.**
+Check the log for `screen context app=… title=… nearby_chars=…` at key-down.
+`context.rs` reads through the Accessibility grant pasting already has, on its
+own thread, under one 250 ms timeout set on the system-wide element (it then
+covers every element). It reads nothing while secure input is on (a password
+is being typed anywhere) or from an `AXSecureTextField`, only the title in
+terminals and password managers, and only a window around the cursor fetched
+with `AXStringForRange` (counted in UTF-16 units, like the selection), never
+the whole document. `nearby_chars=0` in an Electron app (Slack, VS Code) is
+expected: they expose text only after `AXManualAccessibility` is set, which
+puts VS Code into screen-reader mode, so TeleKey does not set it. The result
+goes into a `ContextSlot` that travels with its own dictation, so a slow read
+can never reach the next one; Instant waits at most 250 ms for it, Standard
+(and Instant's fallback) reads the same slot. The text is never logged
+(hand-written `Debug` on `ScreenContext` and `TranscriptionContext`) and is
+wiped when the slot drops.
+
+**27. On credits, a vocabulary word with an accent arrives as mojibake.**
+reqwest sends header bytes above 127 as they are, and Node reads header
+values as latin1, so "Zoë" reached OpenAI as "ZoÃ«". `functions/src/headers.ts`
+re-reads them as UTF-8; the screen-context prompt goes base64 in
+`x-telekey-prompt` so it needs no such trick. The desktop keeps all its
+context headers under 6 KB and, on a 431, retries once without the prompt.
+
+**28. The smart pass pasted something the user did not say.**
+It must not be able to. Lists and self-corrections reach the formatting model
+only when `smart.rs` hears a cue, and without an app style the answer is used
+only if `smart::acceptable` passes: every word of the answer is the
+dictation's own, in order, and every dropped stretch either ends in a
+correction cue (with at most two words after it, and "I mean it" is not a cue)
+or is list markers. The alignment drops the *earlier* copy of a repeated
+phrase, because a correction takes back what came first. In testing the model
+dropped half of "Sorry I'm late, the meeting ran over. I mean it, …" and
+rewrote "First of all … Next week …" into another sentence; both fail the
+check and are pasted as spoken. Keep the check strict. Replacements run after
+all of this, last before the paste.
+
 ---
 
 ## Architecture in one screen
@@ -496,6 +533,9 @@ escape.rs   (Esc)    ┴─► mpsc ─► pipeline.rs (worker thread)
                                     │  audio.rs       cpal → 16 kHz mono → WAV in memory
                                     │  transcribe.rs  Transcriber trait → OpenAI
                                     │  live.rs        Instant: stream while speaking (relay/ for credits)
+                                    │  context.rs     screen context, sent as the prompt (opt-in)
+                                    │  smart.rs       lists and self-corrections, gate + check
+                                    │  replace.rs     "when I say … write …", last before paste
                                     │  hosted.rs      same traits, via Cloud Functions
                                     │  polish.rs      Polisher trait, optional
                                     │  inject.rs      clipboard save → ⌘V → restore

@@ -123,8 +123,17 @@ pub fn sounds_like_a_list(text: &str) -> bool {
         return true;
     }
 
-    // "I need: eggs, milk and bread."
-    if let Some((_, after)) = lower.split_once(':') {
+    // "I need: eggs, milk and bread." A colon after a word and before a
+    // space; not a clock time (10:30) or a link (https://).
+    let introduced = lower.char_indices().find_map(|(at, c)| {
+        let before = lower[..at].chars().next_back();
+        let after = lower[at + 1..].chars().next();
+        (c == ':'
+            && before.is_some_and(char::is_alphabetic)
+            && after.is_some_and(char::is_whitespace))
+        .then(|| &lower[at + 1..])
+    });
+    if let Some(after) = introduced {
         let commas = after.matches(',').count();
         let joined = after.contains(" and ") || after.contains(" or ");
         if commas >= 2 || (commas >= 1 && joined) {
@@ -155,11 +164,12 @@ pub fn sounds_like_a_correction(text: &str) -> bool {
     if phrases.iter().any(|phrase| lower.contains(phrase)) {
         return true;
     }
-    // "I mean Thursday", but not "I mean it".
+    // "I mean Thursday" (or "I mean Italy"), but not "I mean it".
     let mut rest = lower.as_str();
     while let Some(at) = rest.find("i mean") {
         let after = rest[at + "i mean".len()..].trim_start_matches([',', ' ']);
-        if !after.is_empty() && !after.starts_with("it") {
+        let next = after.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("");
+        if !next.is_empty() && next != "it" {
             return true;
         }
         rest = &rest[at + "i mean".len()..];
@@ -244,10 +254,28 @@ fn escape(text: &str) -> String {
 /// Words a list may lose: the spoken markers it replaces with bullets.
 const LIST_MARKERS: &[&str] = &[
     "first", "firstly", "second", "secondly", "third", "thirdly", "fourth", "fourthly", "fifth",
-    "sixth", "seventh", "eighth", "ninth", "tenth", "next", "then", "finally", "lastly", "also",
-    "and", "plus", "number", "one", "two", "three", "four", "five", "six", "seven", "eight",
-    "nine", "ten", "bullet", "point", "points",
+    "sixth", "seventh", "eighth", "ninth", "tenth", "next", "then", "finally", "lastly",
+    "number", "bullet", "point", "points",
 ];
+
+/// Joining words a list may also lose between items: "milk and bread".
+const LIST_JOINERS: &[&str] = &["and", "also", "plus", "or"];
+
+/// Counts a list may lose only as part of a marker ("number one"), never on
+/// their own: "two apples" without the "two" is a different list.
+const LIST_COUNTS: &[&str] = &[
+    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+];
+
+/// Whether a dropped stretch is just list scaffolding. A count goes only
+/// as part of "number one"; "first two apples" keeps its "two".
+fn only_list_markers(span: &[&str]) -> bool {
+    span.iter().enumerate().all(|(at, w)| {
+        LIST_MARKERS.contains(w)
+            || LIST_JOINERS.contains(w)
+            || (LIST_COUNTS.contains(w) && at > 0 && span[at - 1] == "number")
+    })
+}
 
 /// Words that mark a correction; a dropped stretch must contain one.
 const CORRECTION_CUES: &[&str] = &[
@@ -260,8 +288,9 @@ const CORRECTION_CUES: &[&str] = &[
 /// a correction (when corrections were asked for) or list markers (when a
 /// list was).
 pub fn acceptable(before: &str, after: &str, lists: bool, corrections: bool) -> bool {
-    let b = words(before);
-    let a = words(after);
+    let spoken = tokens(before);
+    let b: Vec<String> = spoken.iter().map(|t| t.word.clone()).collect();
+    let a = words(&without_list_numbers(after));
     if a.is_empty() {
         return false;
     }
@@ -269,35 +298,70 @@ pub fn acceptable(before: &str, after: &str, lists: bool, corrections: bool) -> 
         return false;
     };
 
-    let mut span: Vec<&str> = Vec::new();
-    let dropped_ok = |span: &[&str]| {
+    // Check each run of dropped words, by where it starts and ends.
+    let dropped_ok = |start: usize, end: usize| {
+        let span: Vec<&str> = b[start..end].iter().map(String::as_str).collect();
         span.is_empty()
-            || (corrections && ends_in_a_correction(span))
-            || (lists && span.iter().all(|w| LIST_MARKERS.contains(w)))
+            || (corrections && is_correction(&spoken, start, end))
+            || (lists && only_list_markers(&span))
     };
-    for (index, word) in b.iter().enumerate() {
-        if kept[index] {
-            if !dropped_ok(&span) {
+    let mut start = 0;
+    for (index, survives) in kept.iter().enumerate() {
+        if *survives {
+            if !dropped_ok(start, index) {
                 return false;
             }
-            span.clear();
-        } else {
-            span.push(word.as_str());
+            start = index + 1;
         }
     }
-    dropped_ok(&span)
+    dropped_ok(start, b.len())
 }
 
-/// Whether a dropped stretch is a correction: the mistaken words, then the
-/// cue, then at most a couple of words the replacement repeats ("my car,
-/// sorry, my | bike"). A cue earlier in the stretch means the model dropped
-/// words after it that nobody took back — and "I mean it" is not a cue.
-fn ends_in_a_correction(span: &[&str]) -> bool {
-    span.iter().enumerate().any(|(at, word)| {
-        CORRECTION_CUES.contains(word)
-            && span.len() - at <= 3
-            && !(*word == "mean" && span.get(at + 1) == Some(&"it"))
-    })
+/// Whether the dropped words `spoken[start..end]` are a correction.
+///
+/// "Scratch that" (or "delete that") may take the sentence before it. Any
+/// other cue must end the dropped words — what follows it is the replacement,
+/// and must be kept — and may take only as many words before it as the
+/// replacement has, plus one, within one sentence: "my car" for "my bike",
+/// "the hiring plan" for "the hiring freeze", but not "we lost the logs" for
+/// "the backups". "I mean it" is not a cue.
+fn is_correction(spoken: &[Token], start: usize, end: usize) -> bool {
+    let span: Vec<&str> = spoken[start..end].iter().map(|t| t.word.as_str()).collect();
+    let scratch = span
+        .windows(2)
+        .any(|pair| matches!(pair, [cue, "that"] if *cue == "scratch" || *cue == "delete"));
+    if scratch {
+        return true;
+    }
+    if !matches!(span.last(), Some(last) if CORRECTION_CUES.contains(last)) {
+        return false;
+    }
+    // A sentence may not end inside what was dropped.
+    if spoken[start..end - 1].iter().any(|t| t.ends_sentence) {
+        return false;
+    }
+    // The cue itself may be several words: "no wait", "I mean", "or rather".
+    let cue_words = span
+        .iter()
+        .rev()
+        .take_while(|w| CORRECTION_CUES.contains(w) || matches!(**w, "i" | "or"))
+        .count();
+    let mistaken = span.len() - cue_words;
+    // The replacement: from after the cue to the end of its phrase.
+    let replacement = spoken[end..]
+        .iter()
+        .position(|t| t.ends_phrase)
+        .map_or(spoken.len() - end, |at| at + 1);
+    mistaken >= 1 && mistaken <= replacement + 1
+}
+
+/// The text with list numbering and bullets taken off each line, so "1."
+/// is not mistaken for a word while a spoken "500" still counts.
+fn without_list_numbers(text: &str) -> String {
+    text.lines()
+        .map(|line| list_item(line).map_or(line, |(item, _)| item))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// For each word of `b`, whether it survives in `a`, when `a` is `b` with
@@ -340,15 +404,36 @@ fn keep_in_order(b: &[String], a: &[String]) -> Option<Vec<bool>> {
     Some(kept)
 }
 
-/// Lowercased words without surrounding punctuation or list markers, so
-/// "Run" matches "run" and "1." or "-" counts for nothing.
+/// Lowercased words without surrounding punctuation, so "Run" matches
+/// "run". Numbers are words too: an answer that loses "500" is refused.
 fn words(text: &str) -> Vec<String> {
+    tokens(text).into_iter().map(|t| t.word).collect()
+}
+
+/// A spoken word, and the punctuation the transcriber put after it.
+struct Token {
+    word: String,
+    /// A full stop, question mark or exclamation mark follows.
+    ends_sentence: bool,
+    /// Any of those, or a comma, semicolon or colon.
+    ends_phrase: bool,
+}
+
+fn tokens(text: &str) -> Vec<Token> {
     text.split_whitespace()
-        .map(|word| {
-            word.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'')
-                .to_lowercase()
+        .filter_map(|raw| {
+            let word = raw
+                .trim_matches(|c: char| !c.is_alphanumeric() && c != '\'')
+                .to_lowercase();
+            let tail = raw.trim_end_matches(['"', '\'', ')', '”', '’']);
+            let ends_sentence = tail.ends_with(['.', '!', '?']);
+            let ends_phrase = ends_sentence || tail.ends_with([',', ';', ':']);
+            (!word.is_empty()).then_some(Token {
+                word,
+                ends_sentence,
+                ends_phrase,
+            })
         })
-        .filter(|word| !word.is_empty() && !word.chars().all(|c| c.is_ascii_digit()))
         .collect()
 }
 
@@ -456,6 +541,79 @@ mod tests {
             true,
             false
         ));
+    }
+
+    #[test]
+    fn a_lost_or_changed_number_is_refused() {
+        assert!(!acceptable("Let's meet at 3, no wait, 4.", "Let's meet at 3.", false, true));
+        assert!(acceptable("Let's meet at 3, no wait, 4.", "Let's meet at 4.", false, true));
+        assert!(!acceptable("Send 500 pounds to Tom, sorry, Tim.", "Send pounds to Tim.", false, true));
+        assert!(!acceptable(
+            "Shopping list: first two apples, second three oranges, third four pears.",
+            "Shopping list:\n- apples\n- oranges\n- pears",
+            true,
+            false
+        ));
+        assert!(acceptable(
+            "Shopping list: first two apples, second three oranges, third four pears.",
+            "Shopping list:\n1. two apples\n2. three oranges\n3. four pears",
+            true,
+            false
+        ));
+    }
+
+    #[test]
+    fn a_correction_cannot_take_an_earlier_sentence_with_it() {
+        // Only "scratch that" retracts a sentence.
+        assert!(!acceptable(
+            "The server crashed. We lost the logs, sorry, the backups.",
+            "The server crashed. The backups.",
+            false,
+            true
+        ));
+        assert!(!acceptable(
+            "The server crashed at noon. We lost the logs, sorry, the backups.",
+            "The backups.",
+            false,
+            true
+        ));
+        assert!(acceptable(
+            "The server crashed. We lost the logs, sorry, the backups.",
+            "The server crashed. We lost the backups.",
+            false,
+            true
+        ));
+    }
+
+    #[test]
+    fn list_numbers_count_for_nothing_but_joining_words_may_go() {
+        assert!(acceptable(
+            "I need eggs, milk and bread.",
+            "I need:\n- eggs\n- milk\n- bread",
+            true,
+            false
+        ));
+        assert!(acceptable(
+            "Number one, the budget. Number two, hiring.",
+            "1. The budget\n2. Hiring",
+            true,
+            false
+        ));
+    }
+
+    #[test]
+    fn clock_times_and_links_are_not_lists() {
+        assert!(!sounds_like_a_list("Meet at 10:30, then 11:30 and 12:30 if needed."));
+        assert!(!sounds_like_a_list("See https://example.com/a, b and c for details."));
+        assert!(sounds_like_a_list("I need: eggs, milk and bread."));
+    }
+
+    #[test]
+    fn i_mean_is_heard_before_any_word_but_it() {
+        assert!(sounds_like_a_correction("Fly to Spain, I mean Italy, next week."));
+        assert!(sounds_like_a_correction("Bring the laptop, I mean the item on my desk."));
+        assert!(!sounds_like_a_correction("I mean it, thank you."));
+        assert!(!sounds_like_a_correction("I mean, it's fine."));
     }
 
     #[test]

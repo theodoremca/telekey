@@ -206,11 +206,31 @@ fn window_around(total: usize, cursor: usize, before: usize, after: usize) -> (u
     (start, end - start)
 }
 
+/// Bundle-id prefixes of password managers, whatever their exact id this
+/// version (1Password alone has used several).
+const TITLE_ONLY_PREFIXES: &[&str] = &[
+    "com.1password.",
+    "com.agilebits.",
+    "com.bitwarden.",
+    "com.lastpass.",
+    "com.dashlane.",
+    "org.keepassxc.",
+    "com.github.wez.wezterm",
+    "co.zeit.hyper",
+];
+
+/// Words in an app's name that mean its text is not ours to send.
+const TITLE_ONLY_NAMES: &[&str] = &[
+    "password", "1password", "bitwarden", "keepass", "lastpass", "dashlane", "enpass",
+    "keychain", "terminal", "iterm", "warp", "ghostty", "kitty", "alacritty", "wezterm",
+];
+
 fn title_only(target: &TargetApp) -> bool {
-    target
-        .bundle_id
-        .as_deref()
-        .is_some_and(|id| TITLE_ONLY.iter().any(|known| known.eq_ignore_ascii_case(id)))
+    let id = target.bundle_id.as_deref().unwrap_or_default().to_lowercase();
+    let name = target.name.as_deref().unwrap_or_default().to_lowercase();
+    TITLE_ONLY.iter().any(|known| known.eq_ignore_ascii_case(&id))
+        || TITLE_ONLY_PREFIXES.iter().any(|prefix| id.starts_with(prefix))
+        || TITLE_ONLY_NAMES.iter().any(|word| name.contains(word))
 }
 
 /// Read the screen for `target`. Blocking: run it off the pipeline thread.
@@ -473,6 +493,19 @@ mod tests {
         assert!(title_only(&terminal));
         assert!(!title_only(&mail));
         assert!(!title_only(&TargetApp::default()));
+        // A version with an id the list does not know, caught by its prefix
+        // or its name.
+        let one_password_8 = TargetApp {
+            bundle_id: Some("com.1password.1password-launcher".into()),
+            ..TargetApp::default()
+        };
+        let keepass = TargetApp {
+            bundle_id: Some("org.example.keepassium".into()),
+            name: Some("KeePassium".into()),
+            ..TargetApp::default()
+        };
+        assert!(title_only(&one_password_8));
+        assert!(title_only(&keepass));
     }
 
     #[test]

@@ -270,6 +270,15 @@ Instant; a real two-monitor and click-to-dictate check on Windows; a way to
 make the Linux overlay non-activating so the pill can ship there. Plan,
 decisions and measurements: [docs/next-features.md](docs/next-features.md).
 
+## Phase 8 — Smart features — **built (October 2026)**
+
+All off by default. **Replacements** ("when I say … write …", applied last).
+**Use what's on screen**: the window title and text near the cursor go with
+the audio as the prompt, which fixed every name in testing; never from
+password fields. **Lists and self-corrections**: one formatting call, only
+when a cue is heard, and its answer is pasted only if it changed nothing else.
+Details and measurements: [docs/next-features.md](docs/next-features.md).
+
 ---
 
 ## The order, and roughly how long

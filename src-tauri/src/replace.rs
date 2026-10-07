@@ -21,9 +21,11 @@ use crate::settings::Replacement;
 /// When the whole dictation is the phrase, the result is exactly `write`,
 /// without the full stop the transcriber puts after a sentence.
 pub fn apply(text: &str, replacements: &[Replacement]) -> String {
+    // A phrase with no words in it ("-", ",") would match between every
+    // two characters.
     let usable: Vec<&Replacement> = replacements
         .iter()
-        .filter(|r| !r.said.trim().is_empty())
+        .filter(|r| !phrase_pattern(&r.said).is_empty())
         .collect();
     if usable.is_empty() {
         return text.to_string();
@@ -88,13 +90,15 @@ impl<'a> Matcher<'a> {
     }
 }
 
-/// A phrase's words, escaped, joined by any run of spaces, hyphens or commas.
+/// A phrase's words, escaped, joined by any run of spaces, hyphens or commas
+/// on the same line: a match never crosses a line, so it cannot merge two
+/// bullets of a list the smart pass laid out.
 fn phrase_pattern(said: &str) -> String {
     said.split(|c: char| c.is_whitespace() || c == '-' || c == ',')
         .filter(|word| !word.is_empty())
         .map(regex::escape)
         .collect::<Vec<_>>()
-        .join(r"[\s,\-–—]+")
+        .join(r"[ \t,\-–—]+")
 }
 
 #[cfg(test)]
@@ -166,6 +170,19 @@ mod tests {
         assert_eq!(apply("Hello there.", &[]), "Hello there.");
         assert_eq!(apply("Hello there.", &[rule("  ", "x")]), "Hello there.");
         assert_eq!(apply("Hello there.", &[rule("goodbye", "x")]), "Hello there.");
+    }
+
+    #[test]
+    fn a_match_never_crosses_a_line() {
+        let rules = [rule("cloud code", "Claude Code")];
+        let list = "Steps:\n- ask cloud\n- code review\n- ship";
+        assert_eq!(apply(list, &rules), list);
+    }
+
+    #[test]
+    fn a_phrase_with_no_words_is_ignored() {
+        let rules = [rule("-", "X"), rule(" , ", "Y")];
+        assert_eq!(apply("one - two, three", &rules), "one - two, three");
     }
 
     #[test]

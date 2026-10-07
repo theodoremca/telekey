@@ -408,6 +408,36 @@ waits in the tap and goes as soon as the session is ready.
 - Real checks still owed: click-speak-stop pasting into another app, and
   hold-speak-release on each of several monitors, on macOS and Windows.
 
+## Smart features (built 2026-10-07)
+
+Asked for after the three above, as Wispr Flow-style toggles, all off by
+default: replacements, screen context, smart lists, self-corrections. Plan in
+the session; decisions: read the text near the cursor (not the title only),
+model only when a cue is heard, no new OS permissions.
+
+### Spike results (synthetic voice, 2026-10-07)
+
+| | Without | With screen context |
+|---|---|---|
+| `gpt-transcribe` | "Ask Shivani Nandi … EK Chukwu … Ifa" | "Ask Siobhan and Nnamdi … Ikechukwu … Aoife" |
+| `gpt-live-transcribe` | "Siobhan and Nomdi … hardanso … E K Chuqu" | "Siobhan and Nnamdi … Hordanso … ikechukwu" |
+
+- A near-silent clip with the prompt came back empty: no echo of the screen.
+- Neither transcriber applies "sorry, my bike" corrections, even when the
+  prompt asks; neither lays out lists. Both need the formatting pass.
+- `gpt-5.6-luna` with the tuned guidance got all nine samples right at
+  `reasoning: low` in 1.4–3 s (parallel requests). `none` was no faster and once
+  rewrote a non-list. The first guidance wording read "I mean it" as a
+  correction; the acceptance check in `smart.rs` exists for that kind of miss.
+
+### Still to check by hand
+
+- What Accessibility returns in Notes, Mail, Safari, Chrome, Slack, VS Code
+  and Google Docs (expected: nothing from Electron apps and Docs), and how long
+  the read takes; the log line `screen context` carries lengths and time.
+- Real bullets from the HTML paste in Notes, Mail, Slack, Pages; any app that
+  styles it badly goes on a plain-text list.
+
 ## Sources
 
 - OpenAI pricing: developers.openai.com/api/docs/pricing

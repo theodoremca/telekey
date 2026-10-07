@@ -117,6 +117,9 @@ Everything below is optional — TeleKey works with none of it configured.
 |---|---|
 | **Shortcut** | Rebindable. Click **Change** and press the combination you want. |
 | **Instant** | Off by default, in Settings › Speed. Streams your voice while you speak, so the text lands about a second after you let go instead of 3–4. Costs about four times as much: 5.1¢ a minute on credits, or OpenAI's $0.017 a minute with your own key. If it cannot connect, that dictation quietly uses Standard. |
+| **Replacements** | Settings › Vocabulary. "When I say *cloud code*, write *Claude Code*": a guaranteed fix for a word the model keeps getting wrong, applied on your computer after everything else. |
+| **Use what's on screen** | Off by default. Sends the window title and up to about 1,000 characters around your cursor with the audio, so names on screen come back spelled right. Never reads password fields, and only the title in terminals and password managers. macOS; Windows sends the app and window title. |
+| **Lists and self-corrections** | Off by default, in Settings › Formatting. A dictation that sounds like a list is pasted as bullets or numbers (real bullets in Notes, Mail and Slack); "my car, sorry, my bike" becomes "my bike". Only dictations where TeleKey hears a list or a correction go to the formatting model, and its answer is pasted only if it changed nothing else. Adds a second or two, and 1¢ on credits, to those dictations. |
 | **Dictation pill** | On by default on macOS and Windows; switch it off in Settings › Shortcut and only the shortcut remains. Off on Linux for now, where clicking it would take focus from the app you are dictating into. |
 | **Vocabulary** | Names and jargon — "Kubernetes", your product names — sent to the model as recognition hints so they come back spelled right. |
 | **Formatting** | Per-app styles: literal in a terminal (no sentence capital, no full stop), terse in Slack, formal in Mail. Literal runs on your Mac; the others cost one extra request. |
@@ -134,6 +137,10 @@ Everything below is optional — TeleKey works with none of it configured.
   server on the way (the Cloud Function, or the relay for Instant), which
   forwards it and stores none of it. Instant streams it while you speak
   instead of after.
+- **Screen context is opt-in.** With "Use what's on screen" on, the window
+  title and the text around your cursor go with the audio, the same way and
+  to the same place. Never from a password field, never while a password is
+  being typed, never logged or stored.
 - **Transcripts stay local.** History is a file on your Mac, owner-readable
   only. Turn it off in Settings and existing entries are deleted immediately.
 - **Your API key** lives in the Keychain, and is never logged or printed.
@@ -252,6 +259,9 @@ hold key → trigger → capture audio → [release] → WAV in memory
 | `audio.rs` | Capture → 16 kHz mono → WAV, all in memory |
 | `transcribe.rs` | `gpt-transcribe` upload, with vocabulary as `keywords[]` |
 | `live.rs` | Instant: streams to `gpt-live-transcribe` while you speak, through `relay/` on credits |
+| `context.rs` | "Use what's on screen": the window title and text near the cursor, as the prompt |
+| `smart.rs` | Lists and self-corrections: when to ask the model, and whether to trust its answer |
+| `replace.rs` | "When I say … write …" |
 | `polish.rs` | Per-app formatting; local rules where a model is not needed |
 | `inject.rs` | Clipboard save → ⌘V → restore |
 | `panel.rs` | Non-activating `NSPanel` so the overlay never steals focus; which screen and where |
