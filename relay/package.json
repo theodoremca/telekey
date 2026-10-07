@@ -1,0 +1,22 @@
+{
+  "name": "telekey-relay",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "bun build ./src/main.ts --target=node --format=esm --outfile=dist/relay.mjs --external firebase-admin --external 'firebase-admin/*' --external ws",
+    "typecheck": "tsc --noEmit",
+    "test": "rm -rf dist-test && bun build ./test/protocol.test.ts ./test/relay.test.ts --target=node --format=esm --outdir=dist-test --external ws && node --test dist-test/*.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.12",
+    "typescript": "~5.8.3"
+  }
+}

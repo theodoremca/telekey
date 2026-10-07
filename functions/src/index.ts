@@ -12,13 +12,15 @@
 
 import express from "express";
 import { initializeApp } from "firebase-admin/app";
-import { getAuth } from "firebase-admin/auth";
-import { FieldValue, getFirestore, type DocumentReference } from "firebase-admin/firestore";
+import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import { onRequest } from "firebase-functions/v2/https";
 import OpenAI, { toFile } from "openai";
 import Stripe from "stripe";
 
-import { NOT_A_TESTER, parseTesters, testerProblem } from "./testers";
+import { requireMember } from "./auth";
+import { debit, ensureUser, packsCol, requireBalance, usersCol, type Prefix } from "./ledger";
+import { costCents, noUnits, type Units } from "./pricing";
+import { parseTesters } from "./testers";
 
 initializeApp();
 
@@ -36,15 +38,6 @@ function optionalEnv(name: string, fallback: string): string {
 }
 
 const REGION = "us-east1";
-const MARKUP = 3;
-const TRANSCRIBE_PER_MINUTE = 0.0045;
-const POLISH_INPUT_PER_MILLION = 0.2;
-const POLISH_OUTPUT_PER_MILLION = 1.2;
-const CACHED_DISCOUNT = 0.1;
-const MIN_CENTS = 1;
-const PER_UID_GAP_MS = 800;
-
-type Prefix = "staging" | "production";
 
 type Stage = {
   prefix: Prefix;
@@ -56,134 +49,12 @@ type Stage = {
   testers?: () => Set<string>;
 };
 
-type Units = {
-  dictations: number;
-  transcribeSeconds: number;
-  transcribeTokens: number;
-  polishInputTokens: number;
-  polishCachedTokens: number;
-  polishOutputTokens: number;
-};
-
-function usersCol(prefix: Prefix) {
-  return `${prefix}-users`;
-}
-
-function packsCol(prefix: Prefix) {
-  return `${prefix}-packs`;
-}
-
-function costCents(units: Units): number {
-  const transcribe =
-    (units.transcribeSeconds / 60) * TRANSCRIBE_PER_MINUTE * MARKUP;
-  const polishInput =
-    ((units.polishInputTokens - units.polishCachedTokens) / 1e6) *
-    POLISH_INPUT_PER_MILLION *
-    MARKUP;
-  const polishCached =
-    (units.polishCachedTokens / 1e6) *
-    POLISH_INPUT_PER_MILLION *
-    CACHED_DISCOUNT *
-    MARKUP;
-  const polishOutput =
-    (units.polishOutputTokens / 1e6) * POLISH_OUTPUT_PER_MILLION * MARKUP;
-  return Math.max(
-    MIN_CENTS,
-    Math.ceil((transcribe + polishInput + polishCached + polishOutput) * 100),
-  );
-}
-
 function json(
   res: { status: (n: number) => { json: (b: unknown) => void } },
   status: number,
   body: unknown,
 ) {
   res.status(status).json(body);
-}
-
-async function requireUser(req: { header: (n: string) => string | undefined }) {
-  const header = req.header("authorization") ?? "";
-  const match = /^Bearer (.+)$/i.exec(header);
-  if (!match) {
-    throw Object.assign(new Error("Sign in to use TeleKey's key."), {
-      status: 401,
-    });
-  }
-  try {
-    return await getAuth().verifyIdToken(match[1]);
-  } catch {
-    throw Object.assign(new Error("Session expired — sign in again."), {
-      status: 401,
-    });
-  }
-}
-
-/**
- * A signed-in user who may use this stage. On staging that means a listed
- * tester, checked before anything is created for them: a stranger gets no
- * user document and no welcome credit.
- */
-async function requireMember(
-  stage: Stage,
-  req: { header: (n: string) => string | undefined },
-) {
-  const user = await requireUser(req);
-  if (stage.testers) {
-    const problem = testerProblem(stage.testers(), user.email, user.email_verified);
-    if (problem) {
-      console.warn(`staging refused ${user.email ?? user.uid}: not a listed tester`);
-      throw Object.assign(new Error(problem), { status: 403, code: NOT_A_TESTER });
-    }
-  }
-  return user;
-}
-
-async function ensureUser(
-  prefix: Prefix,
-  uid: string,
-  email: string | undefined,
-): Promise<DocumentReference> {
-  const ref = getFirestore().collection(usersCol(prefix)).doc(uid);
-  const snap = await ref.get();
-  if (!snap.exists) {
-    await ref.set({
-      email: email ?? null,
-      balanceCents: prefix === "staging" ? 100 : 0,
-      createdAt: FieldValue.serverTimestamp(),
-    });
-  } else if (email && snap.get("email") !== email) {
-    await ref.set({ email }, { merge: true });
-  }
-  return ref;
-}
-
-async function debit(prefix: Prefix, uid: string, units: Units, cost: number) {
-  const db = getFirestore();
-  const userRef = db.collection(usersCol(prefix)).doc(uid);
-  await db.runTransaction(async (tx) => {
-    const snap = await tx.get(userRef);
-    const balance = Number(snap.get("balanceCents") ?? 0);
-    const lastAt = Number(snap.get("lastTranscribeAt") ?? 0);
-    if (Date.now() - lastAt < PER_UID_GAP_MS) {
-      throw Object.assign(new Error("Slow down a moment."), { status: 429 });
-    }
-    if (balance < cost) {
-      throw Object.assign(new Error("Out of credits — buy more in TeleKey."), {
-        status: 402,
-      });
-    }
-    tx.update(userRef, {
-      balanceCents: balance - cost,
-      lastTranscribeAt: Date.now(),
-    });
-    tx.set(userRef.collection("usage").doc(), {
-      ...units,
-      costCents: cost,
-      at: FieldValue.serverTimestamp(),
-    });
-  });
-  const after = await userRef.get();
-  return Number(after.get("balanceCents") ?? 0);
 }
 
 async function creditPurchase(
@@ -300,14 +171,9 @@ function createApp(stage: Stage): express.Express {
         json(res, 405, { error: "POST only" });
         return;
       }
-      const user = await requireMember(stage, req);
+      const user = await requireMember(stage.testers?.(), req.header("authorization"));
       const userRef = await ensureUser(stage.prefix, user.uid, user.email);
-      const before = await userRef.get();
-      if (Number(before.get("balanceCents") ?? 0) < MIN_CENTS) {
-        throw Object.assign(new Error("Out of credits — buy more in TeleKey."), {
-          status: 402,
-        });
-      }
+      await requireBalance(userRef);
       const wav = rawBody(req);
       if (wav.length < 100) {
         json(res, 400, { error: "recording too short" });
@@ -328,12 +194,9 @@ function createApp(stage: Stage): express.Express {
       });
 
       const units: Units = {
+        ...noUnits(),
         dictations: 1,
         transcribeSeconds: usageSeconds(result),
-        transcribeTokens: 0,
-        polishInputTokens: 0,
-        polishCachedTokens: 0,
-        polishOutputTokens: 0,
       };
       const cost = costCents(units);
       const balanceCents = await debit(stage.prefix, user.uid, units, cost);
@@ -345,14 +208,9 @@ function createApp(stage: Stage): express.Express {
 
   app.post("/polish", async (req, res) => {
     try {
-      const user = await requireMember(stage, req);
+      const user = await requireMember(stage.testers?.(), req.header("authorization"));
       const userRef = await ensureUser(stage.prefix, user.uid, user.email);
-      const before = await userRef.get();
-      if (Number(before.get("balanceCents") ?? 0) < MIN_CENTS) {
-        throw Object.assign(new Error("Out of credits — buy more in TeleKey."), {
-          status: 402,
-        });
-      }
+      await requireBalance(userRef);
       const body = req.body as { text?: string; instruction?: string };
       const text = (body.text ?? "").trim();
       const instruction = (body.instruction ?? "").trim();
@@ -371,9 +229,7 @@ function createApp(stage: Stage): express.Express {
 
       const usage = result.usage;
       const units: Units = {
-        dictations: 0,
-        transcribeSeconds: 0,
-        transcribeTokens: 0,
+        ...noUnits(),
         polishInputTokens: usage?.input_tokens ?? 0,
         polishCachedTokens: usage?.input_tokens_details?.cached_tokens ?? 0,
         polishOutputTokens: usage?.output_tokens ?? 0,
@@ -390,7 +246,7 @@ function createApp(stage: Stage): express.Express {
 
   app.get("/me", async (req, res) => {
     try {
-      const user = await requireMember(stage, req);
+      const user = await requireMember(stage.testers?.(), req.header("authorization"));
       const ref = await ensureUser(stage.prefix, user.uid, user.email);
       const snap = await ref.get();
       const [usage, packs] = await Promise.all([
@@ -423,7 +279,7 @@ function createApp(stage: Stage): express.Express {
 
   app.post("/createCheckoutSession", async (req, res) => {
     try {
-      const user = await requireMember(stage, req);
+      const user = await requireMember(stage.testers?.(), req.header("authorization"));
       await ensureUser(stage.prefix, user.uid, user.email);
       const packId = String((req.body as { packId?: string }).packId ?? "");
       const pack = await getFirestore()
