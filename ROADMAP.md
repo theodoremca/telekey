@@ -279,6 +279,15 @@ password fields. **Lists and self-corrections**: one formatting call, only
 when a cue is heard, and its answer is pasted only if it changed nothing else.
 Details and measurements: [docs/next-features.md](docs/next-features.md).
 
+## Phase 9 — Self-updates — **built (October 2026)**
+
+Checked a minute after launch and every six hours, downloaded in the
+background, verified against TeleKey's update key, installed only on
+"Restart to Update" (menu bar or Settings). The release workflow signs every
+platform's update and publishes `latest.json`; the macOS update is the
+notarised app. Copies before 0.3.0 need one manual download. See
+RELEASING.md › Updates.
+
 ---
 
 ## The order, and roughly how long

@@ -127,6 +127,7 @@ Everything below is optional — TeleKey works with none of it configured.
 | **Microphone** | Follows the system default, so a headset takes over when you connect it — the capsule says "Microphone: AirPods Pro" for a moment when that happens. Pin one in Settings › Input if you would rather it did not. If the microphone drops out mid-sentence, what was captured is still transcribed and the capsule tells you. |
 | **History** | Recent transcripts, click any to copy. Stored `0600` on your Mac only, capped, clearable, and switchable off entirely. |
 | **Usage** | What you have spent and how many minutes you have dictated — today, this month, all time — with a 30-day chart. Rates are editable, since published prices change. |
+| **Updates** | TeleKey checks for a new version a minute after it starts and every six hours, downloads it in the background, and then shows **Restart to Update** in the menu bar and in Settings › Updates. Nothing installs until you click it, and never mid-dictation. Settings, history, your sign-in and macOS permissions are kept. On Linux the AppImage replaces itself; a `.deb` install asks for your password. Copies from before 0.3.0 need one manual download. |
 
 ## Privacy
 
@@ -146,6 +147,9 @@ Everything below is optional — TeleKey works with none of it configured.
 - **Your API key** lives in the Keychain, and is never logged or printed.
 - **Usage records are counts, not content** — seconds and token totals, never
   what you said. Rolled up as they age, so the file stays a few KB for life.
+- **Update checks** fetch one public file from GitHub, which sees an ordinary
+  download request and nothing about you. An update installs only if it is
+  signed with TeleKey's release key.
 
 ---
 
@@ -267,6 +271,7 @@ hold key → trigger → capture audio → [release] → WAV in memory
 | `panel.rs` | Non-activating `NSPanel` so the overlay never steals focus; which screen and where |
 | `overlay.rs` | The capsule and the resting pill, following the pointer between screens |
 | `signing.rs` | Detects a signature that cannot hold a permission (macOS) |
+| `update.rs` | Finds, downloads and verifies updates; installs on "Restart to Update" |
 | `usage.rs` | Billing units from the API, rolled up by age |
 
 ### Two rules for this codebase

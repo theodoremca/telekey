@@ -194,9 +194,13 @@ impl Updater {
     }
 
     /// The tray's update item, kept in step with the state from now on.
+    ///
+    /// No lock is held while the item is relabelled: off the main thread that
+    /// waits for the main thread, which may itself be waiting on the lock.
     pub fn set_menu_item(&self, item: MenuItem<Wry>) {
-        apply_label(&item, &self.state.lock());
-        *self.menu_item.lock() = Some(item);
+        *self.menu_item.lock() = Some(item.clone());
+        let state = self.state.lock().clone();
+        apply_label(&item, &state);
     }
 
     /// The tray item was clicked: restart if an update is waiting, else check.
@@ -429,8 +433,9 @@ impl Updater {
             }
             *current = state.clone();
         }
-        if let Some(item) = self.menu_item.lock().as_ref() {
-            apply_label(item, &state);
+        let item = self.menu_item.lock().clone();
+        if let Some(item) = item {
+            apply_label(&item, &state);
         }
         if let Err(err) = self.app.emit(UPDATE_EVENT, self.status()) {
             tracing::warn!("could not announce the update state: {err}");
@@ -553,6 +558,38 @@ mod tests {
     #[test]
     fn one_tls_backend_so_instant_can_connect() {
         let _ = rustls::ClientConfig::builder();
+    }
+
+    /// Every installed copy trusts this key and fetches from this address,
+    /// and neither can be fixed by an update: a typo in either means every
+    /// user reinstalls by hand.
+    #[test]
+    fn the_update_key_and_feed_are_usable() {
+        use base64::Engine;
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let updater = &config["plugins"]["updater"];
+
+        let pubkey = updater["pubkey"].as_str().expect("an update public key");
+        let text = base64::engine::general_purpose::STANDARD
+            .decode(pubkey)
+            .expect("the key is base64, as `tauri signer generate` writes it");
+        minisign_verify::PublicKey::decode(std::str::from_utf8(&text).unwrap())
+            .expect("a minisign public key");
+
+        let endpoints = updater["endpoints"].as_array().unwrap();
+        assert_eq!(
+            endpoints,
+            &[serde_json::json!(
+                "https://github.com/theodoremca/telekey/releases/latest/download/latest.json"
+            )]
+        );
+        assert_eq!(updater["dangerousInsecureTransportProtocol"], serde_json::Value::Null);
+        // Local builds need no signing key; only the release workflow makes updates.
+        assert_eq!(config["bundle"]["createUpdaterArtifacts"], serde_json::Value::Null);
+        let release: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.release.conf.json")).unwrap();
+        assert_eq!(release["bundle"]["createUpdaterArtifacts"], true);
     }
 
     #[test]

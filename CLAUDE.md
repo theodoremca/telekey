@@ -66,6 +66,12 @@ by hand builds without publishing. Mac signing and notarisation need the
 the Mac build is ad-hoc. The website's Download button points at
 `/releases/latest`.
 
+The release also carries `latest.json`, the update feed every installed copy
+(0.3.0 on) reads from `/releases/latest`: publishing a release offers it to
+everyone within six hours. Updates are signed with the `TAURI_SIGNING_*`
+secrets; the key is in `~/.tauri/telekey-updater.key` and must never be lost
+(RELEASING.md › Updates).
+
 **Always set `APPLE_SIGNING_IDENTITY` or run `dev-sign.sh` after a build.**
 Without it the bundle carries the linker's placeholder signature and macOS
 permissions silently never stick. See rule 2 below.
@@ -144,6 +150,12 @@ XDG_CONFIG_HOME=$(mktemp -d) \
 GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcloud/application_default_credentials.json \
 firebase deploy --only functions:staging --project telekey-app --non-interactive
 ```
+
+This way the CLI has been seen to wait 25 minutes and report "Task index 0
+failed: timed out" for a deploy that had finished in two. Before redeploying,
+check `gcloud run revisions list --service api --region us-east1 --project
+telekey-app` (or `--service staging`): a new revision, Ready and serving, means
+it worked.
 
 **Staging is invite-only.** Every authenticated route on `staging` goes through
 `requireMember`, which refuses (403, code `not_a_tester`) any email not in
@@ -238,6 +250,8 @@ Desktop loads **`.env` then `.env.staging` or `.env.production`**, chosen by `TE
 | `TELEKEY_API_BASE` | `.env.staging` / `.env.production` | Functions origin, e.g. `…cloudfunctions.net/staging` |
 | `TELEKEY_SITE_URL` | `.env.staging` / `.env.production` | Live website origin for Sign in (`https://telekey-staging.vercel.app` / `https://telekey.vercel.app`) |
 | `TELEKEY_RELAY_URL` | `.env.staging` / `.env.production` | Instant relay, `wss://…/v1/realtime?intent=transcription`. Optional: each stage's Cloud Run address is built in (`session.rs`) |
+| `TELEKEY_UPDATE_URL` | launch env | Another `latest.json` to check, for testing an update (RELEASING.md › Updates). Also turns on automatic checks in a debug build |
+| `TAURI_SIGNING_PRIVATE_KEY` / `_PASSWORD` | GitHub secrets | Signs updates in `release.yml`. Never needed locally |
 | `NEXT_PUBLIC_TELEKEY_API_BASE` | `web/.env.development` or `web/.env.production` | Same Functions origin for the website |
 | Functions secrets | `functions/.env` | `OPENAI_API_KEY`, `STRIPE_SECRET_KEY_STAGING`, `STRIPE_SECRET_KEY_PRODUCTION`, `STRIPE_WEBHOOK_SECRET_STAGING`, `STRIPE_WEBHOOK_SECRET_PRODUCTION`. Gitignored; `firebase deploy` reads it from disk. Copy `functions/.env.example`. |
 | `TELEKEY_SITE_URL_STAGING` / `_PRODUCTION` | `functions/.env` | Checkout return URLs |
@@ -521,6 +535,29 @@ rewrote "First of all … Next week …" into another sentence; both fail the
 check and are pasted as spoken. Keep the check strict. Replacements run after
 all of this, last before the paste.
 
+**29. Instant crashes on key-down with "no process-level CryptoProvider".**
+rustls panics when a client config is built while two crypto backends are
+compiled in and neither is installed as the default, and tungstenite builds
+one for every `wss://` handshake. reqwest brings aws-lc-rs; anything that turns
+on rustls's `ring` feature adds the second. `tauri-plugin-updater`'s default
+`rustls-tls` feature does exactly that, so it is built without it and shares
+our reqwest (and its TLS) instead. `update::tests::one_tls_backend_so_instant_can_connect`
+fails if a dependency brings ring back. `cargo tree -e features -i rustls`
+shows who enables what.
+
+**30. An update is published but no one is offered it, or it will not install.**
+The feed is `latest.json` in the latest *non-prerelease* release. Its entries
+must name files in that same release, and each signature must verify against
+`plugins.updater.pubkey`; `update.rs` logs the reason at info level
+(`update check failed: …`). `createUpdaterArtifacts` lives only in
+`tauri.release.conf.json`: in `tauri.conf.json` it makes every local build fail
+for want of the private key. The macOS update is left out of the feed unless
+the build was notarised, because an ad-hoc app would cost every user their
+permissions. On Windows, `install` ends the process to run the installer
+(which relaunches TeleKey), skipping the exit path, so the speakers are
+restored in `on_before_exit`. Copies older than the first updater build (0.3.0)
+never check; they need one manual download.
+
 ---
 
 ## Architecture in one screen
@@ -541,6 +578,8 @@ escape.rs   (Esc)    ┴─► mpsc ─► pipeline.rs (worker thread)
                                     │  inject.rs      clipboard save → ⌘V → restore
                                     │  history.rs / usage.rs
                                     └─► StatusSink ─► overlay.rs ─► panel.rs (NSPanel)
+
+update.rs  latest.json on GitHub ─► download + verify ─► "Restart to Update" (tray, Settings)
 ```
 
 An OpenAI key in the Keychain still talks to OpenAI directly. A hosted session

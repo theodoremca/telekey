@@ -267,12 +267,12 @@ const previewPlatform = (): Platform => {
 };
 
 const previewUpdate = (): UpdateStatus => {
-  const current = "0.2.3";
+  const current = "0.3.0";
   switch (previewFlags().get("update")) {
     case "ready":
-      return { current, state: "ready", version: "0.3.0" };
+      return { current, state: "ready", version: "0.3.1" };
     case "downloading":
-      return { current, state: "downloading", version: "0.3.0", percent: 42 };
+      return { current, state: "downloading", version: "0.3.1", percent: 42 };
     case "failed":
       return {
         current,

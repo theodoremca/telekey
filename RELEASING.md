@@ -145,10 +145,42 @@ What comes out:
 | Platform | File | Signed |
 |---|---|---|
 | macOS (Apple Silicon and Intel) | `TeleKey_<ver>_universal.dmg` | Developer ID and notarised, once the secrets below are set; ad-hoc until then |
-| Windows | `TeleKey_<ver>_x64-setup.exe` | No — SmartScreen warns |
-| Linux (X11) | `.deb` and `.AppImage` | No |
+| macOS update | `TeleKey_<ver>_universal.app.tar.gz` | The same notarised app; only published when notarised |
+| Windows | `TeleKey_<ver>_x64-setup.exe` (also its update) | No — SmartScreen warns |
+| Linux (X11) | `.deb` and `.AppImage` (also their updates) | No |
+| All | `latest.json` | Lists each update with its signature |
 
 The release notes say how to get past each warning.
+
+### Updates
+
+Installed copies (0.3.0 and later) read
+`/releases/latest/download/latest.json` a minute after launch and every six
+hours, download a newer version and offer "Restart to Update" (`update.rs`).
+So **the newest non-prerelease is what everyone is offered**; a tag with a
+hyphen (`v0.4.0-rc1`) is published as a prerelease and offered to no one.
+
+Each update is signed with TeleKey's update key, and the app installs nothing
+that does not verify against the public half in `tauri.conf.json`
+(`plugins.updater.pubkey`). The workflow signs with two repo secrets,
+`TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, through
+`src-tauri/tauri.release.conf.json`, which switches on
+`createUpdaterArtifacts`. That switch is not in `tauri.conf.json` on purpose:
+there it would make every local build fail for want of the key.
+
+**Back up the key.** It is in `~/.tauri/telekey-updater.key` on Theodore's
+Mac, its password in the login Keychain (item "TeleKey update signing key
+password"), and both in the GitHub secrets above, which cannot be read back.
+Copy the key file and the password into a password manager. If the key is
+lost, a new one can be made, but every installed copy trusts only the old
+one, so every user would have to download the next version by hand.
+
+To try an update end to end without publishing, build two copies that trust a
+throwaway key and an `http://` feed (`--config` with
+`plugins.updater.pubkey` and `dangerousInsecureTransportProtocol: true`), the
+second with a higher `version` and `createUpdaterArtifacts`, serve its
+`TeleKey.app.tar.gz` and a `latest.json` from `127.0.0.1`, and launch the first
+with `TELEKEY_UPDATE_URL` pointing there. A release build refuses `http://`.
 
 ### macOS signing secrets
 

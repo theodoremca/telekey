@@ -5108,7 +5108,7 @@ dependencies = [
 
 [[package]]
 name = "telekey"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -5120,6 +5120,7 @@ dependencies = [
  "enigo",
  "hound",
  "keyring",
+ "minisign-verify",
  "objc2",
  "objc2-app-kit",
  "objc2-application-services",
