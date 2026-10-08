@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 
 import {
   api,
@@ -16,6 +17,8 @@ import {
   type SessionStatus,
   type Settings,
   type Signing,
+  type UpdateStatus,
+  UPDATE_EVENT,
 } from "./api";
 import { FormattingEditor } from "./FormattingEditor";
 import { fromKeyEvent, modifierGlyphs, shortcutText, toGlyphs } from "./shortcut";
@@ -253,7 +256,100 @@ export function SettingsPanel({
           onChange={(historyEnabled) => onSave({ ...settings, historyEnabled })}
         />
       </Section>
+
+      <Section title="Updates">
+        <UpdateRow />
+      </Section>
     </>
+  );
+}
+
+/**
+ * The version, and the update: checked automatically, downloaded in the
+ * background, installed only when "Restart now" is clicked (update.rs).
+ */
+function UpdateRow() {
+  const [status, setStatus] = useState<UpdateStatus | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    api
+      .updateStatus()
+      .then(setStatus)
+      .catch(() => {});
+    listen<UpdateStatus>(UPDATE_EVENT, (event) => setStatus(event.payload))
+      .then((unlisten) => {
+        stop = unlisten;
+      })
+      .catch(() => {});
+    return () => stop?.();
+  }, []);
+
+  if (!status) return null;
+
+  const act = (work: () => Promise<void>) => {
+    setProblem(null);
+    work().catch((err) => setProblem(messageFrom(err)));
+  };
+
+  let hint: string;
+  let dot = "ok";
+  let action: React.ReactNode = null;
+  const check = (
+    <button className="ghost" onClick={() => act(api.checkForUpdate)}>
+      Check now
+    </button>
+  );
+  switch (status.state) {
+    case "idle":
+      hint = "Checks for updates automatically.";
+      action = check;
+      break;
+    case "checking":
+      hint = "Checking for updates…";
+      break;
+    case "upToDate":
+      hint = "Up to date.";
+      action = check;
+      break;
+    case "downloading":
+      hint =
+        status.percent === null
+          ? `Downloading ${status.version}…`
+          : `Downloading ${status.version}… ${status.percent}%`;
+      break;
+    case "ready":
+      dot = "warn";
+      hint = `Version ${status.version} is ready. Settings and permissions are kept.`;
+      action = (
+        <button className="primary" onClick={() => act(api.restartToUpdate)}>
+          Restart now
+        </button>
+      );
+      break;
+    case "installing":
+      hint = `Installing ${status.version}…`;
+      break;
+    case "failed":
+      dot = "bad";
+      hint = status.message;
+      action = check;
+      break;
+  }
+
+  return (
+    <div className="row column">
+      <div className="row tight">
+        <span className={`dot ${dot}`} />
+        <div className="rowText">
+          <span className="rowLabel">TeleKey {status.current}</span>
+          <span className="rowHint">{hint}</span>
+        </div>
+        {action}
+      </div>
+      {problem && <p className="problem">{problem}</p>}
+    </div>
   );
 }
 

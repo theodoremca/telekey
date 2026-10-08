@@ -31,6 +31,7 @@ pub mod smart;
 pub mod transcribe;
 pub mod usage;
 pub mod trigger;
+pub mod update;
 
 use std::sync::{mpsc, Arc};
 
@@ -190,6 +191,7 @@ pub fn run() {
     builder
         .plugin(trigger::plugin(trigger_bus.clone()))
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             commands::load_settings,
             commands::save_settings,
@@ -229,6 +231,9 @@ pub fn run() {
             commands::hosted_account,
             commands::create_checkout,
             commands::open_credits,
+            commands::update_status,
+            commands::check_for_update,
+            commands::restart_to_update,
         ])
         .setup(move |app| {
             // A menubar app, not a dock app.
@@ -354,7 +359,11 @@ pub fn run() {
                 tracing::warn!("{advice}");
             }
 
+            // Before the tray, which carries its menu item.
+            let updater = update::Updater::new(app.handle().clone(), Arc::clone(&overlay));
+            app.manage(Arc::clone(&updater));
             build_tray(app.handle())?;
+            updater.watch();
 
             // First run, or something revoked since the last one: put the work
             // in front of the user. Without this the app looks installed and
@@ -641,6 +650,10 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     // Reachable after the first run too: permissions can be revoked, and a
     // macOS update has been known to drop them on its own.
     let setup_item = MenuItem::with_id(app, "setup", "Setup…", true, None::<&str>)?;
+    // "Check for Updates…" until one is downloaded, then "Restart to Update";
+    // update.rs keeps the wording in step.
+    let update_item =
+        MenuItem::with_id(app, "update", "Check for Updates…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit TeleKey", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
@@ -649,9 +662,13 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             &usage_item,
             &settings_item,
             &setup_item,
+            &update_item,
             &quit,
         ],
     )?;
+    if let Some(updater) = app.try_state::<Arc<update::Updater>>() {
+        updater.set_menu_item(update_item.clone());
+    }
 
     let mut tray = TrayIconBuilder::with_id("telekey")
         .menu(&menu)
@@ -665,6 +682,11 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             "setup" => {
                 if let Err(err) = open_setup_window(app) {
                     tracing::error!("could not open the setup window: {err}");
+                }
+            }
+            "update" => {
+                if let Some(updater) = app.try_state::<Arc<update::Updater>>() {
+                    updater.menu_clicked();
                 }
             }
             "quit" => app.exit(0),

@@ -68,6 +68,12 @@ parking_lot = "0.12"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# Updates (update.rs). Without its default "rustls-tls", which turns on rustls's
+# ring backend beside the aws-lc-rs one reqwest uses: with two backends rustls
+# cannot pick a default, and tungstenite's wss:// handshake (Instant) panics.
+# The plugin's HTTP client is the same reqwest as ours, so it gets our TLS.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["zip", "system-proxy"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = [
@@ -126,6 +132,8 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [dev-dependencies]
+# Only to ask rustls, in a test, whether it can still pick a crypto backend.
+rustls = { version = "0.23", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 hound = "3.5"
 wiremock = "0.6"

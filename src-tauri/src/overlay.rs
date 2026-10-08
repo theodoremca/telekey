@@ -330,6 +330,11 @@ impl Overlay {
         }
     }
 
+    /// The capsule is showing a dictation (or a note) and has not rested yet.
+    pub fn is_busy(&self) -> bool {
+        self.busy.load(Ordering::SeqCst)
+    }
+
     pub fn window(&self) -> &WebviewWindow {
         &self.window
     }

@@ -37,6 +37,22 @@ export interface Replacement {
   write: string;
 }
 
+/**
+ * This copy's version and where an update stands. Mirrors `UpdateStatus` in
+ * update.rs; a new state arrives as a `telekey://update` event.
+ */
+export type UpdateStatus = { current: string } & (
+  | { state: "idle" }
+  | { state: "checking" }
+  | { state: "upToDate" }
+  | { state: "downloading"; version: string; percent: number | null }
+  | { state: "ready"; version: string }
+  | { state: "installing"; version: string }
+  | { state: "failed"; message: string }
+);
+
+export const UPDATE_EVENT = "telekey://update";
+
 /** A microphone, as cpal names it. Mirrors `InputDevice` in input_device.rs. */
 export interface InputDevice {
   id: string;
@@ -210,7 +226,8 @@ const inTauri = () =>
  * Query flags for the browser preview, so the states that are hard to reach
  * can be looked at: `?balance=0` (a new account with nothing to spend),
  * `?account=fail` (signed in, but the balance could not be fetched),
- * `?platform=windows` or `?platform=linux` (what those systems are shown).
+ * `?platform=windows` or `?platform=linux` (what those systems are shown),
+ * `?update=ready|downloading|failed|upToDate` (the Updates row's states).
  */
 const previewFlags = () =>
   typeof window !== "undefined"
@@ -247,6 +264,26 @@ const PREVIEW_PLATFORMS: Record<Platform["os"], Platform> = {
 const previewPlatform = (): Platform => {
   const os = previewFlags().get("platform");
   return os === "windows" || os === "linux" ? PREVIEW_PLATFORMS[os] : PREVIEW_PLATFORMS.macos;
+};
+
+const previewUpdate = (): UpdateStatus => {
+  const current = "0.2.3";
+  switch (previewFlags().get("update")) {
+    case "ready":
+      return { current, state: "ready", version: "0.3.0" };
+    case "downloading":
+      return { current, state: "downloading", version: "0.3.0", percent: 42 };
+    case "failed":
+      return {
+        current,
+        state: "failed",
+        message: "Couldn't reach the update server. Check your connection.",
+      };
+    case "upToDate":
+      return { current, state: "upToDate" };
+    default:
+      return { current, state: "idle" };
+  }
 };
 
 const previewState: {
@@ -537,6 +574,9 @@ const preview = {
       };
     }),
   clearUsage: async () => undefined,
+  updateStatus: async (): Promise<UpdateStatus> => previewUpdate(),
+  checkForUpdate: async () => undefined,
+  restartToUpdate: async () => undefined,
   openApps: async (): Promise<RunningApp[]> => [
     { key: "com.apple.Safari", label: "Safari" },
     { key: "com.apple.Terminal", label: "Terminal" },
@@ -589,6 +629,10 @@ const live = {
     invoke<UsageSummary>("usage_summary", { period }),
   usageDaily: (days: number) => invoke<DailyPoint[]>("usage_daily", { days }),
   clearUsage: () => invoke<void>("clear_usage"),
+  updateStatus: () => invoke<UpdateStatus>("update_status"),
+  /** The answer arrives as an `UPDATE_EVENT`. */
+  checkForUpdate: () => invoke<void>("check_for_update"),
+  restartToUpdate: () => invoke<void>("restart_to_update"),
 };
 
 export const api: typeof live = inTauri() ? live : (preview as typeof live);

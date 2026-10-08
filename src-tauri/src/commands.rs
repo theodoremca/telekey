@@ -312,6 +312,25 @@ pub fn restart_app(app: AppHandle) {
     app.restart()
 }
 
+/// This copy's version and where an update stands, for Settings.
+#[tauri::command]
+pub fn update_status(updater: State<'_, Arc<crate::update::Updater>>) -> crate::update::UpdateStatus {
+    updater.status()
+}
+
+/// Settings' "Check now". The answer arrives as a `telekey://update` event.
+#[tauri::command]
+pub fn check_for_update(updater: State<'_, Arc<crate::update::Updater>>) {
+    updater.check(true);
+}
+
+/// Settings' "Restart now": install the downloaded update and relaunch, once
+/// no dictation is running.
+#[tauri::command]
+pub fn restart_to_update(updater: State<'_, Arc<crate::update::Updater>>) {
+    updater.restart_to_update();
+}
+
 /// Discard an in-flight recording or abandon transcription. Never pastes.
 #[tauri::command]
 pub fn cancel_dictation(
