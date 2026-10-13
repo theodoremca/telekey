@@ -1,5 +1,5 @@
 // OWNER: have a lawyer review the text these pages show before launch. It
-// lives in data/site.ts (PRIVACY_POLICY, TERMS, REFUND_POLICY).
+// lives in data/site.ts (PRIVACY_POLICY, TERMS, REFUND_POLICY, LICENSE_PAGE).
 import { KeyCard } from "@/components/KeyCard";
 import { KeycapLink } from "@/components/Keycap";
 import { Rich } from "@/components/Rich";
@@ -7,8 +7,8 @@ import { Seo } from "@/components/Seo";
 import { LEGAL_LINKS, OPERATOR, SUPPORT_EMAIL, SUPPORT_MAILTO, type LegalDoc, type LegalPara } from "@/data/site";
 import { useSectionReveal } from "@/lib/sectionReveal";
 
-// The three legal pages share one screen: Privacy, Terms and Refunds are the
-// same kind of page, a document to read and come back to. The head is the
+// The legal pages share one screen: Privacy, Terms, Refunds and the Licence are
+// the same kind of page, a document to read and come back to. The head is the
 // landing page's graphite desk, so the page belongs to the site; the body is
 // plain paper with the type set for reading, and nothing in it animates, so a
 // slow bundle or a reduced-motion setting never stands between a person and
@@ -135,6 +135,11 @@ function Body({ doc }: { doc: LegalDoc }) {
           ))}
 
           <div className="mt-14 flex flex-wrap gap-3 border-t border-line pt-8">
+            {doc.links?.map((link) => (
+              <KeycapLink key={link.href} href={link.href} variant="voice">
+                {link.label}
+              </KeycapLink>
+            ))}
             <KeycapLink href={SUPPORT_MAILTO} variant="ink">
               Email {SUPPORT_EMAIL}
             </KeycapLink>

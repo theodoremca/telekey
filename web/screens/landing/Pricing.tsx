@@ -1,12 +1,13 @@
 import { KeyCard } from "@/components/KeyCard";
 import { KeycapLink } from "@/components/Keycap";
 import { Rich } from "@/components/Rich";
-import { PRICING } from "@/data/site";
+import { PACKS, PRICING } from "@/data/site";
 import { useSectionReveal } from "@/lib/sectionReveal";
 
 // Signature moment: the free plan is already on the desk when the paid one
 // arrives beside it, and each plan's key comes up last. The free plan is a
-// pale key on the amber wash; the paid plan is the dark key.
+// pale key on the amber wash; the paid plan is the dark key. The three credit
+// packs follow as small pale keys, each arriving when it is reached.
 export function Pricing() {
   const reveal = useSectionReveal<HTMLElement>();
 
@@ -70,8 +71,36 @@ export function Pricing() {
           })}
         </div>
 
+        {/* What a purchase adds to the balance. The bonus is the bigger two
+            packs' reason to exist, so it is said on the key, not in a footnote. */}
+        <h3
+          data-reveal="rise"
+          className="m-0 mt-14 font-mono text-xs font-medium uppercase tracking-[0.1em] text-ink-soft"
+        >
+          {PRICING.packs.title}
+        </h3>
+        <ul className="m-0 mt-4 grid list-none gap-5 p-0 sm:grid-cols-3">
+          {PACKS.map((pack, index) => (
+            <li key={pack.id} data-reveal-group="" className="flex">
+              <KeyCard tone="paper" data-reveal="capsule" data-reveal-at={String(index * 0.1)}>
+                <p className="m-0 font-display text-[clamp(2rem,4vw,2.75rem)] font-bold leading-none tracking-[-0.03em]">
+                  {pack.price}
+                </p>
+                <p className="m-0 mt-3 text-[15px] font-semibold leading-snug">{pack.credit} of credit</p>
+                <p className="m-0 mt-2 w-fit rounded-full bg-voice-wash px-2.5 py-1 font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-ink">
+                  {pack.note}
+                </p>
+                <p className="m-0 mt-4 text-[13px] leading-relaxed text-ink-soft">{pack.hours}</p>
+              </KeyCard>
+            </li>
+          ))}
+        </ul>
+        <p data-reveal="rise" className="mt-5 mb-0 max-w-[60ch] text-[15px] leading-relaxed text-ink-soft">
+          {PRICING.packs.note}
+        </p>
+
         <p data-reveal="rise" className="mt-8 mb-0 text-[15px] leading-relaxed text-ink-soft">
-          <Rich parts={PRICING.coffee} linkClassName="text-ink" />
+          <Rich parts={PRICING.tip} linkClassName="text-ink" />
         </p>
         <p data-reveal="rise" className="mt-3 mb-0 text-[15px] leading-relaxed text-ink-soft">
           <Rich parts={PRICING.terms} linkClassName="text-ink" />

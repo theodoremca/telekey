@@ -1,8 +1,10 @@
 import { Seo } from "@/components/Seo";
 import { BRAND, HERO } from "@/data/site";
 
+import { ComingNext } from "./ComingNext";
 import { Everywhere } from "./Everywhere";
 import { Faq } from "./Faq";
+import { Features } from "./Features";
 import { Formats } from "./Formats";
 import { Hero } from "./Hero";
 import { HowItWorks } from "./HowItWorks";
@@ -25,6 +27,8 @@ export default function LandingScreen() {
       <HowItWorks />
       <Everywhere />
       <Formats />
+      <Features />
+      <ComingNext />
       <Privacy />
       <Pricing />
       <Faq />

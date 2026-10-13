@@ -1,5 +1,10 @@
+import Link from "next/link";
+
 import { NUMBERS } from "@/data/site";
 import { useSectionReveal } from "@/lib/sectionReveal";
+
+const figureLink =
+  "text-glow underline decoration-voice/70 decoration-[3px] underline-offset-[6px] transition-colors hover:decoration-voice";
 
 // Signature moment: four figures land one after another, the way a paste does,
 // with their labels rising under them. Display type at its most literal: the
@@ -24,13 +29,17 @@ export function Numbers() {
                 className="m-0 font-display text-[clamp(2rem,4.4vw,3rem)] font-bold leading-none tracking-[-0.03em]"
               >
                 {href ? (
-                  <a
-                    href={href}
-                    aria-label={`${figure.value} — ${figure.label}`}
-                    className="text-glow underline decoration-voice/70 decoration-[3px] underline-offset-[6px] transition-colors hover:decoration-voice"
-                  >
-                    {figure.value}
-                  </a>
+                  // A source on this site goes through the router; one
+                  // elsewhere is a plain link.
+                  href.startsWith("/") ? (
+                    <Link href={href} aria-label={`${figure.value} — ${figure.label}`} className={figureLink}>
+                      {figure.value}
+                    </Link>
+                  ) : (
+                    <a href={href} aria-label={`${figure.value} — ${figure.label}`} className={figureLink}>
+                      {figure.value}
+                    </a>
+                  )
                 ) : (
                   figure.value
                 )}

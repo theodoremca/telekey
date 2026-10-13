@@ -3,9 +3,14 @@
 //
 // Nothing here is invented. Each claim traces back to README.md or to the code
 // it describes; where a figure is derived from code, the comment says where,
-// so it can be re-checked when that code changes.
+// so it can be re-checked when that code changes. Paths that start `functions/`
+// or `relay/` are in the private telekey-server repository, not in this one.
 
 const REPO = "https://github.com/theodoremca/telekey";
+/** The licence text in the repository's default branch. */
+const LICENSE_URL = `${REPO}/blob/main/LICENSE`;
+/** The licence's own home, where the standard FSL text is published. */
+const FSL_URL = "https://fsl.software";
 
 /**
  * The official address is the www host. Vercel itself redirects the bare
@@ -24,28 +29,31 @@ export const SUPPORT_EMAIL = "support@telekey.app";
 export const SUPPORT_MAILTO = `mailto:${SUPPORT_EMAIL}`;
 
 /** The date the legal pages below took effect. Change it when their text does. */
-const LEGAL_EFFECTIVE = "12 October 2026";
+const LEGAL_EFFECTIVE = "13 October 2026";
 
 /**
  * A Stripe Payment Link on the live EntityQ LLC account (plink_1UKqv5JBYM0g0sSoS93Ot3Uy):
  * product "Support TeleKey", the supporter chooses the amount (suggested $5,
  * minimum $1), and it returns to /about?thanks=1. It carries no uid or cents
  * metadata, so the credits webhook in functions/src/index.ts ignores it.
- * Stripe counts it as a tip for software already given, not a donation.
+ * Stripe counts it as a tip for software already given, not a donation. The
+ * site calls it "Buy me a beer"; the link itself did not change.
  */
-const COFFEE = "https://buy.stripe.com/fZu9AU3qv8Oe1Cj45Fao800";
+const TIP = "https://buy.stripe.com/fZu9AU3qv8Oe1Cj45Fao800";
 
 /**
  * A sentence with links in it, for copy where a phrase should lead somewhere
- * ("open source" to the code). Rendered by components/Rich.tsx.
+ * ("source available" to the licence page). Rendered by components/Rich.tsx.
  */
 export type Segment = string | { text: string; href: string };
 
-export const SUPPORT = { label: "Buy me a coffee", href: COFFEE } as const;
+export const SUPPORT = { label: "Buy me a beer", href: TIP } as const;
 export const ABOUT_LINK = { label: "About", href: "/about" } as const;
 
 export const BRAND = {
   name: "TeleKey",
+  /** The name as the footer shows it: an unregistered trademark of the operator (see /license). */
+  marked: "TeleKey™",
   tagline: "Push-to-talk dictation for Mac and Windows",
   /** Static copies for places that cannot inline components/Mark.tsx. */
   mark: "/brand/mark.svg",
@@ -93,14 +101,14 @@ export const NAV_LINKS = [
 export const HERO = {
   /** The last line is set in amber. */
   titleLines: ["Hold a key.", "Speak.", "It's typed."],
-  /** The claim. MIT licence: LICENSE; the rates: PRICING below. */
+  /** The claim. The licence: LICENSE (FSL-1.1-MIT); the rates: PRICING below. */
   lede: [
     "Free and ",
-    { text: "open source", href: REPO },
+    { text: "source available", href: "/license" },
     " with your own OpenAI key. Or pay per minute instead of per month.",
   ],
   /** For search results and link previews, where the claim needs its subject. */
-  meta: "Push-to-talk dictation for Mac and Windows. Free and open source with your own OpenAI key, or pay per minute instead of per month.",
+  meta: "Push-to-talk dictation for Mac and Windows. Free and source available with your own OpenAI key, or pay per minute instead of per month.",
   /** Under the download key: where the other installers are. */
   platforms: [PLATFORMS.line, " ", { text: PLATFORMS.all.text, href: PLATFORMS.all.href }],
   demo: {
@@ -133,7 +141,7 @@ export const COMPARE = {
   us: {
     who: "TeleKey credits",
     price: "81¢ / hour",
-    how: "Of speech: 1.35¢ a minute, prepaid. 20 minutes a day is 27¢, or about $6 over 22 working days. Nothing on the days you don't dictate.",
+    how: "Of speech: 1.35¢ a minute, prepaid in packs from $10. 20 minutes a day is 27¢, or about $6 over 22 working days. Nothing on the days you don't dictate.",
   },
   source: {
     label: "Wispr Flow prices from wisprflow.ai/pricing, 12 Oct 2026.",
@@ -146,7 +154,8 @@ export const COMPARE = {
  * the paste time is the one quoted in HOW, and Instant's is measured in
  * docs/next-features.md (0.7–1.1 s through the relay); the rate is PRICING's;
  * audio on disk is README's privacy section (the recording is only ever a
- * buffer in memory: audio.rs, pipeline.rs); the licence is LICENSE. 1.35¢ is TRANSCRIBE_PER_MINUTE (0.0045) x
+ * buffer in memory: audio.rs, pipeline.rs); the licence is LICENSE (FSL-1.1-MIT:
+ * each release becomes MIT on the second anniversary of its release). 1.35¢ is TRANSCRIBE_PER_MINUTE (0.0045) x
  * MARKUP (3) in functions/src/pricing.ts, shown exactly because billing is to
  * the second with sub-cent remainders carried.
  */
@@ -155,7 +164,7 @@ export const NUMBERS = [
   { value: "3–4 s", label: "to pasted text, or ~1\u00a0s with Instant" },
   { value: "1.35¢", label: "a minute of speech, on credits" },
   { value: "0 bytes", label: "of audio ever written to disk" },
-  { value: "MIT", label: "licensed; the code is public", href: REPO },
+  { value: "FSL", label: "source available; MIT after two years", href: "/license" },
 ] as const;
 
 /**
@@ -203,7 +212,27 @@ export const FAQ = {
     {
       id: "account",
       q: "Do I need an account?",
-      a: "Not with your own OpenAI key: no sign-up, no email. Credits need a Google or magic-link sign-in, so there is somewhere to keep your balance. A new account starts at $0, so buy a pack before your first dictation; the free route is your own key.",
+      a: "Not with your own OpenAI key: no sign-up, no email. Credits need a Google or magic-link sign-in, so there is somewhere to keep your balance. A new account starts at $0, so buy a pack (from $10) before your first dictation; the free route is your own key.",
+    },
+    {
+      id: "packs",
+      q: "What do the credit packs cost?",
+      // Credits are US dollars. At 1.35¢ a minute (PRICING below): $10.00 is
+      // 740.7 minutes, 12.3 hours; $27.50 is 2,037 minutes, 33.9 hours; $57.50
+      // is 4,259 minutes, 71.0 hours. At 20 minutes a day (27¢) $10.00 lasts
+      // 37 working days.
+      a: "Three packs, from $10. $10 adds $10.00 of credit, $25 adds $27.50 (10% extra) and $50 adds $57.50 (15% extra). Credits are US dollars and never expire. At 1.35¢ a minute, $10 is about 12 hours of speech: at 20 minutes a day, about 37 working days.",
+    },
+    {
+      id: "code",
+      q: "Can I read the code?",
+      // LICENSE (FSL-1.1-MIT) and the /license page. The server is the private
+      // telekey-server repository; the app and this website are public.
+      a: [
+        "Yes. The app and this website are source available on GitHub under the Functional Source License: free to read, use and change, but not to sell a competing product from. Each release becomes MIT two years after it is published. The server that sells credits is private. ",
+        { text: "The licence page", href: "/license" },
+        " has the details.",
+      ],
     },
     {
       id: "data",
@@ -232,6 +261,18 @@ export const FAQ = {
       id: "hold",
       q: "Why hold a key instead of toggling?",
       a: "So you always know when it is listening. The capsule shows a live trace while you hold, and letting go is the only way to send. Press Esc and nothing is pasted. If your hand is on the mouse, click the pill at the bottom of the screen instead, and click Stop when you are done.",
+    },
+    {
+      id: "beer",
+      q: "Will it keep asking me for a tip?",
+      // The nudge is for people on their own OpenAI key; the app never opens a
+      // browser by itself. Stopping it: a tip (telekey://thanks from /about) or
+      // telling the app you already did.
+      a: [
+        "Only if you use your own OpenAI key. After your second dictation the app shows a small “Buy me a beer” prompt, then at most once a day until you tip or tell it you already did. You choose whether to click it: TeleKey never opens your browser by itself. If you use credits, it does not ask. ",
+        { text: "Buy me a beer", href: TIP },
+        " whenever you like.",
+      ],
     },
     {
       id: "platforms",
@@ -310,6 +351,126 @@ export const FORMATS = {
 } as const;
 
 /**
+ * What else TeleKey does, one card each. Every line traces to README.md's
+ * "Using it" table and Privacy section, or to the module named. `tag` says
+ * when a feature is opt-in or where it runs; `href` is a deeper section of
+ * this page. 12 cards, so the grid fills its rows at 1, 2 and 3 columns.
+ */
+export const FEATURES = {
+  title: "What else it does.",
+  // settings.rs: screen_context, smart_lists, fix_corrections and
+  // polish_enabled are false by default (PRIVACY's "optin" fact below).
+  lede: "The small things that decide whether you keep using it. Anything that sends extra text to OpenAI is off until you switch it on.",
+  items: [
+    {
+      id: "anywhere",
+      name: "Hold to talk, anywhere",
+      // trigger.rs, fn_key.rs; the paste goes to the frontmost app (frontmost.rs).
+      body: "Hold ⌃⌥Space, or just fn on a Mac, speak, and let go. The text lands in whichever app is in front: Mail, Slack, a browser, a terminal. Esc cancels, and nothing is pasted.",
+    },
+    {
+      id: "instant",
+      name: "Instant",
+      tag: "Off until you turn it on",
+      // live.rs; README Instant row; 5.1¢ is PRICING's.
+      body: "Streams your voice while you speak, so the text lands about a second after you let go instead of three or four. 5.1¢ a minute on credits.",
+    },
+    {
+      id: "pill",
+      name: "The dictation pill",
+      tag: "Mac and Windows",
+      // README Dictation pill row: on by default on macOS and Windows, off on Linux.
+      body: "A thin pill rests at the bottom of the screen. Point at it, click to dictate, click Stop when you are done. For when your hand is already on the mouse.",
+    },
+    {
+      id: "smart",
+      name: "Lists and self-corrections",
+      tag: "Opt-in",
+      // smart.rs (cues, gate and the check in `acceptable`); README row.
+      body: "Spoken lists become bullets or numbers. “My car, sorry, my bike” becomes “my bike”. The answer is pasted only if it changed nothing else you said.",
+    },
+    {
+      id: "words",
+      name: "Vocabulary and replacements",
+      // transcribe.rs keywords[]; replace.rs, applied last before the paste.
+      body: "Add names and jargon so they come back spelled right. And for a word the model keeps getting wrong: when I say “cloud code”, write “Claude Code”, applied on your computer.",
+    },
+    {
+      id: "screen",
+      name: "Use what's on screen",
+      tag: "Opt-in",
+      // context.rs; README: the 1,200 characters are 1,000 before the cursor
+      // and 200 after, the whole prompt is cut to 1,500 bytes.
+      body: "Sends the app name, the window title and about 1,200 characters around your cursor with the audio, so names on screen come back spelled right. Never from a password field.",
+    },
+    {
+      id: "styles",
+      name: "A style for each app",
+      href: "#formats",
+      // polish.rs: Literal, Terse, Formal, Custom; profiles per app.
+      body: "Literal in a terminal, terse in Slack, formal in Mail, or write your own instruction. TeleKey checks which app is in front when you press the key.",
+    },
+    {
+      id: "follows",
+      name: "Follows your microphone and your screen",
+      // input_device.rs (default input follows the system; the capsule names
+      // the new one); overlay.rs and panel.rs (the capsule opens on the
+      // screen the pointer is on).
+      body: "Connect a headset and TeleKey switches to it, and the capsule says which. With more than one screen, the capsule appears on the one your pointer is on.",
+    },
+    {
+      id: "updates",
+      name: "Updates itself",
+      // update.rs; README Updates row: checks a minute after start and every
+      // six hours; nothing installs until you click, never mid-dictation.
+      body: "Checks for a new version every six hours and downloads it in the background. Nothing installs until you click Restart to Update, and never in the middle of a dictation.",
+    },
+    {
+      id: "billing",
+      name: "Billed to the second",
+      href: "#pricing",
+      // PRICING.plans credits: 1.35¢ a minute, no per-dictation minimum.
+      body: "On credits it is 1.35¢ a minute, counted to the second, with no monthly fee. Nothing on the days you don't dictate, and credits do not expire.",
+    },
+    {
+      id: "byok",
+      name: "Free with your own OpenAI key",
+      href: "#pricing",
+      // PRICING.plans byok: every feature, no account, 0.45¢ a minute to OpenAI.
+      body: "Every feature, no account and no sign-up. OpenAI bills you directly, at 0.45¢ a minute of speech.",
+    },
+    {
+      id: "disk",
+      name: "Audio never touches disk",
+      href: "#privacy",
+      // README Privacy: in memory only, discarded when the upload ends.
+      body: "Your voice is held in memory, uploaded for transcription, and discarded as soon as the upload ends. Your transcripts stay on your computer.",
+    },
+  ],
+} as const;
+
+/**
+ * The next thing, shown as plainly not built. Owner's plan: highlight text in
+ * any app, press a shortcut or click a small button that appears near the
+ * selection, and TeleKey reads it out with a text-to-speech model, on Mac and
+ * Windows. The provider is undecided, so none is named; nor is a date.
+ */
+export const COMING_NEXT = {
+  tag: "Coming next",
+  title: "Read aloud.",
+  body: "Highlight text in any app and have TeleKey read it out. Press a shortcut, or click a small Read aloud button that appears beside the selection. For Mac and Windows.",
+  /** Mono line under the body. */
+  status: "Not built yet, and there is no date.",
+  /** The sketch beside the text: a selection and the button that would appear. */
+  sketch: {
+    before: "The release is moving to ",
+    selected: "Thursday, once QA has signed off.",
+    button: "Read aloud",
+    label: "A sketch of the idea: a highlighted sentence with a Read aloud button beside it.",
+  },
+} as const;
+
+/**
  * The privacy section on the landing page: a summary of PRIVACY_POLICY below,
  * which is the full account. Each line traces to README's Privacy section or
  * to the code it names; keep the two in step.
@@ -359,25 +520,49 @@ export const PRIVACY = {
       body: "No analytics on this site, none in the app, and your data is never sold or used for advertising.",
     },
   ],
-  source: { label: "Read the code", href: REPO },
+  // The app's code is public, so what leaves the computer can be checked there.
+  // The server is private; the policy below says what it keeps.
+  source: { label: "Read the app's code", href: REPO },
   policy: { label: "Read the privacy policy", href: "/privacy" },
 } as const;
+
+/**
+ * The credit packs, as the website advertises them. The server sells exactly
+ * these (the telekey-server seed, functions/scripts/seed-packs.cjs): the
+ * smallest is $10, and credits are US dollars. The credit is what a purchase
+ * adds to the balance: $10 adds $10.00, $25 adds $27.50 (+10%), $50 adds $57.50
+ * (+15%). `hours` is credit / 1.35¢ a minute (PRICING's credits plan): $10.00 is
+ * 740.7 minutes, 12.3 hours; $27.50 is 2,037 minutes, 33.9 hours; $57.50 is
+ * 4,259 minutes, 71.0 hours. Re-derive them if the rate changes. The account
+ * page shows the live packs from the API, which add `creditCents`.
+ */
+export const PACKS = [
+  { id: "ten", price: "$10", credit: "$10.00", note: "The smallest pack", hours: "About 12 hours of speech" },
+  { id: "twentyfive", price: "$25", credit: "$27.50", note: "+10% credit", hours: "About 34 hours of speech" },
+  { id: "fifty", price: "$50", credit: "$57.50", note: "+15% credit", hours: "About 71 hours of speech" },
+] as const;
 
 export const PRICING = {
   title: "Free with your own key.",
   lede: [
-    "TeleKey is ",
-    { text: "open source under MIT", href: REPO },
+    "The app is ",
+    { text: "source available", href: "/license" },
     ". Pay OpenAI directly, or let us hold the key.",
   ],
+  /** Above the packs, under the two plans. */
+  packs: {
+    title: "Credit packs",
+    // Credits are held as US dollars in cents (ledger.ts balanceCents).
+    note: "Credits are US dollars, used up by the second, and never expire. The bigger packs add extra credit.",
+  },
   /** Under the plans: the free plan is free, and this is how to keep it so. */
-  coffee: [
+  tip: [
     "Using your own key? It stays free. If TeleKey saves you time, ",
-    { text: "buy me a coffee", href: COFFEE },
+    { text: "buy me a beer", href: TIP },
     ".",
   ],
   /**
-   * Under the coffee line, beside the buy action: what the money terms are,
+   * Under the tip line, beside the buy action: what the money terms are,
    * with the pages that spell them out.
    */
   terms: [
@@ -417,7 +602,7 @@ export const PRICING = {
       points: [
         "No OpenAI account or key",
         "Sign in with Google or an email link",
-        "Packs through Stripe; balance shows in the app; credits do not expire",
+        "Packs of $10, $25 and $50 through Stripe; the balance shows in the app",
         // LIVE_TRANSCRIBE_PER_MINUTE (0.017) x MARKUP (3) = 5.1¢ a minute.
         "Instant, for text on release: 5.1¢ a minute",
         // POLISH_*_PER_MILLION x MARKUP: a typical dictation's few hundred
@@ -436,12 +621,16 @@ export const LAST_CALL = {
   all: PLATFORMS.all,
 } as const;
 
-/** The three legal pages, linked from the footer and beside every sign-in and buy. */
+/** The legal pages, linked from the footer; the first three also beside every sign-in and buy. */
 export const LEGAL_LINKS = [
   { href: "/privacy", label: "Privacy" },
   { href: "/terms", label: "Terms" },
   { href: "/refunds", label: "Refunds" },
+  { href: "/license", label: "Licence" },
 ] as const;
+
+/** Under the packs on /account: the smallest pack and what the bigger ones add. */
+export const BUY_INTRO = "Packs start at $10, and the bigger ones add extra credit. Stripe opens next; credits land here after payment.";
 
 /** Under the sign-in buttons on /login. */
 export const SIGN_IN_NOTICE: readonly Segment[] = [
@@ -478,13 +667,17 @@ export const FOOTER_LINKS = [
 /** The footer's second line: who is behind the service. */
 export const FOOTER_NOTE = {
   operator: `TeleKey is a product of ${OPERATOR}.`,
+  /** The app's licence, said in the footer's own short form. */
+  licence: { label: "Source available under the FSL", href: "/license" },
+  /** The same sentence as the licence page's trademark section. */
+  trademark: `TeleKey™ and the TeleKey logo are trademarks of ${OPERATOR}. The licence grants no right to use them, beyond saying where the code came from.`,
   support: { label: SUPPORT_EMAIL, href: SUPPORT_MAILTO },
 } as const;
 
 /**
- * THE LEGAL PAGES: /privacy, /terms, /refunds.
+ * THE LEGAL PAGES: /privacy, /terms, /refunds and /license.
  *
- * OWNER: have a lawyer review these three documents before launch. They were
+ * OWNER: have a lawyer review these four documents before launch. They were
  * written from what the code does (each claim names its source below) and from
  * the owner's decisions: EntityQ LLC is the operator and seller of record,
  * support is support@telekey.app, credits do not expire (no expiry exists in
@@ -508,13 +701,15 @@ export type LegalSection = {
 };
 
 export type LegalDoc = {
-  path: "/privacy" | "/terms" | "/refunds";
+  path: "/privacy" | "/terms" | "/refunds" | "/license";
   meta: { title: string; description: string };
   title: string;
   effective: string;
   lede: LegalPara;
   summary: { title: string; points: readonly LegalPara[] };
   sections: readonly LegalSection[];
+  /** Buttons for the primary source of the document, shown first at the foot. */
+  links?: readonly { label: string; href: string }[];
 };
 
 /**
@@ -547,7 +742,8 @@ const LEGAL_CONTACT: LegalSection = {
  * audio in memory only and dropped when the upload ends (the recorded samples
  * are also zeroized, the WAV copy handed to the HTTP client is only freed):
  * README Privacy, audio.rs, pipeline.rs; credits path:
- * functions/src/index.ts and relay/src/relay.ts (neither stores audio or text);
+ * functions/src/index.ts and relay/src/relay.ts in the private telekey-server
+ * repository (neither stores audio or text);
  * what each opt-in sends and that each is off by default: settings.rs
  * (screen_context, smart_lists, fix_corrections, polish_enabled all false;
  * profiles empty), context.rs, smart.rs, polish.rs; history local and 0600:
@@ -581,7 +777,11 @@ export const PRIVACY_POLICY: LegalDoc = {
       title: "Who we are",
       blocks: [
         {
-          p: `TeleKey is a product of ${OPERATOR} (“we”, “us”). We run the TeleKey website at ${SITE_HOST} and the hosted service that sells and tracks credits, and we publish the TeleKey desktop app, which is open source under the MIT licence. This policy covers all three.`,
+          p: [
+            `TeleKey is a product of ${OPERATOR} (“we”, “us”). We run the TeleKey website at ${SITE_HOST} and the hosted service that sells and tracks credits, and we publish the TeleKey desktop app, whose code is source available under the `,
+            { text: "Functional Source License", href: "/license" },
+            ". The server behind the hosted service is private. This policy covers all three.",
+          ],
         },
       ],
     },
@@ -626,6 +826,7 @@ export const PRIVACY_POLICY: LegalDoc = {
           ul: [
             "Transcript history is a file in your user account's data folder, and on macOS it is set so that only you can read it. You can cap it, clear it or switch it off in Settings; switching it off deletes existing entries immediately.",
             "Usage counts (seconds and tokens, never content), your settings, your vocabulary and your replacements are files on your computer too.",
+            "If you use your own OpenAI key, the app counts your dictations on your computer so that it can offer, now and then, a link to buy the developer a beer. That count, and whether you have tipped or asked it to stop, stay on your computer. The app never opens a link by itself.",
             "Your OpenAI key, if you use one, and your sign-in session, if you have one, are kept in the macOS Keychain or Windows Credential Manager. The key is never logged and is sent only to OpenAI.",
           ],
         },
@@ -658,7 +859,7 @@ export const PRIVACY_POLICY: LegalDoc = {
           p: [
             "Credits are bought through Stripe Checkout. You enter your card details on Stripe's page: they go to Stripe, and TeleKey never sees or stores your card number. Stripe tells us that a payment succeeded and for how much, and ",
             { text: "Stripe's privacy policy", href: "https://stripe.com/privacy" },
-            " covers what it collects. Tips (“Buy me a coffee”) also go through Stripe, and we receive what Stripe passes on, such as the amount and the email address you entered.",
+            " covers what it collects. Tips (“Buy me a beer”) also go through Stripe, and we receive what Stripe passes on, such as the amount and the email address you entered.",
           ],
         },
       ],
@@ -807,7 +1008,9 @@ export const PRIVACY_POLICY: LegalDoc = {
  * charge is taken in full once the work is done, so it can take the balance
  * below zero (ledger.ts debit and chargeDelivered); a cancelled Instant
  * dictation pays for the audio already streamed (relay/src/relay.ts
- * CHARGE_ABANDONED_AUDIO); the licence is LICENSE.
+ * CHARGE_ABANDONED_AUDIO); the licence is LICENSE (FSL-1.1-MIT) and the
+ * trademark line is the same sentence as the /license page's; the packs are
+ * PACKS above.
  */
 export const TERMS: LegalDoc = {
   path: "/terms",
@@ -818,7 +1021,11 @@ export const TERMS: LegalDoc = {
   },
   title: "Terms of service",
   effective: `Effective ${LEGAL_EFFECTIVE}`,
-  lede: "These are the terms for TeleKey's website and its hosted credits. The code of the desktop app is separate: it is open source under the MIT licence.",
+  lede: [
+    "These are the terms for TeleKey's website and its hosted credits. The code of the desktop app is separate: it is source available under the ",
+    { text: "Functional Source License", href: "/license" },
+    ".",
+  ],
   summary: {
     title: "The short version",
     points: [
@@ -839,8 +1046,8 @@ export const TERMS: LegalDoc = {
         {
           p: [
             "The TeleKey desktop app is ",
-            { text: "open source under the MIT licence", href: REPO },
-            ". The licence governs the code: you may use, copy, change and share it as the licence says. These terms govern the hosted service. The app used with your own OpenAI key does not touch the hosted service, and your use of OpenAI is under your own agreement with OpenAI.",
+            { text: "source available under the Functional Source License", href: "/license" },
+            ". The licence governs the app's code: you may use, copy, change and share it as the licence says. These terms govern the hosted service. The app used with your own OpenAI key does not touch the hosted service, and your use of OpenAI is under your own agreement with OpenAI.",
           ],
         },
       ],
@@ -865,13 +1072,13 @@ export const TERMS: LegalDoc = {
       blocks: [
         {
           ul: [
-            "Credits are prepaid. You buy a pack through Stripe and the amount is added to your balance, in US dollars. A new account starts at $0.",
+            "Credits are prepaid and counted in US dollars. You buy a pack through Stripe, and the smallest is $10: a $10 pack adds $10.00 to your balance, a $25 pack adds $27.50 and a $50 pack adds $57.50. A new account starts at $0.",
             [
               "Each dictation uses credits by the second of audio, at the rates on our ",
               { text: "pricing section", href: "/#pricing" },
               ": 1.35¢ a minute for the normal way and 5.1¢ a minute for Instant. Formatting styles and the smart pass add a small charge by the token, usually a fraction of a cent. There is no minimum per dictation, and fractions of a cent carry over.",
             ],
-            "We may change the rates. A change applies to dictations after it takes effect and never reduces the balance you already hold.",
+            "We may change the rates, the packs and the bonus on them. A change applies to dictations and purchases after it takes effect and never reduces the balance you already hold.",
             "Credits do not expire.",
             "Credits are not money, a deposit or a stored-value account. They cannot be transferred or exchanged for cash, and they can be used only for TeleKey's service. Refunds are covered by the refund policy.",
             "We check your balance before each dictation and charge for the work once it is done. A dictation that turns out to cost more than your remaining balance can take it slightly below zero. Your next purchase pays that off first, and you cannot dictate with credits until your balance is positive again.",
@@ -904,6 +1111,23 @@ export const TERMS: LegalDoc = {
             "If you break these rules or put the service at risk, we may warn you, suspend your account or close it. If you find a security problem, please tell us at ",
             EMAIL,
             " rather than use it.",
+          ],
+        },
+      ],
+    },
+    {
+      id: "licence",
+      title: "Licence and trademarks",
+      blocks: [
+        {
+          ul: [
+            [
+              "The app's code is licensed to you under the ",
+              { text: "Functional Source License", href: "/license" },
+              ", not under these terms. These terms give you the right to use the hosted service through the TeleKey app.",
+            ],
+            "The server software behind the hosted service is private. All rights in it are reserved, and nothing in these terms or in the app's licence gives you a copy of it or a licence to it.",
+            `TeleKey and the TeleKey logo are trademarks of ${OPERATOR}. These terms and the licence grant no right to use them, beyond saying where the code came from.`,
           ],
         },
       ],
@@ -992,7 +1216,7 @@ export const TERMS: LegalDoc = {
 
 /**
  * Sources: the 30-day window and the rule that tips are not refunded are the
- * owner's policy. Tips are the Stripe Payment Link in COFFEE above, which
+ * owner's policy. Tips are the Stripe Payment Link in TIP above, which
  * carries no uid and so adds no credits (functions/src/index.ts ignores it).
  * Credits are one fungible balance in Firestore, which is why the policy says
  * which purchase's credits count as used first.
@@ -1012,7 +1236,7 @@ export const REFUND_POLICY: LegalDoc = {
     points: [
       "Unused credits can be refunded on request within 30 days of purchase.",
       "Credits you have already used are not refundable.",
-      "Tips (“Buy me a coffee”) are voluntary and not refundable.",
+      "Tips (“Buy me a beer”) are voluntary and not refundable.",
       "Charged in error? Tell us and we will put it right.",
     ],
   },
@@ -1025,7 +1249,13 @@ export const REFUND_POLICY: LegalDoc = {
           p: "You can ask for a refund of unused credits within 30 days of the purchase. We refund the part of that purchase you have not used, to the card or other payment method you paid with, through Stripe. Credits are used oldest purchase first, so credits from a later purchase never count against an earlier one.",
         },
         {
-          p: "For example, you buy a $5 pack and use $1.20 of it. Within 30 days you can have $3.80 back. When we send a refund, we remove those credits from your balance ourselves. It usually appears on your statement within 5 to 10 business days, depending on your bank.",
+          p: "For example, you buy a $10 pack and use $1.20 of it. Within 30 days you can have $8.80 back. When we send a refund, we remove those credits from your balance ourselves. It usually appears on your statement within 5 to 10 business days, depending on your bank.",
+        },
+        {
+          // OWNER: confirm the proportional rule for packs with a bonus (the
+          // $25 and $50 packs add credit); the example's numbers: 22.00 / 27.50
+          // = 0.8, and 0.8 x $25 = $20.00.
+          p: "Larger packs add extra credit, so a refund is in proportion: the share of the credit you have not used, applied to what you paid. For example, you pay $25 for a pack that adds $27.50 of credit and use $5.50 of it. You have used a fifth, so within 30 days you can have four fifths of the $25 back, which is $20.00, and we remove the $22.00 of unused credit from your balance.",
         },
       ],
     },
@@ -1052,7 +1282,7 @@ export const REFUND_POLICY: LegalDoc = {
       title: "Tips",
       blocks: [
         {
-          p: "“Buy me a coffee” payments are voluntary tips for software that is already given away. They are not credits and not a purchase of anything, and they are not refundable, unless the charge was a mistake, such as being charged twice.",
+          p: "“Buy me a beer” payments are voluntary tips for software that is already given away. They are not credits and not a purchase of anything, and they are not refundable, unless the charge was a mistake, such as being charged twice.",
         },
       ],
     },
@@ -1102,6 +1332,158 @@ export const REFUND_POLICY: LegalDoc = {
 };
 
 /**
+ * Sources: LICENSE in the repository root is the Functional Source License,
+ * Version 1.1, MIT Future License (FSL-1.1-MIT), "Copyright 2026 Theodore
+ * Imonigie"; the plain-words reading below follows its Permitted Purpose,
+ * Redistribution, Trademarks and Grant of Future License clauses and the
+ * standard text at fsl.software. The owner's decisions: the licence applies to
+ * every version after v0.3.0, which stays MIT; the server (the telekey-server
+ * repository) is private with all rights reserved; "TeleKey" and the logo are
+ * unregistered trademarks of EntityQ LLC. FSL is not an OSI-approved licence,
+ * so the site says "source available" and not "open source", except for the
+ * MIT releases, which are.
+ */
+export const LICENSE_PAGE: LegalDoc = {
+  path: "/license",
+  meta: {
+    title: "Licence — TeleKey",
+    description:
+      "TeleKey's app is source available under the Functional Source License: free to read, use and change, and each release becomes MIT after two years. The credits server is private.",
+  },
+  title: "Licence",
+  effective: `Effective ${LEGAL_EFFECTIVE}`,
+  lede: "The TeleKey app is source available: you can read it, run it and change it, and every release turns into plain MIT two years after it is published. The server that sells credits is private.",
+  summary: {
+    title: "The short version",
+    points: [
+      "The app's code is under the Functional Source License, version 1.1, MIT Future License (FSL-1.1-MIT). It is free to read, use and change.",
+      "The one thing it does not allow is selling a competing product or service built from the code.",
+      "Two years after a release is published, that release also becomes MIT, with no such limit.",
+      "Versions up to v0.3.0 were released under the MIT licence and stay MIT.",
+      "TeleKey's paid service, the server that sells and keeps count of credits, is private. All rights are reserved.",
+      `TeleKey and the TeleKey logo are trademarks of ${OPERATOR}. The licence grants no right to use them, beyond saying where the code came from.`,
+    ],
+  },
+  sections: [
+    {
+      id: "what",
+      title: "What this is",
+      blocks: [
+        {
+          p: [
+            "TeleKey's source code is public on GitHub, and from the first release after v0.3.0 it is licensed under the Functional Source License, version 1.1, with the MIT licence as its future licence. It is a standard text, published at ",
+            { text: "fsl.software", href: FSL_URL },
+            ", and the file in the repository is the one that counts. The code is copyright 2026 Theodore Imonigie, who is the licensor.",
+          ],
+        },
+        {
+          p: "This is not an open source licence as the Open Source Initiative defines one, because of the competing-use limit below. So we say TeleKey is source available (some say fair source), not open source.",
+        },
+      ],
+    },
+    {
+      id: "allowed",
+      title: "What you can do",
+      blocks: [
+        {
+          ul: [
+            "Read the code, run it and change it, for any purpose other than a competing use.",
+            "Build your own copy from source, and use it with your own OpenAI key.",
+            "Use it inside your own company or team, for teaching, and for non-commercial research.",
+            "Help someone else use TeleKey under this licence as a paid consultant or contractor.",
+            "Copy it and share it, as long as you keep the licence and its copyright notices with every copy.",
+          ],
+        },
+      ],
+    },
+    {
+      id: "not-allowed",
+      title: "What you cannot do",
+      blocks: [
+        {
+          p: "You may not use TeleKey's code to offer others a commercial product or service that does the job TeleKey does: a dictation app for sale, a hosted dictation service, or a competing fork. The licence calls this a competing use. It also covers putting the code inside a larger product, or offering it through an API.",
+        },
+        {
+          p: [
+            "Not sure whether what you have in mind counts? Email ",
+            EMAIL,
+            " before you build on it.",
+          ],
+        },
+      ],
+    },
+    {
+      id: "mit",
+      title: "Every release becomes MIT",
+      blocks: [
+        {
+          p: "Each release has its own clock. On the second anniversary of the date a release is published, you may use that release under the MIT licence instead, with no competing-use limit and no other conditions beyond keeping the copyright notice. A release published in October 2026 becomes MIT in October 2028, and a release published after it becomes MIT a little later still.",
+        },
+      ],
+    },
+    {
+      id: "earlier",
+      title: "Earlier versions",
+      blocks: [
+        {
+          p: "Versions up to and including v0.3.0 were released under the MIT licence, which is an open source licence, and they stay under it. The Functional Source License applies to the releases after them.",
+        },
+      ],
+    },
+    {
+      id: "private",
+      title: "What is private",
+      blocks: [
+        {
+          p: "TeleKey's paid service is private. That is the server that signs you in, sells credits, keeps your balance and relays Instant dictations. It is not published, it is not covered by the licence above, and all rights in it are reserved.",
+        },
+        {
+          ul: [
+            "The app reaches the service only over the network, so the app works without it. With your own OpenAI key, nothing goes through it.",
+            [
+              "Because you cannot read the server, the ",
+              { text: "privacy policy", href: "/privacy" },
+              " and the ",
+              { text: "terms", href: "/terms" },
+              " say what it does and does not keep.",
+            ],
+          ],
+        },
+      ],
+    },
+    {
+      id: "trademarks",
+      title: "Trademarks",
+      blocks: [
+        {
+          p: `TeleKey and the TeleKey logo are trademarks of ${OPERATOR}. The licence grants no right to use them, beyond saying where the code came from. They are not registered, which is why we mark them ™ and not ®.`,
+        },
+        {
+          p: "In practice: a copy or fork of the code needs its own name and logo, and must not suggest that it is TeleKey or that we approve of it. Saying truthfully where your copy came from, for example “based on TeleKey”, is fine.",
+        },
+      ],
+    },
+    {
+      id: "full-text",
+      title: "The full text",
+      blocks: [
+        {
+          p: [
+            "Everything above is a reading in plain words. If it differs from the licence, the licence wins. Read the ",
+            { text: "LICENSE file on GitHub", href: LICENSE_URL },
+            ", or the standard text at ",
+            { text: "fsl.software", href: FSL_URL },
+            ".",
+          ],
+        },
+      ],
+    },
+    LEGAL_CONTACT,
+  ],
+  links: [{ label: "Read LICENSE on GitHub", href: LICENSE_URL }],
+};
+
+/**
  * The About page. The facts about Theodore are from his public GitHub profile
  * (name, "Solutions Architect", the @theodoremca handle); the principles each
  * trace to the code or README like everything else on the site. The first-
@@ -1111,7 +1493,7 @@ export const ABOUT = {
   meta: {
     title: "About — TeleKey",
     description:
-      "TeleKey is built by one person, Theodore Imonigie, in the open. Free with your own OpenAI key; if it saves you time, buy him a coffee.",
+      "TeleKey is built by one person, Theodore Imonigie, with the app's code open to read. Free with your own OpenAI key; if it saves you time, buy him a beer.",
   },
   intro: {
     /** The last line is set in amber. */
@@ -1121,9 +1503,11 @@ export const ABOUT = {
     // His GitHub avatar, served by GitHub; swap for a file in public/ any time.
     avatar: "https://avatars.githubusercontent.com/u/35204506?v=4",
     lede: [
-      "I build TeleKey on my own, in the open. Every line of it is ",
+      "I build TeleKey on my own. The app's code is ",
       { text: "on GitHub", href: REPO },
-      ", under the MIT licence, and it is free with your own OpenAI key.",
+      ", ",
+      { text: "source available", href: "/license" },
+      ", and the app is free with your own OpenAI key. The server that sells credits is private.",
     ],
   },
   principles: {
@@ -1146,20 +1530,20 @@ export const ABOUT = {
       },
       {
         id: "open",
-        name: "In the open",
-        body: "Read the code, fork it, or tell me where it is wrong. Issues and pull requests are how TeleKey gets better.",
+        name: "Code you can read",
+        body: "Read the app's code, build your own copy, or tell me where it is wrong. The licence stops one thing: selling a competing copy. Two years after each release, that release becomes MIT.",
       },
     ],
   },
   support: {
     title: "Keep it free.",
-    body: "TeleKey costs nothing with your own key, and I'd like to keep it that way. If it saves you time, a coffee helps pay for the hosting and keeps the work going.",
-    coffee: SUPPORT,
+    body: "TeleKey costs nothing with your own key, and I'd like to keep it that way. If it saves you time, a beer helps pay for the hosting and keeps the work going.",
+    tip: SUPPORT,
     star: { label: "Star it on GitHub", href: REPO },
     other: [
       "Found a bug or want a feature? ",
       { text: "Open an issue", href: `${REPO}/issues` },
-      ". It helps as much as a coffee.",
+      ". It helps as much as a beer.",
     ],
   },
   elsewhere: {
@@ -1170,5 +1554,17 @@ export const ABOUT = {
     ],
   },
   /** Shown when the tip link sends someone back (?thanks=1). */
-  thanks: "Thank you. That coffee keeps TeleKey free for everyone.",
+  thanks: "Thank you. That beer keeps TeleKey free for everyone.",
+  /**
+   * Beside the thanks, for someone who tips while using the app on their own
+   * OpenAI key. telekey://thanks makes the desktop app stop asking for a tip;
+   * it carries nothing. The page also tries it once by itself on load
+   * (lib/handoff.ts tellAppThanks), which is harmless if the app is not
+   * installed, and the button is the dependable way.
+   */
+  tellApp: {
+    label: "Tell TeleKey",
+    href: "telekey://thanks",
+    note: "Use the app with your own OpenAI key? This tells it you have said thanks, so it stops asking. Nothing happens if TeleKey is not installed.",
+  },
 } as const;

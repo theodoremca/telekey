@@ -5,9 +5,18 @@ import { onAuthStateChanged, signOut, type User } from "firebase/auth";
 import { KeycapButton, KeycapLink } from "@/components/Keycap";
 import { Rich } from "@/components/Rich";
 import { Seo } from "@/components/Seo";
-import { BUY_NOTICE } from "@/data/site";
+import { BUY_INTRO, BUY_NOTICE } from "@/data/site";
 
-import { fetchAccount, isNotATester, money, owedNote, startCheckout, type HostedAccount } from "../lib/api";
+import {
+  fetchAccount,
+  isNotATester,
+  money,
+  owedNote,
+  packBonusPercent,
+  packCreditCents,
+  startCheckout,
+  type HostedAccount,
+} from "../lib/api";
 import { firebaseAuth, isConfigured } from "../lib/firebase";
 import { handoffToApp, wantsDesktop } from "../lib/handoff";
 
@@ -209,16 +218,25 @@ export default function Account() {
         </p>
         {owed && <p className="m-0 mt-2 text-[15px] leading-relaxed text-ink-soft">{owed}</p>}
 
-        <p className="mt-6 mb-4 text-[15px] leading-relaxed text-ink-soft">
-          Buy a pack. Stripe opens next; credits land here after payment.
-        </p>
+        <p className="mt-6 mb-4 text-[15px] leading-relaxed text-ink-soft">{BUY_INTRO}</p>
         {packs.length > 0 ? (
-          <div className="flex flex-wrap gap-3">
-            {packs.map((pack) => (
-              <KeycapButton key={pack.id} disabled={busy} onClick={() => void buy(pack.id)}>
-                Buy {pack.name}
-              </KeycapButton>
-            ))}
+          <div className="flex flex-wrap gap-x-5 gap-y-4">
+            {packs.map((pack) => {
+              // What the purchase adds to the balance, which is more than it
+              // costs on the bigger packs.
+              const bonus = packBonusPercent(pack);
+              return (
+                <div key={pack.id} className="flex flex-col items-start gap-2">
+                  <KeycapButton disabled={busy} onClick={() => void buy(pack.id)}>
+                    Buy {pack.name}
+                  </KeycapButton>
+                  <p className="m-0 text-[13px] leading-snug text-ink-soft">
+                    {money(packCreditCents(pack))} of credit
+                    {bonus !== null && <span className="font-semibold text-ink"> · +{bonus}%</span>}
+                  </p>
+                </div>
+              );
+            })}
           </div>
         ) : (
           <p className="m-0 text-sm text-ink-soft">

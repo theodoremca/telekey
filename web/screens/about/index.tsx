@@ -1,10 +1,12 @@
 import { useRouter } from "next/router";
+import { useEffect } from "react";
 
 import { KeyCard } from "@/components/KeyCard";
 import { KeycapLink } from "@/components/Keycap";
 import { Rich } from "@/components/Rich";
 import { Seo } from "@/components/Seo";
 import { ABOUT, PRIMARY_ACTION } from "@/data/site";
+import { tellAppThanks } from "@/lib/handoff";
 import { useSectionReveal } from "@/lib/sectionReveal";
 
 // The person behind the key. Same desk as the landing page: the intro on
@@ -18,18 +20,29 @@ function Intro() {
   // The tip link sends people back here with ?thanks=1.
   const thanked = useRouter().query.thanks === "1";
 
+  // Tell the desktop app once, so a person on their own OpenAI key stops being
+  // asked for a tip. Harmless without the app; the button below is the sure way.
+  useEffect(() => {
+    if (thanked) tellAppThanks();
+  }, [thanked]);
+
   return (
     <section
       ref={reveal}
       className="relative overflow-hidden bg-[radial-gradient(120%_90%_at_50%_0%,#24222f_0%,var(--color-graphite)_60%)] text-glow"
     >
       {thanked && (
-        <p
-          role="status"
-          className="m-0 border-b border-hair bg-voice/15 px-5 py-3 text-center text-sm text-glow"
-        >
-          {ABOUT.thanks}
-        </p>
+        <div role="status" className="border-b border-hair bg-voice/15 px-5 py-4 text-glow">
+          <div className="mx-auto flex max-w-[1120px] flex-col items-center gap-3 text-center sm:flex-row sm:justify-center sm:gap-5 sm:text-left">
+            <p className="m-0 text-sm">{ABOUT.thanks}</p>
+            <KeycapLink href={ABOUT.tellApp.href} variant="dark" className="keycap-sm">
+              {ABOUT.tellApp.label}
+            </KeycapLink>
+          </div>
+          <p className="mx-auto mt-3 mb-0 max-w-[60ch] text-center text-[13px] leading-relaxed text-dim">
+            {ABOUT.tellApp.note}
+          </p>
+        </div>
       )}
       <div className="mx-auto grid max-w-[1120px] items-center gap-x-16 gap-y-10 px-5 py-16 sm:px-8 sm:py-24 lg:grid-cols-[1fr_auto]">
         {/* The portrait sits on a key, like everything else you can press
@@ -78,11 +91,11 @@ function Intro() {
 
           <div className="flex flex-wrap gap-3">
             <KeycapLink
-              href={support.coffee.href}
+              href={support.tip.href}
               data-reveal="key"
               data-reveal-at="0.5"
             >
-              {support.coffee.label}
+              {support.tip.label}
             </KeycapLink>
             <KeycapLink
               href={PRIMARY_ACTION.href}
@@ -161,11 +174,11 @@ function Support() {
           </p>
           <div className="flex flex-wrap gap-3">
             <KeycapLink
-              href={support.coffee.href}
+              href={support.tip.href}
               data-reveal="key"
               data-reveal-at="0.4"
             >
-              {support.coffee.label}
+              {support.tip.label}
             </KeycapLink>
             <KeycapLink
               href={support.star.href}
