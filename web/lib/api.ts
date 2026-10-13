@@ -82,6 +82,30 @@ export async function startCheckout(
   return body.url;
 }
 
+/**
+ * How a balance is written. `balanceCents` is whole cents and can be below
+ * zero: Instant is charged after the text is delivered, and a charge dearer
+ * than the estimate is taken in full. `$${(cents / 100).toFixed(2)}` wrote
+ * that as "$-0.03"; this writes "-$0.03" and `owedNote` says it is owed.
+ *
+ * The desktop app has its own copy (src/settings/money.ts). The test beside it
+ * (src/settings/money.test.ts) holds the two to the same answers.
+ */
+function splitCents(cents: number): { text: string; owing: boolean } {
+  const text = (Math.abs(cents) / 100).toFixed(2);
+  // A fraction of a cent below zero rounds to "0.00"; "-$0.00" would claim a
+  // debt that is not there, so only a visible amount counts as owed.
+  return { text, owing: cents < 0 && text !== "0.00" };
+}
+
+/** "$5.00", and "-$0.03" for a balance below zero. */
 export function money(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
+  const { text, owing } = splitCents(cents);
+  return owing ? `-$${text}` : `$${text}`;
+}
+
+/** What to tell someone whose balance is below zero, or null when it is not. */
+export function owedNote(cents: number): string | null {
+  const { text, owing } = splitCents(cents);
+  return owing ? `You owe $${text} — your next purchase covers it first.` : null;
 }

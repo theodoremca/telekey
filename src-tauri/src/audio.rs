@@ -589,6 +589,17 @@ fn resample_to_target(samples: Vec<f32>, source_rate: u32) -> Result<Vec<f32>> {
 /// writer, which makes writing to an in-memory buffer awkward. The header is a
 /// fixed 44 bytes for this format; tests decode the result with `hound` to prove
 /// it round-trips.
+///
+/// The byte layout is a wire contract. The server accepts only this exact WAV
+/// (`uploadProblem` in functions/src/audio.ts): canonical 44-byte header, PCM,
+/// mono, 16 kHz, 16-bit, lengths equal to the real ones, nothing after the
+/// data. It refuses anything else before OpenAI is paid, so a change here that
+/// the server does not know about makes every hosted dictation fail. Both sides
+/// are held to `functions/test/fixtures/app-recording.wav` (the tests
+/// `wav_matches_the_servers_golden_recording` here and "the committed recording
+/// is the generator's output" there). Change it only together with the server,
+/// and keep the server accepting the old layout for as long as apps that write
+/// it are installed.
 pub fn encode_wav_16bit_mono(samples: &[f32], sample_rate: u32) -> Vec<u8> {
     const HEADER_LEN: usize = 44;
     let data_len = samples.len() * 2;
@@ -654,6 +665,56 @@ mod tests {
             let expected = (original * i16::MAX as f32).round() as i16;
             assert_eq!(expected, *actual);
         }
+    }
+
+    /// The server's `uploadProblem` accepts only this layout, and its test suite
+    /// checks the very same file, so the two encoders cannot drift apart
+    /// unnoticed. The samples are a sawtooth, `((i % 100) - 50) * 100` for
+    /// i in 0..1600, as i16; as f32 they are `value / 32767`, which this encoder
+    /// scales back to the same integers. The generator is in
+    /// functions/test/audio.test.mjs (`appRecording`).
+    #[test]
+    fn wav_matches_the_servers_golden_recording() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../functions/test/fixtures/app-recording.wav");
+        let golden = std::fs::read(&path)
+            .unwrap_or_else(|err| panic!("cannot read the golden recording {}: {err}", path.display()));
+
+        let samples: Vec<f32> = (0..1600i32)
+            .map(|i| (((i % 100) - 50) * 100) as f32 / i16::MAX as f32)
+            .collect();
+        let bytes = encode_wav_16bit_mono(&samples, TARGET_SAMPLE_RATE);
+
+        assert_eq!(bytes.len(), 44 + 3200, "1,600 samples are a 44-byte header and 3,200 bytes");
+        assert_eq!(
+            bytes, golden,
+            "encode_wav_16bit_mono no longer writes the bytes the server accepts \
+             (functions/src/audio.ts uploadProblem, functions/test/fixtures/app-recording.wav)"
+        );
+    }
+
+    /// The header spelled out field by field, so the layout stays pinned even if
+    /// someone regenerates the golden file to match a changed encoder.
+    #[test]
+    fn wav_header_is_the_layout_the_server_checks() {
+        let bytes = encode_wav_16bit_mono(&[0.0, 0.5, -0.5], 16_000);
+        let u16_at = |at: usize| u16::from_le_bytes([bytes[at], bytes[at + 1]]);
+        let u32_at = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+
+        assert_eq!(&bytes[0..4], b"RIFF");
+        assert_eq!(u32_at(4) as usize, bytes.len() - 8, "RIFF length is the file less 8");
+        assert_eq!(&bytes[8..12], b"WAVE");
+        assert_eq!(&bytes[12..16], b"fmt ");
+        assert_eq!(u32_at(16), 16, "a plain 16-byte fmt chunk");
+        assert_eq!(u16_at(20), 1, "PCM");
+        assert_eq!(u16_at(22), 1, "mono");
+        assert_eq!(u32_at(24), 16_000, "sample rate");
+        assert_eq!(u32_at(28), 32_000, "bytes a second");
+        assert_eq!(u16_at(32), 2, "block align");
+        assert_eq!(u16_at(34), 16, "bits per sample");
+        assert_eq!(&bytes[36..40], b"data");
+        assert_eq!(u32_at(40), 6, "data length is the samples' bytes");
+        assert_eq!(bytes.len(), 44 + 6, "nothing after the data");
     }
 
     #[test]

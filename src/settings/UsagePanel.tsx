@@ -11,6 +11,7 @@ import {
   type Units,
   type UsageSummary,
 } from "./api";
+import { formatCents, isOwing, owedNote } from "./money";
 
 const PERIODS: Array<{ id: Period; label: string }> = [
   { id: "today", label: "Today" },
@@ -119,14 +120,15 @@ export function UsagePanel({
         <div className="card usageSummary">
           <div className="headline">
             <div>
-              <span className="figure">{money(hosted.balanceCents / 100)}</span>
-              <span className="figureLabel">credits left</span>
+              <span className="figure">{formatCents(hosted.balanceCents)}</span>
+              <span className="figureLabel">{isOwing(hosted.balanceCents) ? "balance" : "credits left"}</span>
             </div>
             <div>
               <span className="figure">{hosted.email ?? "Signed in"}</span>
               <span className="figureLabel">TeleKey account</span>
             </div>
           </div>
+          {isOwing(hosted.balanceCents) && <p className="owedNote">{owedNote(hosted.balanceCents)}</p>}
           {hosted.packs.length > 0 ? (
             <div className="packRow">
               {hosted.packs.map((pack) => (

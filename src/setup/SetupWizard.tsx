@@ -18,7 +18,7 @@
  * with what is granted now — and only once, after the last permission is in.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 
 import {
@@ -30,7 +30,9 @@ import {
   type SetupState,
   type SetupStep,
 } from "../settings/api";
+import { formatCents, owedNote } from "../settings/money";
 import { setKeyStyle, shortcutText } from "../settings/shortcut";
+import { createTrailingThrottle } from "../settings/trailingThrottle";
 
 /** How often to re-check while the window is on screen. */
 const POLL_MS = 1000;
@@ -100,8 +102,9 @@ export function SetupWizard() {
     }
   }, []);
 
-  // Not on the poll: this reads the Keychain and, when signed in, the network.
-  // On mount, on focus, after a save and when a session arrives is enough.
+  // Not on the poll: this reads the Keychain and, when signed in, the network
+  // (GET /me, a request to Cloud Functions that reads the user's document).
+  // Don't call it directly: `credentialsThrottle` below is how it is asked for.
   const refreshCredentials = useCallback(async () => {
     try {
       const [key, session] = await Promise.all([api.apiKeyStatus(), api.sessionStatus()]);
@@ -138,9 +141,25 @@ export function SetupWizard() {
     }
   }, []);
 
+  // At most one credentials read every 15 seconds for the asks that only say
+  // "the window came back": coming back from System Settings or the browser
+  // happens a handful of times, and each used to be a /me. The ask is kept, not
+  // dropped, so a return inside the gap still shows the balance when it ends.
+  const credentialsThrottle = useMemo(
+    () =>
+      createTrailingThrottle({
+        run: refreshCredentials,
+        canRun: () => document.visibilityState === "visible",
+      }),
+    [refreshCredentials],
+  );
+  useEffect(() => () => credentialsThrottle.cancel(), [credentialsThrottle]);
+
+  // For the moments the credentials are wrong rather than old: the first load,
+  // a session arriving, a key being saved. Reads them now, whatever the gap.
   const refreshAll = useCallback(async () => {
-    await Promise.all([refresh(), refreshCredentials()]);
-  }, [refresh, refreshCredentials]);
+    await Promise.all([refresh(), credentialsThrottle.runNow()]);
+  }, [refresh, credentialsThrottle]);
 
   useEffect(() => {
     void refreshAll();
@@ -161,15 +180,19 @@ export function SetupWizard() {
       if (document.visibilityState === "visible") void refresh();
     }, POLL_MS);
     // Coming back from System Settings or the browser should feel instant,
-    // not up to a second.
-    const onFocus = () => void refreshAll();
+    // not up to a second. The setup state is local and read every time; the
+    // credentials, which can cost a request, go through their throttle.
+    const onFocus = () => {
+      void refresh();
+      credentialsThrottle.request();
+    };
     window.addEventListener("focus", onFocus);
 
     return () => {
       window.clearInterval(timer);
       window.removeEventListener("focus", onFocus);
     };
-  }, [refresh, refreshAll, loadSettings]);
+  }, [refresh, refreshAll, loadSettings, credentialsThrottle]);
 
   // Listened for here, not inside the credentials row: that row unmounts the
   // moment the session arrives, which is exactly when the event fires.
@@ -237,7 +260,8 @@ export function SetupWizard() {
             requirement={requirement}
             credentials={credentials}
             platform={platform}
-            onChanged={refreshAll}
+            onChanged={refresh}
+            onCredentialsSaved={refreshAll}
           />
         ))}
       </div>
@@ -303,11 +327,15 @@ function StepRow({
   credentials,
   platform,
   onChanged,
+  onCredentialsSaved,
 }: {
   requirement: Requirement;
   credentials: Credentials;
   platform: Platform | null;
+  /** A permission was acted on: re-read the checklist. Credentials don't depend on it. */
   onChanged: () => Promise<void>;
+  /** A key was saved: the checklist and the credentials both changed. */
+  onCredentialsSaved: () => Promise<void>;
 }) {
   const { step, state, needsRestart } = requirement;
   const done = state === "done";
@@ -329,7 +357,7 @@ function StepRow({
       <div className="rowText">
         <span className="rowLabel">{label}</span>
         <span className="rowHint">{hint}</span>
-        {step === "apiKey" && !done && <CredentialsField onSaved={onChanged} />}
+        {step === "apiKey" && !done && <CredentialsField onSaved={onCredentialsSaved} />}
         {step === "apiKey" && done && <CredentialsActions credentials={credentials} />}
         {step === "inputMonitoring" && !done && <SkipInputMonitoring onChanged={onChanged} />}
       </div>
@@ -362,7 +390,8 @@ function credentialsHint(credentials: Credentials): string {
       if (credentials.balance.kind === "unknown") {
         return `${who} · could not check credits: ${credentials.balance.reason}`;
       }
-      return `${who} · $${(credentials.balance.cents / 100).toFixed(2)} credits`;
+      const owed = owedNote(credentials.balance.cents);
+      return owed ? `${who} · ${owed}` : `${who} · ${formatCents(credentials.balance.cents)} credits`;
     }
     case "none":
       return "Ready.";

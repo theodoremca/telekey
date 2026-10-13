@@ -7,7 +7,7 @@ import { Rich } from "@/components/Rich";
 import { Seo } from "@/components/Seo";
 import { BUY_NOTICE } from "@/data/site";
 
-import { fetchAccount, isNotATester, money, startCheckout, type HostedAccount } from "../lib/api";
+import { fetchAccount, isNotATester, money, owedNote, startCheckout, type HostedAccount } from "../lib/api";
 import { firebaseAuth, isConfigured } from "../lib/firebase";
 import { handoffToApp, wantsDesktop } from "../lib/handoff";
 
@@ -57,17 +57,27 @@ export default function Account() {
 
   // While Stripe's return URL still carries ?paid=1, poll for the credit
   // balance to change, then drop the query so a reload doesn't restart it.
+  //
+  // Each poll is a /me request, so it runs only while the page is in front: a
+  // tab left in the background neither polls nor spends its 30 seconds, and
+  // coming back checks once straight away (the webhook has likely landed by
+  // then). Unmounting, or finishing, stops everything.
   useEffect(() => {
     if (!paid || !user) return;
 
     let cancelled = false;
     let firstBalance: number | null = null;
+    let visibleTicks = 0;
+
+    const stop = () => {
+      cancelled = true;
+      clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
 
     const finish = (changed: boolean) => {
       if (cancelled) return;
-      cancelled = true;
-      clearInterval(intervalId);
-      clearTimeout(timeoutId);
+      stop();
       setPaidMessage(
         changed ? "Credits added." : "Still waiting for the payment to land — reload in a moment.",
       );
@@ -94,17 +104,28 @@ export default function Account() {
         });
     };
 
-    // Baseline now rather than three seconds from now, so a credit that lands
-    // in between still reads as a change.
-    check();
-    const intervalId = setInterval(check, 3000);
-    const timeoutId = setTimeout(() => finish(false), 30000);
-
-    return () => {
-      cancelled = true;
-      clearInterval(intervalId);
-      clearTimeout(timeoutId);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") check();
     };
+
+    // Every 3 seconds the page is visible; the tenth gives up, which is 30
+    // seconds of looking (the tenth poll's answer would arrive after that).
+    const tick = () => {
+      if (document.visibilityState !== "visible") return;
+      visibleTicks += 1;
+      if (visibleTicks >= 10) finish(false);
+      else check();
+    };
+
+    // Baseline now rather than three seconds from now, so a credit that lands
+    // in between still reads as a change. Taken even in a background tab: with
+    // no baseline, a credit that lands before the first visible poll would read
+    // as no change.
+    check();
+    const intervalId = setInterval(tick, 3000);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return stop;
   }, [paid, user]);
 
   const buy = async (packId: string) => {
@@ -164,6 +185,7 @@ export default function Account() {
   }
 
   const packs = account?.packs ?? [];
+  const owed = account ? owedNote(account.balanceCents) : null;
 
   return (
     <>
@@ -185,6 +207,7 @@ export default function Account() {
         <p className="m-0 mt-1 font-display text-[clamp(2.75rem,8vw,3.75rem)] font-bold leading-none tracking-[-0.04em] tabular-nums">
           {account ? money(account.balanceCents) : "…"}
         </p>
+        {owed && <p className="m-0 mt-2 text-[15px] leading-relaxed text-ink-soft">{owed}</p>}
 
         <p className="mt-6 mb-4 text-[15px] leading-relaxed text-ink-soft">
           Buy a pack. Stripe opens next; credits land here after payment.

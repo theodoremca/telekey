@@ -21,6 +21,7 @@ import {
   UPDATE_EVENT,
 } from "./api";
 import { FormattingEditor } from "./FormattingEditor";
+import { accountStanding } from "./money";
 import { fromKeyEvent, modifierGlyphs, shortcutText, toGlyphs } from "./shortcut";
 
 export function SettingsPanel({
@@ -644,7 +645,7 @@ function AccountRow({
   };
 
   if (session?.signedIn) {
-    const credits = formatCents(account?.balanceCents ?? 0);
+    const standing = accountStanding(session.email ?? "Signed in", account?.balanceCents ?? 0);
     const packs = account?.packs ?? [];
     return (
       <div className="row column">
@@ -653,8 +654,8 @@ function AccountRow({
           <div className="rowText">
             <span className="rowLabel">TeleKey credits</span>
             <span className="rowHint">
-              {session.email ?? "Signed in"} — {credits} left
-              {usingOwnKey ? ". Sign in uses TeleKey credits; your key is unused until you sign out." : "."}
+              {standing}
+              {usingOwnKey ? " Sign in uses TeleKey credits; your key is unused until you sign out." : ""}
             </span>
           </div>
           <button className="ghost" disabled={busy} onClick={() => void signOut()}>
@@ -708,10 +709,6 @@ function AccountRow({
       {problem && <p className="problem">{problem}</p>}
     </div>
   );
-}
-
-function formatCents(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
 }
 
 function ShortcutRecorder({

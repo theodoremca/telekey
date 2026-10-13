@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 
 import {
@@ -15,9 +15,12 @@ import {
   type Signing,
 } from "./api";
 import { HistoryPanel } from "./HistoryPanel";
+import { creditsLeft } from "./money";
 import { SettingsPanel } from "./SettingsPanel";
 import { UsagePanel } from "./UsagePanel";
 import { setKeyStyle, toGlyphs } from "./shortcut";
+import { createBalanceAfterDictation } from "./balanceAfterDictation";
+import { createTrailingThrottle } from "./trailingThrottle";
 import { STATUS_EVENT, settlesADictation, type Status } from "../status";
 
 type Tab = "settings" | "history" | "usage";
@@ -55,7 +58,12 @@ export function App() {
   const [dictations, setDictations] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  const refreshStatus = useCallback(async () => {
+  // Whether the last read of the session said signed in. A ref, not state: the
+  // balance throttle asks it from timers, long after the render that made it.
+  const signedIn = useRef(false);
+
+  // Everything that costs nothing to read: permissions, the key, the session.
+  const refreshLocal = useCallback(async () => {
     const [perms, key, nextSession] = await Promise.all([
       api.permissions(),
       api.apiKeyStatus(),
@@ -64,16 +72,51 @@ export function App() {
     setPermissions(perms);
     setKeyStatus(key);
     setSession(nextSession);
-    if (nextSession.signedIn) {
-      try {
-        setAccount(await api.hostedAccount());
-      } catch {
-        setAccount(null);
-      }
-    } else {
+    signedIn.current = nextSession.signedIn;
+    if (!nextSession.signedIn) setAccount(null);
+    return nextSession;
+  }, []);
+
+  // The one network read here: GET /me, a request to Cloud Functions that reads
+  // the user's document. Never call it directly; go through `balance`.
+  const loadAccount = useCallback(async () => {
+    try {
+      const next = await api.hostedAccount();
+      // Signed out while it was in flight: do not bring the balance back.
+      if (signedIn.current) setAccount(next);
+    } catch {
       setAccount(null);
     }
   }, []);
+
+  // At most one /me every 15 seconds, and only for a signed-in user looking at
+  // the window. A request made inside the gap runs when it ends, so the last
+  // dictation's balance still arrives.
+  const balance = useMemo(
+    () =>
+      createTrailingThrottle({
+        run: loadAccount,
+        canRun: () => signedIn.current && document.visibilityState === "visible",
+      }),
+    [loadAccount],
+  );
+  useEffect(() => () => balance.cancel(), [balance]);
+
+  // A settled dictation asks for the balance 1.5 s later, through that same
+  // throttle: Instant on credits is charged just after the transcript is handed
+  // over, so asking at once can read the balance from before the charge.
+  const balanceAfterDictation = useMemo(
+    () => createBalanceAfterDictation({ request: () => balance.request() }),
+    [balance],
+  );
+  useEffect(() => () => balanceAfterDictation.cancel(), [balanceAfterDictation]);
+
+  // For the moments the balance is wrong rather than old: the first load, and a
+  // sign-in, a sign-out or a new session. Runs /me now, whatever the gap.
+  const refreshStatus = useCallback(async () => {
+    const next = await refreshLocal();
+    if (next.signedIn) await balance.runNow();
+  }, [refreshLocal, balance]);
 
   const refreshDevices = useCallback(async () => {
     const [current, all] = await Promise.all([api.inputDevice(), api.inputDevices()]);
@@ -119,12 +162,19 @@ export function App() {
   }, [refreshDevices]);
 
   // Permissions are granted in System Settings, not here. Re-check on return
-  // rather than making the user restart the app.
+  // rather than making the user restart the app. The permission reads are free
+  // and happen every time; the balance goes through its throttle.
   useEffect(() => {
-    const onFocus = () => void refreshStatus().catch(() => {});
+    // The local read goes first so the throttle sees a sign-in or sign-out
+    // that happened while the window was away.
+    const onFocus = () => {
+      void refreshLocal()
+        .catch(() => {})
+        .then(() => balance.request());
+    };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [refreshStatus]);
+  }, [refreshLocal, balance]);
 
   // The tray menu can switch tabs on an already-open window.
   useEffect(() => {
@@ -157,20 +207,26 @@ export function App() {
   // The overlay's status stream, listened to for one reason: a dictation that
   // has just settled changed history, usage and (for a hosted account) the
   // balance. History and usage are written before the status is published,
-  // so refetching on it never races the write.
+  // so refetching on it never races the write. Those are local and always
+  // refetched. The balance is a network request, and the charge can land after
+  // the status does, so it is asked for after a short delay and only when the
+  // dictation can have changed it (see `createBalanceAfterDictation`). That
+  // needs every status, in order, not just the settling ones: whether anything
+  // was uploaded is what tells a billed failure from a free one.
   useEffect(() => {
     let stop: (() => void) | undefined;
     listen<Status>(STATUS_EVENT, (event) => {
+      balanceAfterDictation.observe(event.payload);
       if (!settlesADictation(event.payload)) return;
       setDictations((count) => count + 1);
-      void refreshStatus().catch(() => {});
+      void refreshLocal().catch(() => {});
     })
       .then((unlisten) => {
         stop = unlisten;
       })
       .catch(() => {});
     return () => stop?.();
-  }, [refreshStatus]);
+  }, [refreshLocal, balanceAfterDictation]);
 
   // Another window (the setup window, switching hold-Fn off) may have saved.
   // Reload from the source rather than trusting the payload, so this copy can
@@ -227,7 +283,7 @@ export function App() {
           {session?.signedIn && (
             <p className="note" style={{ margin: "4px 0 0" }}>
               {account
-                ? `$${(account.balanceCents / 100).toFixed(2)} credits left`
+                ? creditsLeft(account.balanceCents)
                 : "Signed in"}
             </p>
           )}

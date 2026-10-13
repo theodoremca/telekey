@@ -720,3 +720,12 @@ select.input {
   gap: 8px;
   padding: 4px 14px 12px;
 }
+
+/* Only when a balance is below zero: sits under the figures, above the packs
+   that settle it, lined up with both. */
+.owedNote {
+  margin: 0;
+  padding: 10px 14px 6px;
+  font-size: 13px;
+  color: var(--muted);
+}

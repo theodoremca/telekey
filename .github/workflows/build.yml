@@ -100,6 +100,38 @@ jobs:
       - name: Rust
         run: cargo check --manifest-path src-tauri/Cargo.toml
 
+  # The Functions API and the Instant relay hold the money code (pricing, the
+  # ledger, the upload check), and their tests also pin the half of the
+  # recording-format contract the server owns (functions/test/fixtures,
+  # matched byte for byte by a Rust test in audio.rs). They are deployed by
+  # hand, so this is the only thing that runs them on every push. The relay's
+  # tests import the shared ledger from functions/src, so functions installs
+  # first.
+  backend:
+    name: tests (backend)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Functions
+        working-directory: functions
+        run: |
+          npm ci
+          npm test
+
+      - name: Relay
+        working-directory: relay
+        run: |
+          npm ci
+          npm test
+          npx tsc --noEmit
+
   # The website is deployed by hand from web/ (CLAUDE.md), so nothing else
   # builds it before a release goes out. This does, on every push. It needs no
   # secrets: the Firebase key and API base are NEXT_PUBLIC_ values read from

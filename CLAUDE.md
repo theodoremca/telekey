@@ -105,6 +105,8 @@ open http://localhost:1420/setup.html          # first-run permission checklist
 open http://localhost:1420/preview.html        # every overlay state on one page
 open 'http://localhost:1420/setup.html?balance=0'      # signed in with nothing to spend
 open 'http://localhost:1420/setup.html?account=fail'   # signed in, balance unreachable
+open 'http://localhost:1420/index.html?balance=-3'     # a balance below zero ("You owe …")
+open 'http://localhost:1420/setup.html?platform=windows'  # what Windows (or linux) is shown
 ```
 
 **`bun tauri dev` cannot dictate** — a bare binary has no `Info.plist`, so no
@@ -618,6 +620,49 @@ Linux has no non-activating window, and `focused(false)` does not last: tao
 turns accept-focus back on after the first draw, so a later `show()` handed
 the capsule the keyboard. `overlay.rs` builds it with `focusable(false)` on
 Linux only (GTK still delivers clicks). Never verified on a real Linux desktop.
+
+**34. Every hosted Standard dictation fails with "not in a format TeleKey sends".**
+`/transcribe` accepts only the exact WAV `audio.rs` `encode_wav_16bit_mono`
+writes (44-byte header, PCM, mono, 16 kHz, 16-bit, RIFF and data lengths equal
+to the body), because the price is checked from the data length *before*
+OpenAI is called and a compressed body would cost far more than its size
+says. That byte layout is a wire contract: `functions/test/fixtures/app-recording.wav`
+is checked by a Rust test (`wav_matches_the_servers_golden_recording`) and by
+`functions/test/audio.test.mjs`, and CI runs both. Change the encoder and the
+check together, never one alone; installed copies keep sending the old bytes.
+
+**35. OpenAI was paid and nothing was charged, or a user is told "busy" for no reason.**
+Refusals happen only before OpenAI: `/transcribe` prices the upload, `/polish`
+estimates from the text, and both refuse (402) when the true balance
+(`balanceCents` minus `owedMicrocents`) cannot cover it. After OpenAI answers,
+`debit` always charges in full, even below zero; the next purchase pays the
+debt first and `requireBalance` blocks dictation until the balance is positive.
+`guard.ts` lets one paid request per user run per instance; the next two wait
+up to 15 s (a cancel then re-dictation must succeed) and only a third is told
+"Slow down a moment" (429). The 800 ms gap is gone. The relay forwards nothing
+until the app's `session.update` (so OpenAI's defaults never apply to billed
+audio), needs 10 s of Instant balance to start, stops a session at its
+admission balance plus 5 s, after 30 s without audio and at 280 s (Cloud Run's
+timeout is 300 s), allows 2 open sessions and 12 starts a minute per user per
+instance, ignores the client once the transcript is delivered, and bills at
+least every streamed byte not yet billed. A cancelled Instant dictation is
+charged for the audio already streamed (`CHARGE_ABANDONED_AUDIO`, published in
+the Terms and FAQ); that write happens after the app has gone, so it is best
+effort (rule 25). The routes live in `functions/src/app.ts`; `index.ts` only
+configures and exports them.
+
+**36. The Google bill grows while nobody dictates, or reads run out.**
+Nothing may bill by the hour: min instances stay 0 on all four services (one
+warm instance is billed 24/7). Caps are deliberate: `maxInstances` 5 (`api`)
+and 2 (`staging`) in `index.ts`, 3 and 2 for the relays in `relay/deploy.sh`.
+`/me` is one Firestore read: it returns `usage: []` for old clients and serves
+packs from a 5-minute per-instance cache (`packs.ts`; a new or re-priced pack
+shows within 5 minutes, or at once after a redeploy). The desktop asks for the
+balance at most every 15 s, and 1.5 s after a dictation so Instant's charge has
+landed. `GET /packs` is gone and `firestore.rules` denies all client access:
+nothing uses a Firestore client SDK, and the Admin SDK ignores rules. Today
+every service sits inside Google's free allowances; egress to OpenAI is the
+first to run out as use grows.
 
 ---
 

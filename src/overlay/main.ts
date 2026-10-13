@@ -10,7 +10,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 
-import { LEVEL_EVENT, STATUS_EVENT, type Status } from "../status";
+import { LEVEL_EVENT, STATUS_EVENT, mentionsCredits, type Status } from "../status";
 import { shortcutText } from "../settings/shortcut";
 
 /** Mirrors `PillState` in src-tauri/src/overlay.rs. */
@@ -258,7 +258,7 @@ function start() {
   capsule.addEventListener("click", () => {
     if (state !== "failed") return;
     const text = messageEl.textContent ?? "";
-    if (!text.toLowerCase().includes("credit")) return;
+    if (!mentionsCredits(text)) return;
     invoke("open_credits").catch((error: unknown) => {
       console.warn("could not open credits", error);
     });

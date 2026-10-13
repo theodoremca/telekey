@@ -224,8 +224,9 @@ export const FAQ = {
       id: "instant",
       q: "What is Instant?",
       // live.rs and relay/; the price is LIVE_TRANSCRIBE_PER_MINUTE (0.017)
-      // x MARKUP (3) in functions/src/pricing.ts.
-      a: "A setting that streams your voice while you speak, so the text lands about a second after you let go instead of three or four. It costs about four times as much: 5.1¢ a minute on credits (the normal way is 1.35¢), or OpenAI's $0.017 a minute with your own key. It is off until you turn it on, and if it cannot connect, that dictation uses the normal way.",
+      // x MARKUP (3) in functions/src/pricing.ts; a cancel is charged for the
+      // audio streamed (relay/src/relay.ts CHARGE_ABANDONED_AUDIO).
+      a: "A setting that streams your voice while you speak, so the text lands about a second after you let go instead of three or four. It costs about four times as much: 5.1¢ a minute on credits (the normal way is 1.35¢), or OpenAI's $0.017 a minute with your own key. It is off until you turn it on, and if it cannot connect, that dictation uses the normal way. Because the audio is sent as you speak, cancelling an Instant dictation still costs the seconds already sent.",
     },
     {
       id: "hold",
@@ -802,9 +803,11 @@ export const PRIVACY_POLICY: LegalDoc = {
 /**
  * Sources: the rates are functions/src/pricing.ts (TRANSCRIBE_PER_MINUTE 0.0045
  * and LIVE_TRANSCRIBE_PER_MINUTE 0.017, each x MARKUP 3); a new production
- * account starts at $0 and nothing expires (functions/src/ledger.ts); an
- * Instant dictation is charged after it is delivered and can take the balance
- * below zero (ledger.ts chargeDelivered); the licence is LICENSE.
+ * account starts at $0 and nothing expires (functions/src/ledger.ts); a
+ * charge is taken in full once the work is done, so it can take the balance
+ * below zero (ledger.ts debit and chargeDelivered); a cancelled Instant
+ * dictation pays for the audio already streamed (relay/src/relay.ts
+ * CHARGE_ABANDONED_AUDIO); the licence is LICENSE.
  */
 export const TERMS: LegalDoc = {
   path: "/terms",
@@ -871,7 +874,8 @@ export const TERMS: LegalDoc = {
             "We may change the rates. A change applies to dictations after it takes effect and never reduces the balance you already hold.",
             "Credits do not expire.",
             "Credits are not money, a deposit or a stored-value account. They cannot be transferred or exchanged for cash, and they can be used only for TeleKey's service. Refunds are covered by the refund policy.",
-            "With Instant, we deliver the text first and charge straight afterwards, so a dictation that costs more than your remaining balance can take it slightly below zero. Your next purchase pays that off first, and you cannot dictate with credits until your balance is positive again.",
+            "We check your balance before each dictation and charge for the work once it is done. A dictation that turns out to cost more than your remaining balance can take it slightly below zero. Your next purchase pays that off first, and you cannot dictate with credits until your balance is positive again.",
+            "Instant sends your audio while you speak, so cancelling an Instant dictation still uses the seconds already sent, charged at the Instant rate.",
             "Stripe shows the amount you will be charged before you pay.",
           ],
         },
