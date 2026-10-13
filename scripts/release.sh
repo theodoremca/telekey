@@ -6,6 +6,13 @@
 # you run rather than something the build does automatically.
 #
 # Required:
+#   TELEKEY_STAGE            production or staging: which TeleKey server this
+#                            build talks to. It is fixed into the app when it is
+#                            built (session.rs), the same way release.yml does
+#                            it from the tag, so a distributable made here is
+#                            for one server for good. It is never read from
+#                            .env, which says staging for daily work: a build
+#                            for people must be asked for by name.
 #   APPLE_SIGNING_IDENTITY   "Developer ID Application: Your Name (TEAMID)"
 #
 # Notarisation, either:
@@ -21,8 +28,8 @@
 # warn on first launch on any other Mac.
 #
 # Usage:
-#   ./scripts/release.sh              Apple Silicon only
-#   ./scripts/release.sh universal    also runs on Intel Macs
+#   TELEKEY_STAGE=production ./scripts/release.sh              Apple Silicon only
+#   TELEKEY_STAGE=production ./scripts/release.sh universal    also runs on Intel Macs
 
 set -euo pipefail
 
@@ -31,6 +38,20 @@ export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+
+# Which server this build is made for. Asked before anything slow: a
+# distributable built for the wrong one either sends real users to the test
+# server (invited testers only) or sends testers' dictation at live billing.
+: "${TELEKEY_STAGE:?TELEKEY_STAGE is not set. Say which server this build is for: TELEKEY_STAGE=production ./scripts/release.sh (or staging).}"
+if [[ "$TELEKEY_STAGE" != "production" && "$TELEKEY_STAGE" != "staging" ]]; then
+  echo "TELEKEY_STAGE must be exactly 'production' or 'staging', not '$TELEKEY_STAGE'." >&2
+  exit 1
+fi
+export TELEKEY_STAGE
+# release.yml bakes in the stage and nothing else, and every other address comes
+# from that stage's built-in defaults (session.rs). A variable left over in this
+# shell would be baked in too, and win over them, so make the build the same.
+unset TELEKEY_API_BASE TELEKEY_SITE_URL TELEKEY_RELAY_URL TELEKEY_FIREBASE_API_KEY
 
 if [[ -z "${APPLE_SIGNING_IDENTITY:-}" ]]; then
   cat >&2 <<'EOF'
@@ -71,7 +92,7 @@ if [[ "${1:-}" == "universal" ]]; then
   BUNDLE="$ROOT/src-tauri/target/universal-apple-darwin/release/bundle"
 fi
 
-echo "Building…"
+echo "Building for TELEKEY_STAGE=${TELEKEY_STAGE}…"
 bun tauri build --bundles app,dmg "${target_args[@]}"
 
 APP="$BUNDLE/macos/TeleKey.app"
@@ -131,3 +152,10 @@ fi
 echo
 echo "Artifacts:"
 find "$BUNDLE" -maxdepth 2 \( -name "*.app" -o -name "*.dmg" \) | sed 's/^/  /'
+
+echo
+echo "Built for TELEKEY_STAGE=${TELEKEY_STAGE}"
+if [[ "$TELEKEY_STAGE" == "staging" ]]; then
+  echo "  This is a STAGING build: it signs in to the test server, which only invited"
+  echo "  testers can use. Do not put it on the website or in the latest release."
+fi

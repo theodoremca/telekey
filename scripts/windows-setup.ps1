@@ -13,6 +13,13 @@
   Add -SkipBuild to set the machine up without building, or -Msi to produce an
   .msi instead of the default .exe installer.
 
+  A build needs -Stage production or -Stage staging (or TELEKEY_STAGE set to
+  one of them in the environment): which TeleKey server the installer talks to.
+  It is fixed into the app when it is built, the same way release.yml does it
+  from the tag. It is never read from .env, which says staging for daily work;
+  an installer someone else will run must be asked for by name, and the script
+  refuses to build one without it. -SkipBuild does not need it.
+
 .NOTES
   NSIS is the default because MSI additionally requires the VBSCRIPT optional
   Windows feature; without it the build fails with "failed to run light.exe",
@@ -22,7 +29,9 @@
 [CmdletBinding()]
 param(
     [switch]$SkipBuild,
-    [switch]$Msi
+    [switch]$Msi,
+    [ValidateSet('production', 'staging')]
+    [string]$Stage
 )
 
 $ErrorActionPreference = 'Stop'
@@ -72,6 +81,44 @@ if (-not (Test-Path (Join-Path $repoRoot 'src-tauri\tauri.conf.json'))) {
     exit 1
 }
 Set-Location $repoRoot
+
+# ---- 0b. Which server is the build for? ---------------------------------
+
+# Asked before the toolchain is installed, so a forgotten flag costs seconds
+# and not a C++ download. Only a build needs it: -SkipBuild sets the machine up
+# and stops. The stage is fixed into the app at build time (session.rs reads it
+# with option_env!); an installer built for the wrong one either sends real
+# users to the test server (invited testers only) or sends testers' dictation
+# at live billing.
+#
+# Held in $buildStage, not written back to $Stage: PowerShell re-checks a
+# parameter's ValidateSet on every assignment, so an empty or misspelt
+# TELEKEY_STAGE would throw its own error here instead of the message below.
+$buildStage = ''
+if (-not $SkipBuild) {
+    $buildStage = $Stage
+    if ([string]::IsNullOrWhiteSpace($buildStage)) { $buildStage = $env:TELEKEY_STAGE }
+    $buildStage = "$buildStage".Trim().ToLowerInvariant()
+    if ($buildStage -ne 'production' -and $buildStage -ne 'staging') {
+        if ($buildStage) {
+            Write-Fail "'$buildStage' is not a stage."
+        } else {
+            Write-Fail "No stage given, so there is nothing to build for."
+        }
+        Write-Host @"
+  Say which TeleKey server this installer talks to:
+
+      .\scripts\windows-setup.ps1 -Stage production
+      .\scripts\windows-setup.ps1 -Stage staging
+
+  production is the live service; staging is the test server, which only
+  invited testers can use. TELEKEY_STAGE in the environment works too. To set
+  the machine up without building, add -SkipBuild.
+"@
+        exit 1
+    }
+    Write-Host "Stage: $buildStage" -ForegroundColor White
+}
 
 # ---- 1. winget ----------------------------------------------------------
 
@@ -181,8 +228,8 @@ if ($LASTEXITCODE -ne 0) { throw "bun install failed" }
 Write-Ok "Installed"
 
 if ($SkipBuild) {
-    Write-Host "`nSetup complete. Build when ready:" -ForegroundColor White
-    Write-Host "  bun tauri build --bundles nsis"
+    Write-Host "`nSetup complete. Build when ready, saying which server it is for:" -ForegroundColor White
+    Write-Host "  .\scripts\windows-setup.ps1 -Stage production"
     exit 0
 }
 
@@ -195,8 +242,16 @@ if ($Msi) {
     Write-Host "  Settings → System → Optional features → More Windows features" -ForegroundColor DarkGray
 }
 
-Write-Step "Building ($bundle)"
+Write-Step "Building ($bundle, for $buildStage)"
 Write-Host "  The first build compiles the whole dependency tree — expect 5-15 minutes." -ForegroundColor DarkGray
+
+# Fixed into the app. release.yml bakes in the stage and nothing else, and
+# every other address comes from that stage's built-in defaults (session.rs); a
+# variable left over in this session would be baked in too, and win over them.
+$env:TELEKEY_STAGE = $buildStage
+foreach ($name in 'TELEKEY_API_BASE', 'TELEKEY_SITE_URL', 'TELEKEY_RELAY_URL', 'TELEKEY_FIREBASE_API_KEY') {
+    Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+}
 
 bun tauri build --bundles $bundle
 if ($LASTEXITCODE -ne 0) {
@@ -221,6 +276,11 @@ Write-Host ""
 if ($installer) {
     Write-Ok "Built $($installer.Name) ($([math]::Round($installer.Length / 1MB, 1)) MB)"
     Write-Host "  $($installer.FullName)"
+    Write-Host "  Built for TELEKEY_STAGE=$buildStage" -ForegroundColor White
+    if ($buildStage -eq 'staging') {
+        Write-Host "  This is a STAGING build: it signs in to the test server, which only invited testers can use." -ForegroundColor Yellow
+        Write-Host "  Do not put it on the website or in the latest release." -ForegroundColor Yellow
+    }
     Write-Host "`nRun it to install TeleKey, then add your OpenAI API key in Settings." -ForegroundColor White
 } else {
     Write-Fail "Build reported success but no installer was found in $out"

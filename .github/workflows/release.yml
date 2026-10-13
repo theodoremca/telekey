@@ -1,40 +1,68 @@
 name: release
 
 # Push a version tag and this builds TeleKey for macOS, Windows and Linux and
-# publishes them as a GitHub release:
+# publishes them as a GitHub release. The tag decides which TeleKey server the
+# build talks to, and how the release is published:
 #
-#   git tag v0.2.0 && git push origin v0.2.0
+#   git tag v0.4.0 && git push origin v0.4.0
+#       A normal release. Built for PRODUCTION, published as the latest
+#       release: the website's Download button and every installed copy's
+#       update check (/releases/latest) point at it.
 #
-# The tag must match "version" in src-tauri/tauri.conf.json, Cargo.toml and
-# package.json, or nothing is built. Run it by hand (Actions › release › Run
-# workflow) to build everything without publishing: a rehearsal, with the
-# installers attached to the run.
+#   git tag v0.4.1-rc.1 && git push origin v0.4.1-rc.1
+#       A tag with a suffix is a pre-release. Built for STAGING (the test
+#       server, invited testers only) and published as a GitHub pre-release,
+#       which GitHub leaves out of /releases/latest: no one is offered it as an
+#       update, and it carries no update feed of its own.
+#
+# The tag must equal "version" in src-tauri/tauri.conf.json, Cargo.toml and
+# package.json, suffix included (0.4.1-rc.1), or nothing is built. Keeping the
+# suffix in the app means a copy on 0.4.1-rc.1 is offered 0.4.1 as an update,
+# because semver puts the pre-release first. Tauri takes such a version: a
+# macOS bundle built with 0.3.1-rc.1 carries it in its Info.plist. Whether the
+# NSIS installer does too is UNVERIFIED: it is expected to build its numeric
+# file version from the major, minor and patch, but no suffixed Windows build
+# has been run yet. A rehearsal (Actions › release › Run workflow, on a branch
+# whose three version numbers carry an -rc suffix) or the first rc tag will
+# show it; until one has passed, treat a Windows pre-release build as unproven.
+# The MSI (WiX) bundler would refuse a non-numeric suffix; this workflow does
+# not build MSI.
+#
+# Run it by hand (Actions › release › Run workflow) to build everything
+# without publishing: a rehearsal, with the installers attached to the run.
+# Staging unless you pick production.
 #
 # macOS is signed with the Developer ID and notarised when the APPLE_* secrets
-# below are set (see RELEASING.md). Without them it still builds, ad-hoc
-# signed, and the release notes tell people how to open it. Windows and Linux
-# are not code-signed.
+# below are set (see RELEASING.md). Without them a rehearsal or a pre-release
+# still builds, ad-hoc signed, and the release notes tell people how to open
+# it. Windows and Linux are not code-signed.
 #
-# With TAURI_SIGNING_PRIVATE_KEY set, each build also signs its update (the
-# macOS .app.tar.gz, the Windows setup.exe, the AppImage and the .deb), and the
-# release carries a latest.json naming them. Installed copies read that file
-# from /releases/latest and offer "Restart to Update" (update.rs). Without the
-# key the installers are the same and the release has no update feed.
+# With TAURI_SIGNING_PRIVATE_KEY set, each build of a normal release also signs
+# its update (the macOS .app.tar.gz, the Windows setup.exe, the AppImage and
+# the .deb), and the release carries a latest.json naming them. Installed
+# copies read that file from /releases/latest and offer "Restart to Update"
+# (update.rs).
+#
+# A normal (production) release is held to that. It is NOT published unless the
+# macOS disk image was notarised and latest.json names a signed update for
+# darwin-aarch64, darwin-x86_64, windows-x86_64 and linux-x86_64: a production
+# release without them would be the download on the website and the thing every
+# installed copy checks, yet could not update anyone or would not open on a
+# Mac. Pre-releases and by-hand rehearsals are not held to it.
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      stage:
+        description: "Which server the rehearsal build talks to (nothing is published)"
+        type: choice
+        options: [staging, production]
+        default: staging
 
 permissions:
   contents: write
-
-env:
-  # Which TeleKey server the released app talks to, baked in at build time
-  # (session.rs reads it with option_env!). Staging for now, on Theodore's
-  # instruction: test credits, testers only. Change to "production" to ship
-  # the real thing.
-  TELEKEY_STAGE: staging
 
 concurrency:
   group: release-${{ github.ref }}
@@ -47,11 +75,18 @@ jobs:
     outputs:
       version: ${{ steps.read.outputs.version }}
       publish: ${{ steps.read.outputs.publish }}
+      # Which TeleKey server the builds are made for, baked into the app at
+      # build time (session.rs reads it with option_env!). A normal tag is
+      # production; a tag with a suffix is staging.
+      stage: ${{ steps.read.outputs.stage }}
+      prerelease: ${{ steps.read.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
 
       - id: read
         name: Read and check the version
+        env:
+          INPUT_STAGE: ${{ github.event.inputs.stage }}
         run: |
           tauri="$(jq -r .version src-tauri/tauri.conf.json)"
           npm="$(jq -r .version package.json)"
@@ -62,15 +97,39 @@ jobs:
             exit 1
           fi
           echo "version=$tauri" >> "$GITHUB_OUTPUT"
-          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+
+          # Only a pushed tag publishes. Running the workflow by hand from a tag
+          # is still a rehearsal.
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF_TYPE" == "tag" ]]; then
+            semver='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+            if [[ ! "$GITHUB_REF_NAME" =~ $semver ]]; then
+              echo "::error::Tag $GITHUB_REF_NAME is not a version. Tag vX.Y.Z for a release, or vX.Y.Z-rc.1 for a staging pre-release."
+              exit 1
+            fi
             if [[ "$GITHUB_REF_NAME" != "v$tauri" ]]; then
               echo "::error::Tag $GITHUB_REF_NAME does not match version $tauri. Tag v$tauri, or change the version first."
               exit 1
             fi
+            if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+              stage=staging
+              prerelease=true
+            else
+              stage=production
+              prerelease=false
+            fi
             echo "publish=true" >> "$GITHUB_OUTPUT"
           else
+            stage="${INPUT_STAGE:-staging}"
+            if [[ "$stage" != "staging" && "$stage" != "production" ]]; then
+              echo "::error::Stage must be staging or production, not '$stage'."
+              exit 1
+            fi
+            prerelease=false
             echo "publish=false" >> "$GITHUB_OUTPUT"
           fi
+          echo "Building $tauri for $stage (pre-release: $prerelease)"
+          echo "stage=$stage" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
 
   macos:
     name: build (macOS, universal)
@@ -79,6 +138,7 @@ jobs:
     outputs:
       notarised: ${{ steps.notarise.outputs.notarised }}
     env:
+      TELEKEY_STAGE: ${{ needs.version.outputs.stage }}
       HAS_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
       HAS_NOTARY: ${{ secrets.APPLE_API_KEY_P8 != '' }}
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -144,6 +204,9 @@ jobs:
             updates=(--config src-tauri/tauri.release.conf.json)
           fi
           bun tauri build --bundles app --target universal-apple-darwin "${updates[@]}"
+          # What this build was made for, checked against the tag by the
+          # publish job before anything is released.
+          printf '%s\n' "$TELEKEY_STAGE" > src-tauri/target/universal-apple-darwin/release/bundle/stage-macos.txt
 
       # No certificate: seal the bundle ad-hoc with the real entitlements, the
       # same fallback a local build gets. Better than the linker's placeholder
@@ -187,6 +250,7 @@ jobs:
             src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
             src-tauri/target/universal-apple-darwin/release/bundle/macos/TeleKey.app.tar.gz
             src-tauri/target/universal-apple-darwin/release/bundle/macos/TeleKey.app.tar.gz.sig
+            src-tauri/target/universal-apple-darwin/release/bundle/stage-macos.txt
           if-no-files-found: error
 
   windows:
@@ -194,6 +258,7 @@ jobs:
     needs: version
     runs-on: windows-latest
     env:
+      TELEKEY_STAGE: ${{ needs.version.outputs.stage }}
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
@@ -218,6 +283,7 @@ jobs:
             updates=(--config src-tauri/tauri.release.conf.json)
           fi
           bun tauri build --bundles nsis "${updates[@]}"
+          printf '%s\n' "$TELEKEY_STAGE" > src-tauri/target/release/bundle/nsis/stage-windows.txt
 
       - uses: actions/upload-artifact@v4
         with:
@@ -225,6 +291,7 @@ jobs:
           path: |
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/nsis/*.exe.sig
+            src-tauri/target/release/bundle/nsis/stage-windows.txt
           if-no-files-found: error
 
   linux:
@@ -234,6 +301,7 @@ jobs:
     # on newer distributions, not the other way round.
     runs-on: ubuntu-22.04
     env:
+      TELEKEY_STAGE: ${{ needs.version.outputs.stage }}
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
@@ -267,6 +335,7 @@ jobs:
             updates=(--config src-tauri/tauri.release.conf.json)
           fi
           bun tauri build --bundles deb,appimage "${updates[@]}"
+          printf '%s\n' "$TELEKEY_STAGE" > src-tauri/target/release/bundle/stage-linux.txt
           if [[ -n "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
             for package in src-tauri/target/release/bundle/deb/*.deb; do
               [[ -f "$package.sig" ]] || bun tauri signer sign "$package"
@@ -281,6 +350,7 @@ jobs:
             src-tauri/target/release/bundle/deb/*.deb.sig
             src-tauri/target/release/bundle/appimage/*.AppImage
             src-tauri/target/release/bundle/appimage/*.AppImage.sig
+            src-tauri/target/release/bundle/stage-linux.txt
           if-no-files-found: error
 
   publish:
@@ -294,11 +364,59 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # A normal release is read by every installed copy and linked from the
+      # website, so it must never hold a staging build; a pre-release must never
+      # hold a production one. The expected stage is worked out from the tag
+      # again here, not taken from the version job, and compared with what each
+      # build recorded that it was made for. Nothing is published if they
+      # disagree, which is what a workflow edited back to a fixed stage would do.
+      - name: Check the builds are for this kind of release
+        env:
+          VERSION_JOB_STAGE: ${{ needs.version.outputs.stage }}
+        run: |
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            kind="a pre-release"
+            expected=staging
+          else
+            kind="a normal release"
+            expected=production
+          fi
+          if [[ "$VERSION_JOB_STAGE" != "$expected" ]]; then
+            echo "::error::$GITHUB_REF_NAME is $kind, which is built for $expected, but the builds were told $VERSION_JOB_STAGE."
+            exit 1
+          fi
+          mapfile -t records < <(find dist -type f -name 'stage-*.txt' | sort)
+          printf '%s\n' "${records[@]}"
+          if (( ${#records[@]} != 3 )); then
+            echo "::error::Expected a stage record from each of macOS, Windows and Linux, found ${#records[@]}."
+            exit 1
+          fi
+          for record in "${records[@]}"; do
+            platform="$(basename "$record" .txt)"
+            platform="${platform#stage-}"
+            built="$(tr -d '[:space:]' < "$record")"
+            echo "$platform: built for $built"
+            if [[ "$built" != "$expected" ]]; then
+              echo "::error::The $platform build was made for '$built', but $GITHUB_REF_NAME is $kind and must be built for $expected. Nothing was published."
+              exit 1
+            fi
+          done
+
       - name: Write the release notes
         env:
           GH_TOKEN: ${{ github.token }}
           NOTARISED: ${{ needs.macos.outputs.notarised }}
+          STAGE: ${{ needs.version.outputs.stage }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
         run: |
+          # A normal release is described from the last normal release, not from
+          # the pre-release before it.
+          previous=()
+          if [[ "$PRERELEASE" != 'true' ]]; then
+            last="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-pre-releases \
+              --limit 1 --json tagName --jq '.[0].tagName // empty' 2>/dev/null || true)"
+            if [[ -n "$last" ]]; then previous=(-f previous_tag_name="$last"); fi
+          fi
           {
             echo "## Install"
             echo
@@ -312,16 +430,20 @@ jobs:
               echo '```'
             fi
             echo
-            if [[ "$TELEKEY_STAGE" != 'production' ]]; then
-              echo "> This is a **staging** build: it signs in to TeleKey's test server, which only invited testers can use."
+            if [[ "$STAGE" != 'production' ]]; then
+              echo "> This is a **staging pre-release**: it signs in to TeleKey's test server, which only invited testers can use. No one is offered it as an update, and it is not the download on the website."
               echo
             fi
             echo "**Windows:** run the \`-setup.exe\`. It is not code-signed yet, so SmartScreen may warn: choose *More info*, then *Run anyway*."
             echo
-            echo "**Linux** (X11, not Wayland; new and little tested): install the \`.deb\` with \`sudo apt install ./TeleKey_*.deb\`, or make the \`.AppImage\` executable and run it."
+            echo "**Linux** (X11 only, not Wayland; **untested**): install the \`.deb\` with \`sudo apt install ./TeleKey_*.deb\`, or make the \`.AppImage\` executable and run it."
+            echo
+            echo "## Platforms"
+            echo
+            echo "The macOS and Windows builds are tested. The Linux \`.deb\` and \`.AppImage\` are offered as they are and are untested; they work on X11 only, not on Wayland."
             echo
             gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
-              -f tag_name="$GITHUB_REF_NAME" --jq .body
+              -f tag_name="$GITHUB_REF_NAME" "${previous[@]}" --jq .body
           } > notes.md
           cat notes.md
 
@@ -331,7 +453,14 @@ jobs:
       # macOS update is only offered once notarised: an ad-hoc app would cost
       # every user their permissions. Linux tries "-deb" or "-appimage" first,
       # by how TeleKey was installed, then the bare key.
+      #
+      # Only a normal release gets one. Installed copies read
+      # /releases/latest/download/latest.json, and GitHub's "latest" is the
+      # newest release that is not a pre-release, so a pre-release's feed would
+      # not be read; it is left out as well so that promoting a pre-release by
+      # hand cannot start offering a staging build to everyone.
       - name: Write the update feed
+        if: needs.version.outputs.prerelease != 'true'
         env:
           VERSION: ${{ needs.version.outputs.version }}
           NOTARISED: ${{ needs.macos.outputs.notarised }}
@@ -379,13 +508,58 @@ jobs:
             > dist/latest.json
           cat dist/latest.json
 
+      # A normal release is the Download button and the update every installed
+      # copy is offered, so it must be complete: notarised on macOS, and an
+      # update feed with a signature for every platform. A missing secret
+      # (APPLE_*, TAURI_SIGNING_*) or a build that produced no .sig otherwise
+      # only logs a warning above and ships a release that cannot update anyone.
+      # Pre-releases (staging builds, no feed) are skipped here, and a by-hand
+      # rehearsal never reaches this job.
+      - name: Check a normal release is complete
+        if: needs.version.outputs.prerelease != 'true'
+        env:
+          NOTARISED: ${{ needs.macos.outputs.notarised }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          failed=0
+          if [[ "$NOTARISED" != 'true' ]]; then
+            echo "::error::The macOS build was not notarised. A normal release must be: add the APPLE_* secrets (RELEASING.md). Nothing was published."
+            failed=1
+          fi
+          if [[ ! -f dist/latest.json ]]; then
+            echo "::error::dist/latest.json does not exist. A normal release needs its update feed: set TAURI_SIGNING_PRIVATE_KEY (RELEASING.md). Nothing was published."
+            failed=1
+          elif ! jq -e . dist/latest.json >/dev/null; then
+            echo "::error::dist/latest.json is not valid JSON. Nothing was published."
+            failed=1
+          else
+            feed_version="$(jq -r '.version // empty' dist/latest.json)"
+            if [[ "$feed_version" != "$VERSION" ]]; then
+              echo "::error::latest.json says version '$feed_version', but this release is $VERSION. Nothing was published."
+              failed=1
+            fi
+            for key in darwin-aarch64 darwin-x86_64 windows-x86_64 linux-x86_64; do
+              url="$(jq -r --arg key "$key" '.platforms[$key].url // empty' dist/latest.json)"
+              signature="$(jq -r --arg key "$key" '.platforms[$key].signature // empty' dist/latest.json)"
+              if [[ -z "$url" || -z "$signature" ]]; then
+                echo "::error::latest.json has no signed update for $key. Nothing was published."
+                failed=1
+              else
+                echo "latest.json: $key is signed"
+              fi
+            done
+          fi
+          if (( failed )); then exit 1; fi
+
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          prerelease=()
-          if [[ "$GITHUB_REF_NAME" == *-* ]]; then prerelease=(--prerelease); fi
+          # A pre-release is flagged as one, which keeps it out of
+          # /releases/latest. A normal release is marked latest explicitly.
+          flavour=(--latest)
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then flavour=(--prerelease); fi
           # The Linux artifact keeps its deb/ and appimage/ folders, so collect
           # the files themselves rather than whatever sits at the top of dist.
           mapfile -t files < <(find dist -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' \) | sort)
@@ -398,10 +572,14 @@ jobs:
           # from the installers above). Signatures live inside latest.json.
           mapfile -t updates < <(find dist -maxdepth 1 -type f \( -name 'latest.json' -o -name '*.app.tar.gz' \) | sort)
           printf '%s\n' "${updates[@]}"
+          if [[ "$GITHUB_REF_NAME" == *-* ]] && (( ${#updates[@]} > 0 )); then
+            echo "::error::A pre-release must not carry an update feed or update archive."
+            exit 1
+          fi
           files+=("${updates[@]}")
           gh release create "$GITHUB_REF_NAME" "${files[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --title "TeleKey $VERSION" \
             --notes-file notes.md \
-            "${prerelease[@]}"
+            "${flavour[@]}"

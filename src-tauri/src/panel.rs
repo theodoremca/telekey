@@ -202,12 +202,18 @@ mod imp {
         Ok(())
     }
 
-    pub fn can_become_key(_window: &tauri::WebviewWindow) -> Result<bool> {
-        Ok(false)
-    }
+    // There is no `can_become_key` here. It used to answer `Ok(false)` without
+    // looking, which made lib.rs log "overlay is non-activating" on Linux no
+    // matter what the window was. Tauri cannot say whether a window is
+    // focusable, so nothing can check it; `overlay.rs` builds the window with
+    // `focusable(false)`, and that is all Linux relies on.
 }
 
-pub use imp::{can_become_key, make_nonactivating, show_without_focus};
+pub use imp::{make_nonactivating, show_without_focus};
+// Whether the window would take focus if shown. macOS and Windows can read it
+// back from the native window; Linux has no way to.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub use imp::can_become_key;
 
 /// Whether the caller is on the main thread.
 ///

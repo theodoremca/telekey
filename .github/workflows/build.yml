@@ -1,7 +1,8 @@
 name: build
 
-# Builds on both platforms so a change that only compiles on macOS is caught
-# here rather than by whoever next clones the repo on Windows.
+# Builds on macOS and Windows, and compiles on Linux, so a change that only
+# compiles on macOS is caught here rather than by whoever next clones the repo
+# on Windows.
 on:
   push:
     branches: [main]
@@ -71,3 +72,53 @@ jobs:
             src-tauri/target/release/bundle/macos/*.app
           if-no-files-found: error
           retention-days: 14
+
+  # Linux is offered but untested: nothing here runs its tests or its window
+  # code. What this does is compile it, because the overlay's focus handling,
+  # the paste keystroke and the tray are cfg-gated per OS and only the Linux
+  # compiler checks the Linux branches. The same libraries as release.yml.
+  linux:
+    name: compile (Linux)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libssl-dev libxdo-dev libasound2-dev libdbus-1-dev \
+            build-essential pkg-config patchelf file
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ubuntu-22.04
+
+      - name: Rust
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+  # The website is deployed by hand from web/ (CLAUDE.md), so nothing else
+  # builds it before a release goes out. This does, on every push. It needs no
+  # secrets: the Firebase key and API base are NEXT_PUBLIC_ values read from
+  # .env files that are not committed, and the login page copes with a build
+  # that lacks them (it says sign-in is not configured). The build type-checks
+  # the pages too. web/ has its own lockfile, so it installs on its own, from
+  # its own directory.
+  website:
+    name: build (website)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install --frozen-lockfile
+
+      - name: Next.js build
+        run: bun run build

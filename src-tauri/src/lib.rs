@@ -249,6 +249,7 @@ pub fn run() {
             app.manage(commands::LaunchPermissions(permissions_at_launch));
 
             let overlay = overlay::Overlay::create(app.handle(), loaded.show_pill)?;
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             match panel::can_become_key(overlay.window()) {
                 Ok(false) => tracing::info!("overlay is non-activating"),
                 Ok(true) => tracing::error!(
@@ -256,6 +257,13 @@ pub fn run() {
                 ),
                 Err(err) => tracing::warn!("could not verify overlay focus behaviour: {err:#}"),
             }
+            // Linux has no non-activating window, and Tauri cannot say whether
+            // a window is focusable, so there is nothing to verify. Say what it
+            // relies on instead of claiming what it cannot check.
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            tracing::info!(
+                "overlay is not focusable (Linux has no non-activating window; this is not verified)"
+            );
 
             // The resting pill, if it is on; out of sight otherwise. Then
             // follow the pointer, so the pill is on whichever screen it is.

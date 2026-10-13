@@ -4,6 +4,8 @@
 //! token when it is close to expiry. Nothing here is logged. The session
 //! arrives over `telekey://auth` after the website signs the user in.
 
+use std::path::Path;
+
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -288,6 +290,32 @@ pub fn fresh_id_token() -> Result<String> {
     Ok(body.id_token)
 }
 
+// ---- stage and endpoints --------------------------------------------------
+//
+// A release is built for one stage and has to keep talking to that stage's
+// server whatever else is on the machine. release.yml bakes `TELEKEY_STAGE` in
+// with `option_env!`: a plain `vX.Y.Z` tag builds production, a tag with a
+// suffix builds staging. It used to be possible to stay on staging after
+// updating to a production build, because the app wrote the stage, and the URLs
+// it had resolved, into `.env` files in its config directory, loaded them back
+// into the process environment at the next launch, and anything in the
+// environment beat the baked-in value.
+//
+// The order now, for the stage and for each of the three URLs that differ
+// between stages, strongest first:
+//
+//   1. the real process environment: something a developer exported in a shell
+//      or passed with `open --env` (run.sh does). A build that knows its stage
+//      reads no `.env` file (see `hydrate_env`), so nothing on disk can end up
+//      here and be mistaken for a deliberate override;
+//   2. the value fixed when the app was built;
+//   3. the built-in default for the stage; for the stage itself, staging.
+//
+// A development build (`cargo run`, `bun tauri dev`) has nothing baked in, so
+// there it is as it always was: `.env`, `.env.staging` or `.env.production`
+// from the project (or the config directory) are loaded into the environment
+// and decide. Nothing writes those files any more.
+
 /// Public Firebase web API key (same value as `web/lib/firebaseConfig.ts`).
 /// It is not a secret; without a compile-time bake or `.env`, Dock launches
 /// still have to refresh ID tokens.
@@ -295,7 +323,10 @@ const DEFAULT_FIREBASE_WEB_API_KEY: &str = "AIzaSyCdylrBqOKtlz_MJl6XnSBgGZMg3rDf
 const DEFAULT_STAGING_API: &str = "https://us-east1-telekey-app.cloudfunctions.net/staging";
 const DEFAULT_PRODUCTION_API: &str = "https://us-east1-telekey-app.cloudfunctions.net/api";
 const DEFAULT_STAGING_SITE: &str = "https://telekey-staging.vercel.app";
-const DEFAULT_PRODUCTION_SITE: &str = "https://telekey.vercel.app";
+/// The official address is `www.telekey.app`. The apex (`telekey.app`) and
+/// `telekey.vercel.app` both redirect to it; sign-in and the account page
+/// always open on this one.
+const DEFAULT_PRODUCTION_SITE: &str = "https://www.telekey.app";
 /// The Instant relay (`relay/`) on Cloud Run. Cloud Run addresses are
 /// `<service>-<project number>.<region>.run.app`, so these are known before
 /// either service is deployed.
@@ -305,21 +336,22 @@ const DEFAULT_PRODUCTION_RELAY: &str =
     "wss://telekey-relay-production-502266841237.us-east1.run.app/v1/realtime?intent=transcription";
 
 pub fn firebase_web_api_key() -> Option<String> {
-    env_value("TELEKEY_FIREBASE_API_KEY")
+    lookup("TELEKEY_FIREBASE_API_KEY", &real_env, &baked_in)
+        .map(|(value, _)| value)
         .or_else(|| Some(DEFAULT_FIREBASE_WEB_API_KEY.to_string()))
 }
 
 pub fn api_base() -> Option<String> {
-    env_value("TELEKEY_API_BASE").or_else(|| Some(default_api_base_for(stage()).to_string()))
+    Some(resolve_endpoint(API_BASE, &real_env, &baked_in).0)
 }
 
 pub fn site_url() -> Option<String> {
-    env_value("TELEKEY_SITE_URL").or_else(|| Some(default_site_url_for(stage()).to_string()))
+    Some(resolve_endpoint(SITE_URL, &real_env, &baked_in).0)
 }
 
 /// Where Instant streams to when the dictation is paid for with credits.
 pub fn relay_url() -> Option<String> {
-    env_value("TELEKEY_RELAY_URL").or_else(|| Some(default_relay_url_for(stage()).to_string()))
+    Some(resolve_endpoint(RELAY_URL, &real_env, &baked_in).0)
 }
 
 pub(crate) fn default_relay_url_for(stage: &str) -> &'static str {
@@ -346,9 +378,10 @@ pub(crate) fn default_site_url_for(stage: &str) -> &'static str {
     }
 }
 
-/// `production` only when `TELEKEY_STAGE=production`; everything else is staging.
+/// `production` only when the stage resolves to `production`; everything else
+/// is staging.
 pub fn stage() -> &'static str {
-    stage_from(env_value("TELEKEY_STAGE").as_deref())
+    resolve_stage(&real_env, &baked_in).0
 }
 
 pub(crate) fn stage_from(value: Option<&str>) -> &'static str {
@@ -358,11 +391,47 @@ pub(crate) fn stage_from(value: Option<&str>) -> &'static str {
     }
 }
 
-fn env_value(name: &str) -> Option<String> {
-    std::env::var(name)
-        .ok()
-        .filter(|value| !value.is_empty())
-        .or_else(|| baked_in(name))
+/// Where a setting's value came from. `telekey check` prints it, so a copy on
+/// the wrong stage says why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    /// A variable in the process environment. In a development build that
+    /// includes what a `.env` file put there.
+    Environment,
+    /// Fixed when this app was built.
+    Build,
+    /// Nothing sets it: the built-in default for the stage.
+    Default,
+}
+
+/// One resolved setting and where it came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Resolved {
+    /// The environment variable that overrides it.
+    pub var: &'static str,
+    pub value: String,
+    pub source: Source,
+}
+
+/// Everything that differs between the stages, as the app resolves it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hosted {
+    pub stage: Resolved,
+    pub api_base: Resolved,
+    pub site_url: Resolved,
+    pub relay_url: Resolved,
+}
+
+/// What this copy talks to and why, for `telekey check`. No secrets in it.
+pub fn hosted() -> Hosted {
+    resolve_hosted(&real_env, &baked_in)
+}
+
+/// A way to read a named setting.
+type Lookup<'a> = &'a dyn Fn(&str) -> Option<String>;
+
+fn real_env(name: &str) -> Option<String> {
+    std::env::var(name).ok()
 }
 
 fn baked_in(name: &str) -> Option<String> {
@@ -377,95 +446,183 @@ fn baked_in(name: &str) -> Option<String> {
     .filter(|value| !value.is_empty())
 }
 
-fn apply_telekey_env(path: &std::path::Path, overlay: bool) {
-    let Ok(iter) = dotenvy::from_path_iter(path) else {
-        return;
-    };
-    for (key, value) in iter.flatten() {
-        if !key.starts_with("TELEKEY_") || value.is_empty() {
-            continue;
-        }
-        if matches!(
-            key.as_str(),
-            "TELEKEY_ENV_FILE" | "TELEKEY_LOG" | "TELEKEY_LOG_FILE"
-        ) {
-            continue;
-        }
-        if !overlay && std::env::var(&key).is_ok() {
-            continue;
-        }
-        if overlay
-            && key != "TELEKEY_API_BASE"
-            && key != "TELEKEY_SITE_URL"
-            && key != "TELEKEY_RELAY_URL"
-        {
-            continue;
-        }
+/// The environment first, then what was baked in. An empty value is unset in
+/// both.
+fn lookup(name: &str, env: Lookup, baked: Lookup) -> Option<(String, Source)> {
+    env(name)
+        .filter(|value| !value.is_empty())
+        .map(|value| (value, Source::Environment))
+        .or_else(|| {
+            baked(name)
+                .filter(|value| !value.is_empty())
+                .map(|value| (value, Source::Build))
+        })
+}
+
+fn resolve_stage(env: Lookup, baked: Lookup) -> (&'static str, Source) {
+    match lookup("TELEKEY_STAGE", env, baked) {
+        Some((value, source)) => (stage_from(Some(&value)), source),
+        None => ("staging", Source::Default),
+    }
+}
+
+/// One of the URLs that differ between the stages.
+#[derive(Clone, Copy)]
+struct Endpoint {
+    var: &'static str,
+    default_for: fn(&str) -> &'static str,
+}
+
+const API_BASE: Endpoint = Endpoint {
+    var: "TELEKEY_API_BASE",
+    default_for: default_api_base_for,
+};
+const SITE_URL: Endpoint = Endpoint {
+    var: "TELEKEY_SITE_URL",
+    default_for: default_site_url_for,
+};
+const RELAY_URL: Endpoint = Endpoint {
+    var: "TELEKEY_RELAY_URL",
+    default_for: default_relay_url_for,
+};
+
+fn resolve_endpoint(endpoint: Endpoint, env: Lookup, baked: Lookup) -> (String, Source) {
+    lookup(endpoint.var, env, baked).unwrap_or_else(|| {
+        let stage = resolve_stage(env, baked).0;
+        ((endpoint.default_for)(stage).to_string(), Source::Default)
+    })
+}
+
+fn resolve_hosted(env: Lookup, baked: Lookup) -> Hosted {
+    let (stage, stage_source) = resolve_stage(env, baked);
+    Hosted {
+        stage: Resolved::new("TELEKEY_STAGE", stage.to_string(), stage_source),
+        api_base: Resolved::from_endpoint(API_BASE, env, baked),
+        site_url: Resolved::from_endpoint(SITE_URL, env, baked),
+        relay_url: Resolved::from_endpoint(RELAY_URL, env, baked),
+    }
+}
+
+impl Resolved {
+    fn new(var: &'static str, value: String, source: Source) -> Self {
+        Self { var, value, source }
+    }
+
+    fn from_endpoint(endpoint: Endpoint, env: Lookup, baked: Lookup) -> Self {
+        let (value, source) = resolve_endpoint(endpoint, env, baked);
+        Self::new(endpoint.var, value, source)
+    }
+}
+
+/// The process environment, behind a trait so the loading rules can be tested
+/// on a map: tests run in parallel, and changing the real environment under
+/// them is not safe.
+trait EnvVars {
+    fn get(&self, name: &str) -> Option<String>;
+    fn set(&mut self, name: &str, value: &str);
+}
+
+struct ProcessEnv;
+
+impl EnvVars for ProcessEnv {
+    fn get(&self, name: &str) -> Option<String> {
+        real_env(name)
+    }
+
+    fn set(&mut self, name: &str, value: &str) {
         // SAFETY: called once at process start, before other threads.
-        unsafe { std::env::set_var(key, value) };
+        unsafe { std::env::set_var(name, value) };
     }
 }
 
-/// `.env` first (shared public keys), then `.env.staging` or `.env.production`.
+/// The `TELEKEY_*` entries of a `.env` file that may go into the environment.
 ///
-/// Default stage is staging. `TELEKEY_ENV_FILE` replaces the stage overlay.
-pub fn hydrate_env() {
-    for path in crate::settings::env_file_candidates() {
-        if std::env::var("TELEKEY_ENV_FILE")
-            .ok()
-            .is_some_and(|explicit| std::path::Path::new(&explicit) == path)
-        {
+/// An `overlay` (`.env.staging`, `.env.production`, or the file named by
+/// `TELEKEY_ENV_FILE`) carries only the three URLs; the stage is never chosen
+/// by one.
+fn telekey_entries(path: &Path, overlay: bool) -> Vec<(String, String)> {
+    let Ok(iter) = dotenvy::from_path_iter(path) else {
+        return Vec::new();
+    };
+    iter.flatten()
+        .filter(|(key, value)| {
+            key.starts_with("TELEKEY_")
+                && !value.is_empty()
+                && !matches!(
+                    key.as_str(),
+                    "TELEKEY_ENV_FILE" | "TELEKEY_LOG" | "TELEKEY_LOG_FILE"
+                )
+                && (!overlay || [API_BASE.var, SITE_URL.var, RELAY_URL.var].contains(&key.as_str()))
+        })
+        .collect()
+}
+
+/// A shared file never replaces something already in the environment; an
+/// overlay does, which is what makes it an overlay.
+fn apply_file(env: &mut impl EnvVars, path: &Path, overlay: bool) {
+    for (key, value) in telekey_entries(path, overlay) {
+        if !overlay && env.get(&key).is_some() {
             continue;
         }
-        apply_telekey_env(&path, false);
+        env.set(&key, &value);
     }
-
-    if let Ok(explicit) = std::env::var("TELEKEY_ENV_FILE") {
-        apply_telekey_env(std::path::Path::new(&explicit), true);
-        return;
-    }
-
-    for path in crate::settings::stage_env_file_candidates(stage()) {
-        apply_telekey_env(&path, true);
-    }
-
-    persist_hosted_config();
 }
 
-/// Dock launches have no project `.env`. Write the public hosted URLs into
-/// Application Support so the next cold start still finds them.
-fn persist_hosted_config() {
-    let Ok(dir) = crate::settings::config_dir() else {
-        return;
-    };
-    if std::fs::create_dir_all(&dir).is_err() {
+/// Load the project's public config into the environment, for development.
+///
+/// `.env` first (shared public keys), then `.env.staging` or `.env.production`
+/// for the stage it chose. Default stage is staging. `TELEKEY_ENV_FILE`
+/// replaces the stage overlay.
+///
+/// **A build that has its stage baked in reads none of these**, apart from
+/// `TELEKEY_ENV_FILE`, which only a person at a shell sets. It does not need
+/// them, since the stage, the public Firebase key and every URL have a
+/// built-in value, and a file on disk, say one an older TeleKey left in the
+/// config directory, must not be able to move an installed copy to another
+/// stage. Nothing is written back: the app used to save the stage and the
+/// resolved URLs here, which is how a machine stayed on staging.
+pub fn hydrate_env() {
+    let explicit = std::env::var("TELEKEY_ENV_FILE")
+        .ok()
+        .filter(|path| !path.is_empty())
+        .map(std::path::PathBuf::from);
+    hydrate_into(
+        &mut ProcessEnv,
+        &baked_in,
+        &crate::settings::env_file_candidates(),
+        explicit.as_deref(),
+        &crate::settings::stage_env_file_candidates,
+    );
+}
+
+fn hydrate_into(
+    env: &mut impl EnvVars,
+    baked: Lookup,
+    shared: &[std::path::PathBuf],
+    explicit: Option<&Path>,
+    stage_overlay: &dyn Fn(&str) -> Vec<std::path::PathBuf>,
+) {
+    let stage_is_baked = baked("TELEKEY_STAGE").is_some_and(|stage| !stage.is_empty());
+
+    if !stage_is_baked {
+        for path in shared {
+            if explicit == Some(path.as_path()) {
+                continue;
+            }
+            apply_file(env, path, false);
+        }
+    }
+
+    if let Some(explicit) = explicit {
+        apply_file(env, explicit, true);
         return;
     }
 
-    let current_stage = stage();
-    let mut base = String::from("# Written by TeleKey so hosted URLs survive a Dock launch.\n");
-    base.push_str(&format!("TELEKEY_STAGE={current_stage}\n"));
-    if let Some(key) = firebase_web_api_key() {
-        base.push_str(&format!("TELEKEY_FIREBASE_API_KEY={key}\n"));
-    }
-    if std::fs::write(dir.join(".env"), base).is_err() {
-        tracing::warn!("could not persist hosted .env");
-    }
-
-    let overlay_name = if current_stage == "production" {
-        ".env.production"
-    } else {
-        ".env.staging"
-    };
-    let mut overlay = String::new();
-    if let Some(base_url) = api_base() {
-        overlay.push_str(&format!("TELEKEY_API_BASE={base_url}\n"));
-    }
-    if let Some(site) = site_url() {
-        overlay.push_str(&format!("TELEKEY_SITE_URL={site}\n"));
-    }
-    if !overlay.is_empty() && std::fs::write(dir.join(overlay_name), overlay).is_err() {
-        tracing::warn!("could not persist hosted overlay env");
+    if !stage_is_baked {
+        let stage = resolve_stage(&|name| env.get(name), baked).0;
+        for path in stage_overlay(stage) {
+            apply_file(env, &path, true);
+        }
     }
 }
 
@@ -804,7 +961,8 @@ mod tests {
         );
         assert_eq!(
             default_site_url_for("production"),
-            "https://telekey.vercel.app"
+            "https://www.telekey.app",
+            "the official address (www), not the apex or the vercel.app one, which both redirect"
         );
     }
 
@@ -819,5 +977,344 @@ mod tests {
             assert!(url.starts_with("wss://"), "{url}");
             assert!(url.ends_with("/v1/realtime?intent=transcription"), "{url}");
         }
+    }
+
+    // ---- which stage an install is on --------------------------------------
+    //
+    // These run the real loading and resolution code on a map standing in for
+    // the process environment, with the "baked in" values passed in, because
+    // the real ones are fixed when the test binary is compiled.
+
+    use std::path::PathBuf;
+
+    #[derive(Default)]
+    struct FakeEnv(BTreeMap<String, String>);
+
+    impl FakeEnv {
+        fn with(pairs: &[(&str, &str)]) -> Self {
+            Self(
+                pairs
+                    .iter()
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect(),
+            )
+        }
+    }
+
+    impl EnvVars for FakeEnv {
+        fn get(&self, name: &str) -> Option<String> {
+            self.0.get(name).cloned()
+        }
+
+        fn set(&mut self, name: &str, value: &str) {
+            self.0.insert(name.to_string(), value.to_string());
+        }
+    }
+
+    fn baked(pairs: &[(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        let pairs = pairs.to_vec();
+        move |name| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.to_string())
+        }
+    }
+
+    /// A config directory as an older TeleKey left it: `persist_hosted_config`
+    /// wrote the stage and the Firebase key into `.env`, and the URLs it had
+    /// resolved into `.env.staging` or `.env.production`.
+    struct Files {
+        dir: tempfile::TempDir,
+    }
+
+    impl Files {
+        fn new(files: &[(&str, &str)]) -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            for (name, contents) in files {
+                std::fs::write(dir.path().join(name), contents).unwrap();
+            }
+            Self { dir }
+        }
+
+        fn shared(&self) -> Vec<PathBuf> {
+            vec![self.dir.path().join(".env")]
+        }
+
+        fn stage_overlay(&self, stage: &str) -> Vec<PathBuf> {
+            let name = if stage == "production" {
+                ".env.production"
+            } else {
+                ".env.staging"
+            };
+            vec![self.dir.path().join(name)]
+        }
+    }
+
+    const LEFT_BEHIND_BY_A_STAGING_BUILD: &[(&str, &str)] = &[
+        (
+            ".env",
+            "# Written by TeleKey so hosted URLs survive a Dock launch.\n\
+             TELEKEY_STAGE=staging\nTELEKEY_FIREBASE_API_KEY=stale-key\n",
+        ),
+        (
+            ".env.staging",
+            "TELEKEY_API_BASE=https://staging.example/api\n\
+             TELEKEY_SITE_URL=https://staging.example\n\
+             TELEKEY_RELAY_URL=wss://staging.example/relay\n",
+        ),
+    ];
+
+    /// Load `files` the way `hydrate_env` does, then resolve.
+    fn load(
+        files: &Files,
+        env: &mut FakeEnv,
+        baked_values: &[(&'static str, &'static str)],
+        explicit: Option<&Path>,
+    ) -> Hosted {
+        let baked = baked(baked_values);
+        hydrate_into(env, &baked, &files.shared(), explicit, &|stage| {
+            files.stage_overlay(stage)
+        });
+        resolve_hosted(&|name| env.get(name), &baked)
+    }
+
+    #[test]
+    fn a_production_build_ignores_what_a_staging_build_left_in_the_config_dir() {
+        // The bug: a machine that ever ran a staging build stayed on staging
+        // after updating to production.
+        let files = Files::new(LEFT_BEHIND_BY_A_STAGING_BUILD);
+        let mut env = FakeEnv::default();
+
+        let hosted = load(&files, &mut env, &[("TELEKEY_STAGE", "production")], None);
+
+        assert_eq!(hosted.stage.value, "production");
+        assert_eq!(hosted.stage.source, Source::Build);
+        assert_eq!(hosted.api_base.value, DEFAULT_PRODUCTION_API);
+        assert_eq!(hosted.api_base.source, Source::Default);
+        assert_eq!(hosted.site_url.value, "https://www.telekey.app");
+        assert_eq!(hosted.relay_url.value, DEFAULT_PRODUCTION_RELAY);
+        assert!(
+            env.0.is_empty(),
+            "nothing from disk reached the environment: {:?}",
+            env.0
+        );
+    }
+
+    #[test]
+    fn a_production_build_does_not_take_the_stale_firebase_key_either() {
+        let files = Files::new(LEFT_BEHIND_BY_A_STAGING_BUILD);
+        let mut env = FakeEnv::default();
+        load(&files, &mut env, &[("TELEKEY_STAGE", "production")], None);
+
+        let baked = baked(&[("TELEKEY_STAGE", "production")]);
+        assert_eq!(
+            lookup("TELEKEY_FIREBASE_API_KEY", &|n| env.get(n), &baked),
+            None
+        );
+    }
+
+    #[test]
+    fn a_staging_build_ignores_a_production_config_dir_too() {
+        // The same rule the other way: a release candidate does not drift to
+        // production because of what an earlier build wrote.
+        let files = Files::new(&[
+            (".env", "TELEKEY_STAGE=production\n"),
+            (
+                ".env.production",
+                "TELEKEY_API_BASE=https://prod.example/api\n",
+            ),
+        ]);
+        let mut env = FakeEnv::default();
+
+        let hosted = load(&files, &mut env, &[("TELEKEY_STAGE", "staging")], None);
+
+        assert_eq!(hosted.stage.value, "staging");
+        assert_eq!(hosted.api_base.value, DEFAULT_STAGING_API);
+        assert_eq!(hosted.site_url.value, DEFAULT_STAGING_SITE);
+    }
+
+    #[test]
+    fn a_build_without_a_baked_stage_still_follows_its_env_files() {
+        // Development: `cargo run` and `bun tauri dev` have nothing baked in.
+        let files = Files::new(&[
+            (".env", "TELEKEY_STAGE=production\n"),
+            (
+                ".env.production",
+                "TELEKEY_API_BASE=https://prod.example/api\nTELEKEY_SITE_URL=https://prod.example\n",
+            ),
+        ]);
+        let mut env = FakeEnv::default();
+
+        let hosted = load(&files, &mut env, &[], None);
+
+        assert_eq!(hosted.stage.value, "production");
+        assert_eq!(hosted.stage.source, Source::Environment);
+        assert_eq!(hosted.api_base.value, "https://prod.example/api");
+        assert_eq!(hosted.site_url.value, "https://prod.example");
+        // No URL for the relay in the file: the default for the stage.
+        assert_eq!(hosted.relay_url.value, DEFAULT_PRODUCTION_RELAY);
+        assert_eq!(hosted.relay_url.source, Source::Default);
+    }
+
+    #[test]
+    fn with_nothing_set_anywhere_it_is_staging() {
+        let files = Files::new(&[]);
+        let mut env = FakeEnv::default();
+
+        let hosted = load(&files, &mut env, &[], None);
+
+        assert_eq!(hosted.stage.value, "staging");
+        assert_eq!(hosted.stage.source, Source::Default);
+        assert_eq!(hosted.api_base.value, DEFAULT_STAGING_API);
+        assert_eq!(hosted.site_url.value, DEFAULT_STAGING_SITE);
+    }
+
+    #[test]
+    fn a_shared_file_does_not_replace_a_variable_already_set() {
+        let files = Files::new(&[(".env", "TELEKEY_STAGE=production\n")]);
+        let mut env = FakeEnv::with(&[("TELEKEY_STAGE", "staging")]);
+
+        let hosted = load(&files, &mut env, &[], None);
+
+        assert_eq!(hosted.stage.value, "staging", "the shell beats the file");
+    }
+
+    #[test]
+    fn the_real_environment_still_overrides_a_baked_stage() {
+        // run.sh builds for one stage and launches with the same one; a
+        // developer can also point a production build at staging from a shell.
+        // Only the real environment can do it: a build that knows its stage
+        // loads no file into it.
+        let files = Files::new(&[]);
+        let mut env = FakeEnv::with(&[("TELEKEY_STAGE", "staging")]);
+
+        let hosted = load(&files, &mut env, &[("TELEKEY_STAGE", "production")], None);
+
+        assert_eq!(hosted.stage.value, "staging");
+        assert_eq!(hosted.stage.source, Source::Environment);
+        assert_eq!(
+            hosted.api_base.value, DEFAULT_STAGING_API,
+            "the URLs follow the stage"
+        );
+    }
+
+    #[test]
+    fn a_real_url_override_beats_a_baked_one_which_beats_the_default() {
+        let none = |_: &str| None;
+        let baked_api = baked(&[("TELEKEY_API_BASE", "https://baked.example")]);
+        let real_api = FakeEnv::with(&[("TELEKEY_API_BASE", "http://127.0.0.1:5001/api")]);
+
+        let (value, source) = resolve_endpoint(API_BASE, &none, &baked_api);
+        assert_eq!(
+            (value.as_str(), source),
+            ("https://baked.example", Source::Build)
+        );
+
+        let (value, source) = resolve_endpoint(API_BASE, &|n| real_api.get(n), &baked_api);
+        assert_eq!(
+            (value.as_str(), source),
+            ("http://127.0.0.1:5001/api", Source::Environment)
+        );
+
+        let (value, source) = resolve_endpoint(API_BASE, &none, &none);
+        assert_eq!(
+            (value.as_str(), source),
+            (DEFAULT_STAGING_API, Source::Default)
+        );
+    }
+
+    #[test]
+    fn an_empty_value_counts_as_unset() {
+        let env = FakeEnv::with(&[("TELEKEY_STAGE", "")]);
+        let baked = baked(&[("TELEKEY_STAGE", "production")]);
+
+        let (stage, source) = resolve_stage(&|n| env.get(n), &baked);
+
+        assert_eq!((stage, source), ("production", Source::Build));
+    }
+
+    #[test]
+    fn an_explicit_env_file_sets_urls_but_never_the_stage() {
+        // `TELEKEY_ENV_FILE` is exported in a shell, so a production build
+        // honours it, for the three URLs only.
+        let files = Files::new(&[
+            (
+                "custom.env",
+                "TELEKEY_STAGE=staging\nTELEKEY_API_BASE=http://127.0.0.1:5001/api\n",
+            ),
+            (".env", "TELEKEY_STAGE=staging\n"),
+        ]);
+        let explicit = files.dir.path().join("custom.env");
+        let mut env = FakeEnv::default();
+
+        let hosted = load(
+            &files,
+            &mut env,
+            &[("TELEKEY_STAGE", "production")],
+            Some(&explicit),
+        );
+
+        assert_eq!(hosted.stage.value, "production");
+        assert_eq!(hosted.api_base.value, "http://127.0.0.1:5001/api");
+        assert_eq!(hosted.site_url.value, "https://www.telekey.app");
+    }
+
+    #[test]
+    fn an_explicit_env_file_replaces_the_stage_overlay() {
+        let files = Files::new(&[
+            ("custom.env", "TELEKEY_SITE_URL=http://localhost:3000\n"),
+            (".env.staging", "TELEKEY_API_BASE=https://overlay.example\n"),
+        ]);
+        let explicit = files.dir.path().join("custom.env");
+        let mut env = FakeEnv::default();
+
+        let hosted = load(&files, &mut env, &[], Some(&explicit));
+
+        assert_eq!(hosted.site_url.value, "http://localhost:3000");
+        assert_eq!(
+            hosted.api_base.value, DEFAULT_STAGING_API,
+            ".env.staging is not read"
+        );
+    }
+
+    #[test]
+    fn an_overlay_cannot_set_anything_but_the_three_urls() {
+        let files = Files::new(&[(
+            ".env.staging",
+            "TELEKEY_STAGE=production\nTELEKEY_UPDATE_URL=https://evil.example\n\
+             TELEKEY_LOG=trace\nTELEKEY_API_BASE=https://overlay.example\n",
+        )]);
+
+        let entries = telekey_entries(&files.dir.path().join(".env.staging"), true);
+
+        assert_eq!(
+            entries,
+            vec![(
+                "TELEKEY_API_BASE".to_string(),
+                "https://overlay.example".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn a_shared_file_skips_the_process_settings_and_blank_values() {
+        let files = Files::new(&[(
+            ".env",
+            "TELEKEY_STAGE=staging\nTELEKEY_LOG=trace\nTELEKEY_LOG_FILE=/tmp/x\n\
+             TELEKEY_ENV_FILE=/tmp/y\nTELEKEY_SITE_URL=\nOPENAI_API_KEY=sk-nope\n",
+        )]);
+
+        let entries = telekey_entries(&files.dir.path().join(".env"), false);
+
+        assert_eq!(
+            entries,
+            vec![("TELEKEY_STAGE".to_string(), "staging".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_missing_file_is_not_an_error() {
+        assert!(telekey_entries(Path::new("/definitely/not/here/.env"), false).is_empty());
     }
 }

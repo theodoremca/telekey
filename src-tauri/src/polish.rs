@@ -242,6 +242,10 @@ impl Polisher for OpenAiPolisher {
             "reasoning": { "effort": "low" },
             "instructions": instructions,
             "input": text,
+            // The Responses API stores what it generates, for later retrieval,
+            // unless told not to. This is the user's own dictation; there is
+            // no reason for OpenAI to hold on to a copy of the rewrite.
+            "store": false,
         });
 
         let response = self
@@ -522,6 +526,11 @@ mod tests {
             .unwrap()
             .contains("short and direct"));
         assert_eq!(body["input"], "so I think maybe we should ship it on Wednesday");
+        assert_eq!(
+            body["store"],
+            serde_json::json!(false),
+            "a dictation must not be stored on OpenAI's side"
+        );
     }
 
     #[tokio::test]

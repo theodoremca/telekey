@@ -8,6 +8,7 @@ use std::io::{BufRead, Write};
 use anyhow::{bail, Context, Result};
 
 use crate::inject::accessibility_granted;
+use crate::session::{Resolved, Source};
 use crate::settings::{self, Settings};
 
 /// Read a key from stdin and store it in the Keychain.
@@ -42,6 +43,9 @@ pub fn clear_api_key() -> Result<()> {
 
 /// Print what is and is not set up. Never prints the key itself.
 pub fn check() -> Result<()> {
+    // Resolve the stage and the URLs the way the app does at launch, so what
+    // this prints is what a dictation would use.
+    crate::session::hydrate_env();
     let dir = settings::config_dir()?;
     let loaded = Settings::load(&dir);
 
@@ -74,6 +78,15 @@ pub fn check() -> Result<()> {
         (false, _) => println!("  hosted account   no"),
     }
 
+    // Which server this copy talks to, and why: the first thing to look at
+    // when someone reports being on the wrong stage. Public addresses only.
+    let hosted_config = crate::session::hosted();
+    let stage = hosted_config.stage.value.clone();
+    println!("  stage            {}", describe_setting(&hosted_config.stage, &stage));
+    println!("  API base         {}", describe_setting(&hosted_config.api_base, &stage));
+    println!("  site             {}", describe_setting(&hosted_config.site_url, &stage));
+    println!("  Instant relay    {}", describe_setting(&hosted_config.relay_url, &stage));
+
     println!("  accessibility    {}", yes_no(accessibility_granted()));
     println!("  signature        {}", describe_signing());
     println!("  input device     {}", describe_input_device());
@@ -99,6 +112,20 @@ pub fn check() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// A resolved setting and where it came from, e.g.
+/// `production  (fixed when this app was built)`.
+fn describe_setting(setting: &Resolved, stage: &str) -> String {
+    let origin = match setting.source {
+        Source::Environment => format!("{}, from the environment or a .env file", setting.var),
+        Source::Build => "fixed when this app was built".to_string(),
+        Source::Default if setting.var == "TELEKEY_STAGE" => {
+            "nothing sets it, so staging".to_string()
+        }
+        Source::Default => format!("built-in default for {stage}"),
+    };
+    format!("{}  ({origin})", setting.value)
 }
 
 /// How to invoke this binary from the user's current directory.
@@ -318,3 +345,45 @@ fn read_wav(path: &std::path::Path) -> Result<(Vec<f32>, u32)> {
     bail!("the WAV has no audio")
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setting(var: &'static str, value: &str, source: Source) -> Resolved {
+        Resolved {
+            var,
+            value: value.to_string(),
+            source,
+        }
+    }
+
+    #[test]
+    fn a_stage_fixed_at_build_time_says_so() {
+        let stage = setting("TELEKEY_STAGE", "production", Source::Build);
+        assert_eq!(
+            describe_setting(&stage, "production"),
+            "production  (fixed when this app was built)"
+        );
+    }
+
+    #[test]
+    fn an_override_names_the_variable() {
+        let stage = setting("TELEKEY_STAGE", "staging", Source::Environment);
+        let described = describe_setting(&stage, "staging");
+        assert!(described.starts_with("staging  (TELEKEY_STAGE"), "{described}");
+    }
+
+    #[test]
+    fn a_default_url_names_the_stage_it_is_the_default_for() {
+        let site = setting("TELEKEY_SITE_URL", "https://www.telekey.app", Source::Default);
+        assert_eq!(
+            describe_setting(&site, "production"),
+            "https://www.telekey.app  (built-in default for production)"
+        );
+        let stage = setting("TELEKEY_STAGE", "staging", Source::Default);
+        assert_eq!(
+            describe_setting(&stage, "staging"),
+            "staging  (nothing sets it, so staging)"
+        );
+    }
+}

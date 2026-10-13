@@ -531,26 +531,37 @@ fn move_to(window: &WebviewWindow, at: Placement) -> Result<()> {
 }
 
 fn build_window(app: &AppHandle) -> Result<WebviewWindow> {
-    WebviewWindowBuilder::new(
+    let builder = WebviewWindowBuilder::new(
         app,
         OVERLAY_LABEL,
         WebviewUrl::App("overlay.html".into()),
-    )
-    .title("TeleKey")
-    .inner_size(panel::OVERLAY_WIDTH, panel::OVERLAY_HEIGHT)
-    .decorations(false)
-    .transparent(true)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .resizable(false)
-    .shadow(false)
-    // The pill's button and the capsule's controls are clicked while another
-    // app is active, which is all of the time; without this macOS spends the
-    // first click on the window instead of the button.
-    .accept_first_mouse(true)
-    // Never focused, never visible until a dictation starts.
-    .focused(false)
-    .visible(false)
-    .build()
-    .context("could not create the overlay window")
+    );
+
+    // Linux has no non-activating window (panel.rs), and `focused(false)`
+    // alone does not last there: tao turns accept-focus back on after the
+    // first draw, so a later `show()` gave the capsule the keyboard and the
+    // Ctrl+V landed in it. Not focusable at all keeps it out of the way; GTK
+    // still delivers clicks to its buttons. macOS and Windows have their own
+    // guard (rule 7) and are left as they are.
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let builder = builder.focusable(false);
+
+    builder
+        .title("TeleKey")
+        .inner_size(panel::OVERLAY_WIDTH, panel::OVERLAY_HEIGHT)
+        .decorations(false)
+        .transparent(true)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .shadow(false)
+        // The pill's button and the capsule's controls are clicked while another
+        // app is active, which is all of the time; without this macOS spends the
+        // first click on the window instead of the button.
+        .accept_first_mouse(true)
+        // Never focused, never visible until a dictation starts.
+        .focused(false)
+        .visible(false)
+        .build()
+        .context("could not create the overlay window")
 }
