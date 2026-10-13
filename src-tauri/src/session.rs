@@ -327,7 +327,7 @@ const DEFAULT_STAGING_SITE: &str = "https://telekey-staging.vercel.app";
 /// `telekey.vercel.app` both redirect to it; sign-in and the account page
 /// always open on this one.
 const DEFAULT_PRODUCTION_SITE: &str = "https://www.telekey.app";
-/// The Instant relay (`relay/`) on Cloud Run. Cloud Run addresses are
+/// The Instant relay (`relay/` in the private `telekey-server` repository) on Cloud Run. Cloud Run addresses are
 /// `<service>-<project number>.<region>.run.app`, so these are known before
 /// either service is deployed.
 const DEFAULT_STAGING_RELAY: &str =

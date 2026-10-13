@@ -15,7 +15,14 @@ export type Status =
   | { kind: "failed"; message: string }
   | { kind: "cancelled" }
   /** A short note that is not about a dictation, e.g. the microphone changed. */
-  | { kind: "notice"; text: string };
+  | { kind: "notice"; text: string }
+  /**
+   * The beer prompt for people on their own OpenAI key (src-tauri/src/tips.rs).
+   * `clickable` is whether the capsule can take a click on this OS; where it
+   * cannot (Linux) the text says where to go instead. Like a notice, it is not
+   * part of any dictation.
+   */
+  | { kind: "nudge"; text: string; clickable: boolean };
 
 export const STATUS_EVENT = "telekey://status";
 export const LEVEL_EVENT = "telekey://level";
@@ -83,7 +90,7 @@ export function mayChangeBalance(status: Status, uploaded: boolean): boolean {
  * - `inserted`, `failed` and `cancelled` end the dictation: they are answered
  *   with the mark and then clear it, so the next failure (say the microphone
  *   being off, which announces no `recording`) is not blamed on this upload.
- * - `idle` and `notice` are not part of any dictation and change nothing.
+ * - `idle`, `notice` and `nudge` are not part of any dictation and change nothing.
  */
 export function createBalanceWatch(): { observe(status: Status): boolean } {
   let uploaded = false;

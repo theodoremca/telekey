@@ -53,6 +53,17 @@ export type UpdateStatus = { current: string } & (
 
 export const UPDATE_EVENT = "telekey://update";
 
+/**
+ * Whether the person has tipped (or said they already had), so the beer prompt
+ * is off for good. Mirrors `TipStatus` in tips.rs; a change arrives as a
+ * `telekey://tips` event, e.g. when the tip page sends the app `telekey://thanks`.
+ */
+export interface TipStatus {
+  tipped: boolean;
+}
+
+export const TIPS_EVENT = "telekey://tips";
+
 /** A microphone, as cpal names it. Mirrors `InputDevice` in input_device.rs. */
 export interface InputDevice {
   id: string;
@@ -198,7 +209,13 @@ export interface SessionStatus {
 export interface CreditPack {
   id: string;
   name: string;
+  /** What the pack costs. */
   cents: number;
+  /**
+   * What it adds to the balance, when that is more than it costs: the $25 pack
+   * gives $27.50. Absent from an older server and from a pack with no bonus.
+   */
+  creditCents?: number;
 }
 
 export interface HostedAccount {
@@ -227,7 +244,10 @@ const inTauri = () =>
  * can be looked at: `?balance=0` (a new account with nothing to spend),
  * `?account=fail` (signed in, but the balance could not be fetched),
  * `?platform=windows` or `?platform=linux` (what those systems are shown),
- * `?update=ready|downloading|failed|upToDate` (the Updates row's states).
+ * `?update=ready|downloading|failed|upToDate` (the Updates row's states),
+ * `?tipped=1` (the Support row after a tip), `?bonus=0` (packs from an older
+ * server, which send no `creditCents`), `?signedin=1` (a TeleKey account, so
+ * Usage shows the Buy buttons and Support has no "I already did").
  */
 const previewFlags = () =>
   typeof window !== "undefined"
@@ -287,6 +307,7 @@ const previewUpdate = (): UpdateStatus => {
 };
 
 const previewState: {
+  tips: TipStatus;
   settings: Settings;
   key: ApiKeyStatus;
   session: SessionStatus;
@@ -294,6 +315,7 @@ const previewState: {
   history: HistoryEntry[];
   setup: SetupState;
 } = {
+  tips: { tipped: previewFlags().get("tipped") === "1" },
   setup: {
     requirements: [
       { step: "apiKey", state: "missing", needsRestart: false },
@@ -338,19 +360,22 @@ const previewState: {
     source: null,
     keychainIsEffective: true,
   },
-  session: {
-    signedIn: false,
-    email: null,
-    uid: null,
-  },
+  session:
+    previewFlags().get("signedin") === "1"
+      ? { signedIn: true, email: "you@example.com", uid: "preview" }
+      : { signedIn: false, email: null, uid: null },
   account: {
     email: "you@example.com",
     balanceCents: 500,
+    // The packs the server sells: $10 minimum, +10% at $25, +15% at $50. With
+    // `?bonus=0` they carry no `creditCents`, as an older server sends them.
     packs: [
-      { id: "starter", name: "$5", cents: 500 },
-      { id: "plus", name: "$15", cents: 1500 },
-      { id: "pro", name: "$40", cents: 4000 },
-    ],
+      { id: "starter", name: "$10", cents: 1000, creditCents: 1000 },
+      { id: "plus", name: "$25", cents: 2500, creditCents: 2750 },
+      { id: "pro", name: "$50", cents: 5000, creditCents: 5750 },
+    ].map(({ creditCents, ...pack }) =>
+      previewFlags().get("bonus") === "0" ? pack : { ...pack, creditCents },
+    ),
   },
   history: [
     {
@@ -490,6 +515,12 @@ const preview = {
     return account;
   },
   createCheckout: async () => undefined,
+  tipStatus: async (): Promise<TipStatus> => ({ ...previewState.tips }),
+  openTip: async () => undefined,
+  markTipped: async (): Promise<TipStatus> => {
+    previewState.tips = { tipped: true };
+    return { ...previewState.tips };
+  },
   permissions: async (): Promise<Permissions> => {
     const { os } = previewPlatform();
     // What each backend reports: Windows and Linux have no Accessibility to
@@ -607,6 +638,11 @@ const live = {
   clearSession: () => invoke<SessionStatus>("clear_session"),
   hostedAccount: () => invoke<HostedAccount>("hosted_account"),
   createCheckout: (packId: string) => invoke<void>("create_checkout", { packId }),
+  tipStatus: () => invoke<TipStatus>("tip_status"),
+  /** The browser opens only because of the click that called this. */
+  openTip: () => invoke<void>("open_tip"),
+  /** "I already did": the beer prompt never appears again. */
+  markTipped: () => invoke<TipStatus>("mark_tipped"),
   permissions: () => invoke<Permissions>("permissions_status"),
   openPermissionSettings: (
     pane: "accessibility" | "microphone" | "inputMonitoring",

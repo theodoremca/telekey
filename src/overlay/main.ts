@@ -50,6 +50,8 @@ let pill: PillState = { shown: false, hover: false };
 /** This dictation began with a click on the pill, so it needs a Stop button:
  *  there is no key to let go of. */
 let clickStarted = false;
+/** The beer prompt is showing and can be clicked here (not on Linux). */
+let nudgeClickable = false;
 
 function resizeCanvas() {
   const ratio = window.devicePixelRatio || 1;
@@ -146,6 +148,8 @@ function setState(next: Status) {
     clickStarted = false;
   }
   capsule.dataset.click = String(clickStarted);
+  nudgeClickable = next.kind === "nudge" && next.clickable;
+  capsule.dataset.action = String(nudgeClickable);
   render();
 
   switch (next.kind) {
@@ -182,6 +186,11 @@ function setState(next: Status) {
       break;
 
     case "notice":
+      messageEl.textContent = next.text;
+      announce(next.text);
+      break;
+
+    case "nudge":
       messageEl.textContent = next.text;
       announce(next.text);
       break;
@@ -256,6 +265,14 @@ function start() {
   });
 
   capsule.addEventListener("click", () => {
+    // The beer prompt: the only way into the browser from here is this click.
+    if (state === "nudge") {
+      if (!nudgeClickable) return;
+      invoke("accept_nudge").catch((error: unknown) => {
+        console.warn("could not open the tip page", error);
+      });
+      return;
+    }
     if (state !== "failed") return;
     const text = messageEl.textContent ?? "";
     if (!mentionsCredits(text)) return;

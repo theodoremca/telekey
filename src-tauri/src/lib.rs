@@ -28,6 +28,7 @@ pub mod setup;
 pub mod session;
 pub mod signing;
 pub mod smart;
+pub mod tips;
 pub mod transcribe;
 pub mod usage;
 pub mod trigger;
@@ -118,6 +119,12 @@ impl StatusSink for TauriSink {
             // land on top of whatever the capsule is showing.
             Status::Notice { text } => {
                 self.overlay.notice(text.clone());
+                return;
+            }
+            // The beer prompt is held to the same rule, and goes behind a
+            // notice.
+            Status::Nudge { text, clickable } => {
+                self.overlay.nudge(text.clone(), *clickable);
                 return;
             }
         }
@@ -223,6 +230,10 @@ pub fn run() {
             commands::start_dictation,
             commands::stop_dictation,
             commands::pill_state,
+            commands::tip_status,
+            commands::open_tip,
+            commands::accept_nudge,
+            commands::mark_tipped,
             commands::session_status,
             commands::set_session,
             commands::clear_session,
@@ -277,7 +288,10 @@ pub fn run() {
             });
             let history = Arc::new(history::History::load(&config_dir));
             let usage = Arc::new(usage::Usage::load(&config_dir));
-            let pipeline = Arc::new(Pipeline::new(loaded.clone(), sink, history, usage));
+            let tips = Arc::new(tips::Tips::load(&config_dir));
+            let pipeline = Arc::new(
+                Pipeline::new(loaded.clone(), sink, history, usage).with_tips(tips),
+            );
 
             // Open the microphone once now, so the first real dictation is not
             // truncated waiting for CoreAudio to initialise — unless macOS has
@@ -569,7 +583,11 @@ fn setup_height_for(app: &AppHandle) -> f64 {
     }
 }
 
-/// `telekey://auth?…` lands the Firebase session in the Keychain.
+/// `telekey://auth?…` lands the Firebase session in the Keychain, and
+/// `telekey://thanks` (from the page a tip ends on) switches the beer prompt
+/// off. Both arrive the same way on every OS: macOS delivers the link to the
+/// running copy, and Windows and Linux start a second copy that the
+/// single-instance plugin hands to this handler.
 fn listen_for_hosted_session(app: &AppHandle, pipeline: Arc<Pipeline>) {
     use tauri_plugin_deep_link::DeepLinkExt;
 
@@ -595,8 +613,22 @@ fn listen_for_hosted_session(app: &AppHandle, pipeline: Arc<Pipeline>) {
     }
 }
 
+/// A tip was made. Never again asks for one, tells Settings, and says thanks.
+fn thank_for_the_beer(app: &AppHandle, pipeline: &Pipeline) {
+    let status = pipeline.tips().mark_tipped();
+    if let Err(err) = app.emit(tips::TIPS_EVENT, status) {
+        tracing::warn!("could not announce the tip: {err}");
+    }
+    tracing::info!("tip received; the beer prompt is off for good");
+    pipeline.notice(tips::THANKS_NOTICE.to_string());
+}
+
 fn apply_auth_urls(app: &AppHandle, pipeline: &Pipeline, urls: Vec<url::Url>) {
     for url in urls {
+        if tips::is_thanks_url(&url) {
+            thank_for_the_beer(app, pipeline);
+            continue;
+        }
         match session::session_from_callback_url(url.as_str()) {
             Ok(next) => {
                 if let Err(err) = session::store(&next) {

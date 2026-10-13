@@ -48,6 +48,10 @@ const CANCEL_LINGER: Duration = Duration::from_millis(700);
 /// A notice is a glance: "Microphone: AirPods Pro" needs no longer than this.
 const NOTICE_LINGER: Duration = Duration::from_millis(2_600);
 
+/// The beer prompt has to be read, decided on and clicked, but it is never
+/// urgent: long enough for all three, short enough not to outstay its welcome.
+const NUDGE_LINGER: Duration = Duration::from_millis(7_000);
+
 /// How often the pointer is checked while the pill is showing. Often when it
 /// is within reach of the pill, so hovering feels immediate; a few times a
 /// second otherwise, which is only to follow it to another screen.
@@ -74,6 +78,14 @@ pub struct Overlay {
     /// The latest notice that arrived while the capsule was busy, shown once
     /// it is free. Only the latest: two notices in a row are one fact.
     pending_notice: Mutex<Option<String>>,
+    /// The beer prompt that arrived while the capsule was busy: text, and
+    /// whether the capsule can be clicked on this OS. It waits behind a pending
+    /// notice as well, because it is the least important thing said here.
+    pending_nudge: Mutex<Option<(String, bool)>>,
+    /// The capsule is showing the beer prompt and nothing has replaced it, so
+    /// a click on it can dismiss it without hiding a dictation that started
+    /// in the meantime.
+    nudging: AtomicBool,
     /// "Show the dictation pill", where this OS can have it.
     pill: AtomicBool,
     /// The pointer is over the pill, so the window takes clicks there.
@@ -118,6 +130,8 @@ impl Overlay {
             generation: AtomicU64::new(0),
             busy: AtomicBool::new(false),
             pending_notice: Mutex::new(None),
+            pending_nudge: Mutex::new(None),
+            nudging: AtomicBool::new(false),
             pill: AtomicBool::new(show_pill && crate::settings::pill_supported()),
             hovered: AtomicBool::new(false),
             near: AtomicBool::new(false),
@@ -151,6 +165,7 @@ impl Overlay {
     pub fn show(self: &Arc<Self>) {
         self.generation.fetch_add(1, Ordering::SeqCst);
         self.busy.store(true, Ordering::SeqCst);
+        self.nudging.store(false, Ordering::SeqCst);
 
         let overlay = Arc::clone(self);
         self.on_main(move |window| {
@@ -184,6 +199,7 @@ impl Overlay {
     }
 
     fn rest_now(self: &Arc<Self>, expected: u64) {
+        self.nudging.store(false, Ordering::SeqCst);
         let overlay = Arc::clone(self);
         self.on_main(move |window| {
             // Checked again here, not only by the caller: a dictation that
@@ -219,7 +235,12 @@ impl Overlay {
                 tracing::warn!("could not hide the overlay: {err:#}");
             }
         });
-        self.release();
+        // Only if nothing has taken the capsule since: a dictation that started
+        // in the meantime owns it, and a waiting notice or beer prompt must not
+        // be shown over its recording.
+        if self.generation.load(Ordering::SeqCst) == expected {
+            self.release();
+        }
     }
 
     /// Show a short note when the capsule is free, or keep it until it is.
@@ -246,13 +267,53 @@ impl Overlay {
         self.rest_after(NOTICE_LINGER);
     }
 
+    /// The beer prompt (`tips.rs`), under the same rules as a notice: never in
+    /// place of a result and never over a recording, so while the capsule is
+    /// busy it waits, and it goes after a notice that is waiting too.
+    ///
+    /// `clickable` is whether the capsule can take a click on this OS. It is
+    /// the only thing here that can open the browser, and only when clicked.
+    pub fn nudge(self: &Arc<Self>, text: String, clickable: bool) {
+        if self.busy.load(Ordering::SeqCst) {
+            *self.pending_nudge.lock() = Some((text, clickable));
+            return;
+        }
+        self.nudge_now(text, clickable);
+    }
+
+    fn nudge_now(self: &Arc<Self>, text: String, clickable: bool) {
+        self.set_clickable(clickable);
+        self.show();
+        let status = Status::Nudge { text, clickable };
+        if let Err(err) = self.app.emit(crate::STATUS_EVENT, status) {
+            tracing::warn!("could not emit the beer prompt: {err}");
+        }
+        self.nudging.store(true, Ordering::SeqCst);
+        self.rest_after(NUDGE_LINGER);
+    }
+
+    /// The prompt was clicked: put it away. A no-op unless it is still the
+    /// thing on screen, so a click that arrives as a dictation starts cannot
+    /// hide that dictation.
+    pub fn dismiss_nudge(self: &Arc<Self>) {
+        if self.nudging.swap(false, Ordering::SeqCst) {
+            self.rest();
+        }
+    }
+
     /// The capsule is free again. If a notice queued up meanwhile, it gets its
-    /// turn now — after the result, which is the whole point of the queue.
+    /// turn now — after the result, which is the whole point of the queue. A
+    /// waiting beer prompt goes after that, when this notice has rested.
     fn release(self: &Arc<Self>) {
         self.busy.store(false, Ordering::SeqCst);
         let queued = self.pending_notice.lock().take();
         if let Some(text) = queued {
             self.notice_now(text);
+            return;
+        }
+        let waiting = self.pending_nudge.lock().take();
+        if let Some((text, clickable)) = waiting {
+            self.nudge_now(text, clickable);
         }
     }
 

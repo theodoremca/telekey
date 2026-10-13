@@ -15,6 +15,8 @@ const ROWS: Array<{
   pill?: "rest" | "hover";
   /** Started from the pill, so the capsule carries a Stop button. */
   click?: boolean;
+  /** The beer prompt, on an OS where the capsule can be clicked. */
+  action?: boolean;
 }> = [
   { label: "Pill — resting between dictations", state: "idle", pill: "rest" },
   {
@@ -60,6 +62,29 @@ const ROWS: Array<{
     label: "Notice — the microphone dropped out mid-sentence",
     state: "notice",
     message: "Microphone disconnected — kept the first 12 s",
+  },
+  {
+    label: "Beer prompt — own-key users, after a result; click opens the tip page",
+    state: "nudge",
+    message: "Enjoying TeleKey on your own key? Buy me a beer \u{1F37A}",
+    action: true,
+  },
+  {
+    label: "Beer prompt — over a dark app",
+    state: "nudge",
+    message: "Enjoying TeleKey on your own key? Buy me a beer \u{1F37A}",
+    action: true,
+    dark: true,
+  },
+  {
+    label: "Beer prompt — Linux: no click, so it says where to go",
+    state: "nudge",
+    message: "Enjoying TeleKey? Buy me a beer in Settings \u203A Support TeleKey \u{1F37A}",
+  },
+  {
+    label: "Notice — thanks, when the tip page sends the app back",
+    state: "notice",
+    message: "Thanks for the beer!",
   },
 ];
 
@@ -133,6 +158,7 @@ for (const row of ROWS) {
   const capsule = stage.querySelector(".capsule") as HTMLElement;
   capsule.dataset.state = row.state;
   capsule.dataset.click = String(row.click === true);
+  capsule.dataset.action = String(row.action === true);
 
   if (row.pill) {
     const stageEl = stage.querySelector(".stage") as HTMLElement;

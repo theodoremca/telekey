@@ -45,3 +45,27 @@ export function accountStanding(who: string, cents: number): string {
   const owed = owedNote(cents);
   return owed ? `${who}. ${owed}` : `${who} — ${formatCents(cents)} left.`;
 }
+
+/**
+ * What a credit pack adds beyond its price, as the line under its Buy button
+ * ("$27.50 of credit"), or null when it adds nothing extra.
+ *
+ * `creditCents` is optional on purpose. An older server does not send it, and a
+ * pack with no bonus (the $10 minimum) gives exactly what it costs; both show
+ * the price alone, as before. A figure that is not a plain number, or that is
+ * not more than the price, is ignored rather than shown: a "bonus" that is less
+ * than what was paid would be a lie on a button.
+ */
+export function packBonus(pack: { cents: number; creditCents?: number | null }): string | null {
+  const credit = pack.creditCents;
+  if (typeof credit !== "number" || !Number.isFinite(credit) || credit <= pack.cents) {
+    return null;
+  }
+  return `${formatCents(credit)} of credit`;
+}
+
+/** "$25 → $27.50 of credit", or just "$25" for a pack with no bonus. */
+export function packOffer(pack: { name: string; cents: number; creditCents?: number | null }): string {
+  const bonus = packBonus(pack);
+  return bonus ? `${pack.name} → ${bonus}` : pack.name;
+}

@@ -12,6 +12,7 @@ import {
   type UsageSummary,
 } from "./api";
 import { formatCents, isOwing, owedNote } from "./money";
+import { PackButton } from "./PackButton";
 
 const PERIODS: Array<{ id: Period; label: string }> = [
   { id: "today", label: "Today" },
@@ -132,13 +133,11 @@ export function UsagePanel({
           {hosted.packs.length > 0 ? (
             <div className="packRow">
               {hosted.packs.map((pack) => (
-                <button
+                <PackButton
                   key={pack.id}
-                  className="primary"
-                  onClick={() => void api.createCheckout(pack.id).catch((err) => setError(messageFrom(err)))}
-                >
-                  Buy {pack.name}
-                </button>
+                  pack={pack}
+                  onBuy={() => void api.createCheckout(pack.id).catch((err) => setError(messageFrom(err)))}
+                />
               ))}
             </div>
           ) : (

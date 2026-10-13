@@ -11,6 +11,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
 
 use crate::audio::{encode_wav_16bit_mono, Clip, TARGET_SAMPLE_RATE};
+use crate::tips::Payer;
 use crate::usage::Units;
 
 pub const DEFAULT_MODEL: &str = "gpt-transcribe";
@@ -61,6 +62,13 @@ pub struct Transcription {
 /// noticing.
 pub trait Transcriber: Send + Sync {
     fn transcribe(&self, clip: &Clip, context: &TranscriptionContext) -> Result<Transcription>;
+
+    /// Who pays for what this transcribes. `None` unless the implementation
+    /// knows, which is the safe answer: the beer prompt (`tips.rs`) is only ever
+    /// shown to someone known to be on their own key.
+    fn payer(&self) -> Option<Payer> {
+        None
+    }
 }
 
 pub struct OpenAiTranscriber {
@@ -134,6 +142,10 @@ impl ApiUsage {
 }
 
 impl Transcriber for OpenAiTranscriber {
+    fn payer(&self) -> Option<Payer> {
+        Some(Payer::OwnKey)
+    }
+
     fn transcribe(&self, clip: &Clip, context: &TranscriptionContext) -> Result<Transcription> {
         if clip.is_empty() {
             bail!("nothing was recorded");

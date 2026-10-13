@@ -359,6 +359,43 @@ pub fn stop_dictation(bus: State<'_, crate::trigger::Bus>) {
     bus.emit(crate::trigger::TriggerEvent::Stop);
 }
 
+/// Whether the person has tipped, for Settings' Support row.
+#[tauri::command]
+pub fn tip_status(pipeline: State<'_, Arc<Pipeline>>) -> crate::tips::TipStatus {
+    pipeline.tips().status()
+}
+
+/// Settings' "Buy me a beer": open the tip page. Only ever from a click.
+#[tauri::command]
+pub fn open_tip() -> Result<(), String> {
+    crate::session::open_in_browser(crate::tips::TIP_URL).map_err(to_message)
+}
+
+/// The capsule's beer prompt was clicked: open the tip page and put the prompt
+/// away. This and [`open_tip`] are the only things that ever open it.
+#[tauri::command]
+pub fn accept_nudge(overlay: State<'_, Arc<crate::overlay::Overlay>>) -> Result<(), String> {
+    // Opened first: if the browser cannot be reached the prompt stays, and the
+    // next click can try again.
+    crate::session::open_in_browser(crate::tips::TIP_URL).map_err(to_message)?;
+    overlay.dismiss_nudge();
+    Ok(())
+}
+
+/// Settings' "I already did": stop asking, for good.
+#[tauri::command]
+pub fn mark_tipped(
+    app: AppHandle,
+    pipeline: State<'_, Arc<Pipeline>>,
+) -> crate::tips::TipStatus {
+    use tauri::Emitter;
+    let status = pipeline.tips().mark_tipped();
+    if let Err(err) = app.emit(crate::tips::TIPS_EVENT, status) {
+        tracing::warn!("could not announce the tip: {err}");
+    }
+    status
+}
+
 /// Whether the resting pill is up, for the overlay page when it loads.
 #[tauri::command]
 pub fn pill_state(
@@ -549,6 +586,7 @@ mod tests {
                 id: "starter".into(),
                 name: "$5".into(),
                 cents: 500,
+                credit_cents: None,
             }],
         })
         .unwrap();

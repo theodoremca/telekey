@@ -49,6 +49,7 @@ describe("mayChangeBalance", () => {
       { kind: "notice", text: "Microphone changed to your headset" },
       // A notice that happens to say "credit" is not a dictation failing.
       { kind: "notice", text: "Credits are low" },
+      { kind: "nudge", text: "Enjoying TeleKey on your own key? Buy me a beer", clickable: true },
     ];
     for (const status of quiet) {
       for (const uploaded of [false, true]) {
@@ -67,6 +68,7 @@ describe("mayChangeBalance", () => {
       { kind: "failed", message: "No speech was heard." },
       { kind: "cancelled" },
       { kind: "notice", text: "Out of credits" },
+      { kind: "nudge", text: "Buy me a beer", clickable: false },
     ];
     for (const status of all) {
       for (const uploaded of [false, true]) {
@@ -144,6 +146,18 @@ describe("createBalanceWatch", () => {
     const notice: Status = { kind: "notice", text: "Microphone changed to your headset" };
     expect(answers([recording, transcribing, notice, silent])).toEqual([false, false, false, true]);
     expect(answers([recording, transcribing, inserted, { kind: "idle" }, notice])).toEqual([
+      false,
+      false,
+      true,
+      false,
+      false,
+    ]);
+  });
+
+  test("the beer prompt in between changes nothing either", () => {
+    const nudge: Status = { kind: "nudge", text: "Buy me a beer", clickable: true };
+    expect(answers([recording, transcribing, nudge, silent])).toEqual([false, false, false, true]);
+    expect(answers([recording, transcribing, inserted, nudge, { kind: "idle" }])).toEqual([
       false,
       false,
       true,

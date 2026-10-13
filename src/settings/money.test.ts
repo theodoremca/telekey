@@ -4,7 +4,15 @@ import { describe, expect, test } from "bun:test";
 // from here). Both are held to the same table below.
 import { money as webMoney, owedNote as webOwedNote } from "../../web/lib/api";
 
-import { accountStanding, creditsLeft, formatCents, isOwing, owedNote } from "./money";
+import {
+  accountStanding,
+  creditsLeft,
+  formatCents,
+  isOwing,
+  owedNote,
+  packBonus,
+  packOffer,
+} from "./money";
 
 describe("formatCents", () => {
   test("writes a balance in dollars and cents", () => {
@@ -96,5 +104,37 @@ describe("the website's copy agrees", () => {
     for (const cents of balances) {
       expect(webOwedNote(cents)).toBe(owedNote(cents));
     }
+  });
+});
+
+describe("packBonus", () => {
+  test("a pack that gives more than it costs says how much", () => {
+    expect(packBonus({ cents: 2500, creditCents: 2750 })).toBe("$27.50 of credit");
+    expect(packBonus({ cents: 5000, creditCents: 5750 })).toBe("$57.50 of credit");
+  });
+
+  test("a pack that gives exactly what it costs shows the price alone", () => {
+    expect(packBonus({ cents: 1000, creditCents: 1000 })).toBeNull();
+  });
+
+  test("an older server sends no creditCents, and nothing changes", () => {
+    expect(packBonus({ cents: 500 })).toBeNull();
+    expect(packBonus({ cents: 500, creditCents: undefined })).toBeNull();
+    expect(packBonus({ cents: 500, creditCents: null })).toBeNull();
+  });
+
+  test("a figure that cannot be a bonus is never shown", () => {
+    expect(packBonus({ cents: 2500, creditCents: 2000 })).toBeNull();
+    expect(packBonus({ cents: 2500, creditCents: Number.NaN })).toBeNull();
+    expect(packBonus({ cents: 2500, creditCents: Number.POSITIVE_INFINITY })).toBeNull();
+    expect(packBonus({ cents: 2500, creditCents: "2750" as unknown as number })).toBeNull();
+  });
+
+  test("the whole offer reads as price, arrow, credit", () => {
+    expect(packOffer({ name: "$25", cents: 2500, creditCents: 2750 })).toBe(
+      "$25 → $27.50 of credit",
+    );
+    expect(packOffer({ name: "$10", cents: 1000, creditCents: 1000 })).toBe("$10");
+    expect(packOffer({ name: "$5", cents: 500 })).toBe("$5");
   });
 });

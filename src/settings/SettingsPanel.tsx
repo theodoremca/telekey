@@ -17,11 +17,14 @@ import {
   type SessionStatus,
   type Settings,
   type Signing,
+  type TipStatus,
   type UpdateStatus,
+  TIPS_EVENT,
   UPDATE_EVENT,
 } from "./api";
 import { FormattingEditor } from "./FormattingEditor";
 import { accountStanding } from "./money";
+import { PackButton } from "./PackButton";
 import { fromKeyEvent, modifierGlyphs, shortcutText, toGlyphs } from "./shortcut";
 
 export function SettingsPanel({
@@ -261,7 +264,88 @@ export function SettingsPanel({
       <Section title="Updates">
         <UpdateRow />
       </Section>
+
+      {/* Not until the session is known: for that moment a credits user would
+          see the own-key wording and an "I already did" they never need. */}
+      {session && (
+        <Section title="Support TeleKey">
+          <SupportRow signedIn={session.signedIn} />
+        </Section>
+      )}
     </>
+  );
+}
+
+/**
+ * Where to say thanks: a tip, pay what you like, on the page TeleKey opens in
+ * the browser — only because this button was clicked. People on their own
+ * OpenAI key are also asked now and then (src-tauri/src/tips.rs); "I already
+ * did" is how they say it was done. Someone on credits has already paid, is
+ * never asked, and is not offered it.
+ */
+function SupportRow({ signedIn }: { signedIn: boolean }) {
+  const [tipped, setTipped] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    api
+      .tipStatus()
+      .then((status) => setTipped(status.tipped))
+      .catch(() => {});
+    // The tip page sends the app back with telekey://thanks, whenever it does.
+    listen<TipStatus>(TIPS_EVENT, (event) => setTipped(event.payload.tipped))
+      .then((unlisten) => {
+        stop = unlisten;
+      })
+      .catch(() => {});
+    return () => stop?.();
+  }, []);
+
+  const buy = () => {
+    setProblem(null);
+    api.openTip().catch((err) => setProblem(messageFrom(err)));
+  };
+
+  const alreadyDid = () => {
+    setProblem(null);
+    api
+      .markTipped()
+      .then((status) => setTipped(status.tipped))
+      .catch((err) => setProblem(messageFrom(err)));
+  };
+
+  let hint: string;
+  if (tipped) {
+    hint = "Thank you. TeleKey won't ask again.";
+  } else if (signedIn) {
+    hint =
+      "TeleKey is built by one person. If it saves you time, a beer is a kind way to say so. Pay what you like; it is separate from credits.";
+  } else {
+    hint =
+      "TeleKey is built by one person, and free on your own key. If it saves you time, a beer is a kind way to say so. Pay what you like. Until you do, TeleKey asks now and then; “I already did” stops that.";
+  }
+
+  return (
+    <div className="row column">
+      <div className="row tight">
+        <div className="rowText">
+          <span className="rowLabel">{tipped ? "Thanks for the beer!" : "Buy me a beer"}</span>
+          <span className="rowHint">{hint}</span>
+        </div>
+      </div>
+      <div className="supportActions">
+        <button className="primary" onClick={buy}>
+          {tipped ? "Buy another" : "Buy me a beer"}
+        </button>
+        {!signedIn && !tipped && (
+          <button className="ghost" onClick={alreadyDid}>
+            I already did
+          </button>
+        )}
+      </div>
+      {problem && <p className="problem">{problem}</p>}
+    </div>
   );
 }
 
@@ -665,14 +749,12 @@ function AccountRow({
         {packs.length > 0 ? (
           <div className="packRow">
             {packs.map((pack) => (
-              <button
+              <PackButton
                 key={pack.id}
-                className="primary"
+                pack={pack}
                 disabled={busy}
-                onClick={() => void buy(pack)}
-              >
-                Buy {pack.name}
-              </button>
+                onBuy={() => void buy(pack)}
+              />
             ))}
           </div>
         ) : (

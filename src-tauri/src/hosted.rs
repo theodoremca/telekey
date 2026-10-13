@@ -9,6 +9,7 @@ use serde::Deserialize;
 use crate::audio::{encode_wav_16bit_mono, Clip, TARGET_SAMPLE_RATE};
 use crate::polish::{Polished, Polisher, Style};
 use crate::session;
+use crate::tips::Payer;
 use crate::transcribe::{Transcription, TranscriptionContext, Transcriber};
 use crate::usage::Units;
 
@@ -53,6 +54,10 @@ fn prompt_header(context: &TranscriptionContext, others: usize) -> Option<String
 }
 
 impl Transcriber for HostedTranscriber {
+    fn payer(&self) -> Option<Payer> {
+        Some(Payer::Credits)
+    }
+
     fn transcribe(&self, clip: &Clip, context: &TranscriptionContext) -> Result<Transcription> {
         let wav = encode_wav_16bit_mono(&clip.samples, TARGET_SAMPLE_RATE);
         let token = session::fresh_id_token()?;
@@ -225,7 +230,13 @@ pub struct HostedAccount {
 pub struct CreditPack {
     pub id: String,
     pub name: String,
+    /// What the pack costs.
     pub cents: i64,
+    /// What the pack adds to the balance, when that is more than it costs
+    /// (a bonus: the $25 pack gives $27.50). Absent from an older server, and
+    /// from a pack with no bonus; the window then shows the price alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credit_cents: Option<i64>,
 }
 
 pub fn fetch_account() -> Result<HostedAccount> {
@@ -389,5 +400,31 @@ mod tests {
             hosted_error(413, body).to_string(),
             "That recording is too long to transcribe. Try a shorter one."
         );
+    }
+
+    #[test]
+    fn an_older_server_sends_packs_without_a_bonus() {
+        let account: HostedAccount = serde_json::from_str(
+            r#"{"email":"a@b.c","balanceCents":500,"packs":[{"id":"starter","name":"$5","cents":500}]}"#,
+        )
+        .unwrap();
+        assert_eq!(account.packs[0].credit_cents, None);
+
+        // And it is not invented on the way back to the window.
+        let json = serde_json::to_value(&account.packs[0]).unwrap();
+        assert!(json.get("creditCents").is_none(), "{json}");
+    }
+
+    #[test]
+    fn a_pack_with_a_bonus_carries_it_to_the_window_in_camel_case() {
+        let account: HostedAccount = serde_json::from_str(
+            r#"{"email":null,"balanceCents":0,"packs":[
+                {"id":"plus","name":"$25","cents":2500,"creditCents":2750}]}"#,
+        )
+        .unwrap();
+        assert_eq!(account.packs[0].credit_cents, Some(2750));
+        let json = serde_json::to_value(&account.packs[0]).unwrap();
+        assert_eq!(json["creditCents"], 2750);
+        assert_eq!(json["cents"], 2500);
     }
 }

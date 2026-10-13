@@ -158,6 +158,12 @@ body {
   background: var(--text-dim);
 }
 
+/* The beer prompt is a warm aside, not an outcome: the dictation's amber, with
+   no halo, since nothing is being recorded. */
+[data-state="nudge"] .indicator {
+  background: var(--voice);
+}
+
 /* ---- the trace ------------------------------------------------------- */
 
 .trace {
@@ -210,7 +216,8 @@ body {
 [data-state="inserted"] .trace,
 [data-state="failed"] .trace,
 [data-state="cancelled"] .trace,
-[data-state="notice"] .trace {
+[data-state="notice"] .trace,
+[data-state="nudge"] .trace {
   display: none;
 }
 
@@ -229,7 +236,8 @@ body {
 [data-state="inserted"] .timer,
 [data-state="failed"] .timer,
 [data-state="cancelled"] .timer,
-[data-state="notice"] .timer {
+[data-state="notice"] .timer,
+[data-state="nudge"] .timer {
   display: none;
 }
 
@@ -249,11 +257,13 @@ body {
 [data-state="inserted"] .message,
 [data-state="failed"] .message,
 [data-state="cancelled"] .message,
-[data-state="notice"] .message {
+[data-state="notice"] .message,
+[data-state="nudge"] .message {
   display: -webkit-box;
 }
 
-[data-state="notice"] .message {
+[data-state="notice"] .message,
+[data-state="nudge"] .message {
   color: var(--text);
 }
 
@@ -275,7 +285,8 @@ body {
 /* The failure capsule needs room for a sentence the user must actually read;
    so does a notice about a microphone that dropped out. */
 .capsule[data-state="failed"],
-.capsule[data-state="notice"] {
+.capsule[data-state="notice"],
+.capsule[data-state="nudge"] {
   height: auto;
   min-height: 44px;
   padding: 12px 16px;
@@ -284,7 +295,8 @@ body {
 }
 
 [data-state="failed"] .indicator,
-[data-state="notice"] .indicator {
+[data-state="notice"] .indicator,
+[data-state="nudge"] .indicator {
   margin-top: 5px;
 }
 
@@ -292,6 +304,19 @@ body {
    clickable only for that failure, so this matters only then. */
 .capsule[data-state="failed"] {
   pointer-events: auto;
+}
+
+/* The beer prompt, where the capsule can take a click: the whole capsule is the
+   button, and says so by lifting a little under the pointer. Where it cannot
+   (Linux) it is plain text and shows no such affordance. */
+.capsule[data-state="nudge"][data-action="true"] {
+  pointer-events: auto;
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+
+.capsule[data-state="nudge"][data-action="true"]:hover {
+  background: linear-gradient(180deg, #2a2837, var(--ink-lift));
 }
 
 /* ---- stop ------------------------------------------------------------ */

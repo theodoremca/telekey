@@ -26,6 +26,7 @@ use crate::permissions::{self, Permission, Platform};
 use crate::hosted::{HostedPolisher, HostedTranscriber};
 use crate::polish::{OpenAiPolisher, Polisher};
 use crate::session;
+use crate::tips::{self, Payer, Tips};
 use crate::usage::{Units, Usage};
 use crate::settings::{self, Settings};
 use crate::transcribe::{OpenAiTranscriber, Transcription, TranscriptionContext, Transcriber};
@@ -46,6 +47,10 @@ pub enum Status {
     /// changed, or dropped out part-way. The overlay shows it only when no
     /// dictation owns the capsule, and never in place of a result.
     Notice { text: String },
+    /// The beer prompt (`tips.rs`). Held to the same rules as a notice, and
+    /// last in line behind one. `clickable` is whether the capsule can take a
+    /// click on this OS; when it cannot, `text` says where to go instead.
+    Nudge { text: String, clickable: bool },
 }
 
 /// Anything that wants to know what the pipeline is doing — in the app, the
@@ -110,6 +115,14 @@ pub struct Pipeline {
     /// screen" is on. Taken with the dictation it belongs to, so a slow read
     /// can never be used by the next one.
     screen: Mutex<Option<Arc<ContextSlot>>>,
+    /// The beer prompt's count (`tips.rs`). In memory only until the app gives
+    /// it a file.
+    tips: Arc<Tips>,
+    /// Who Instant is streaming for, known when the stream opens.
+    live_payer: Mutex<Option<Payer>>,
+    /// Who paid for the dictation that last transcribed, taken when it settles.
+    /// Cleared at every key-down, so a cancelled one cannot leak into the next.
+    paid_by: Mutex<Option<Payer>>,
 }
 
 /// How long the transcribe step waits for a screen read still in progress.
@@ -152,7 +165,20 @@ impl Pipeline {
             live_route: Mutex::new(None),
             instant_note: Mutex::new(None),
             screen: Mutex::new(None),
+            tips: Arc::new(Tips::in_memory()),
+            live_payer: Mutex::new(None),
+            paid_by: Mutex::new(None),
         }
+    }
+
+    /// Keep the beer prompt's count in this file's care instead of in memory.
+    pub fn with_tips(mut self, tips: Arc<Tips>) -> Self {
+        self.tips = tips;
+        self
+    }
+
+    pub fn tips(&self) -> &Arc<Tips> {
+        &self.tips
     }
 
     /// Swap in another output control. Tests use it to watch mute and restore
@@ -517,6 +543,9 @@ impl Pipeline {
     }
 
     fn settle_transcribe(&self, outcome: Result<Option<String>, String>) {
+        // Whether the beer prompt is due: only after a dictation that was
+        // pasted, and only for someone on their own key.
+        let mut nudge = false;
         if self.cancelled.load(Ordering::SeqCst) {
             self.announce_cancelled();
         } else {
@@ -524,6 +553,7 @@ impl Pipeline {
                 Ok(Some(text)) => {
                     self.remember(&text);
                     self.announce(Status::Inserted { text });
+                    nudge = self.count_for_tips();
                 }
                 Ok(None) => self.announce_cancelled(),
                 Err(message) => {
@@ -542,9 +572,29 @@ impl Pipeline {
         if let Some(text) = self.instant_note.lock().take() {
             self.sink.publish(Status::Notice { text });
         }
+        // Last of all, and behind a notice if there is one: it is the least
+        // important thing the capsule will ever say.
+        if nudge {
+            let clickable = settings::pill_supported();
+            self.sink.publish(Status::Nudge {
+                text: tips::nudge_text(clickable).to_string(),
+                clickable,
+            });
+        }
+    }
+
+    /// Count the dictation that just landed toward the beer prompt, and say
+    /// whether the prompt is due. Never fatal, like history and usage.
+    fn count_for_tips(&self) -> bool {
+        let payer = self.paid_by.lock().take();
+        self.tips
+            .after_dictation(payer, chrono::Local::now().date_naive())
     }
 
     fn begin(&self) {
+        *self.paid_by.lock() = None;
+        *self.live_payer.lock() = None;
+
         // Without the permission the stream opens on silence, and that silence
         // would be uploaded, billed and reported as "nothing was transcribed".
         // Opening the device is what makes macOS ask, so a never-asked user
@@ -611,6 +661,10 @@ impl Pipeline {
         if let Some(tap) = tap {
             match self.live_route() {
                 Some(route) => {
+                    *self.live_payer.lock() = Some(match route {
+                        Route::OpenAi { .. } => Payer::OwnKey,
+                        Route::Relay { .. } => Payer::Credits,
+                    });
                     let session = LiveSession::start(route, tap, self.context(), screen);
                     *self.live.lock() = Some(Box::new(session));
                 }
@@ -699,6 +753,7 @@ impl Pipeline {
                         billed_seconds = transcription.units.live_transcribe_seconds,
                         "instant transcript"
                     );
+                    *self.paid_by.lock() = self.live_payer.lock().take();
                     return Ok(Some(transcription));
                 }
                 Err(err) => {
@@ -740,6 +795,7 @@ impl Pipeline {
             billed_seconds = transcription.units.transcribe_seconds,
             "transcription returned"
         );
+        *self.paid_by.lock() = transcriber.payer();
         Ok(Some(transcription))
     }
 
@@ -1831,6 +1887,212 @@ mod tests {
             !sink.seen.lock().iter().any(|s| *s == Status::Cancelled),
             "idle cancel leaked a status: {:?}",
             sink.seen.lock()
+        );
+    }
+
+    // ---- the beer prompt ---------------------------------------------------
+
+    fn tipping_pipeline() -> (Pipeline, Arc<RecordingSink>) {
+        let sink = Arc::new(RecordingSink::default());
+        let pipeline = Pipeline::new(
+            Settings::default(),
+            Arc::clone(&sink) as Arc<dyn StatusSink>,
+            test_history(),
+            test_usage(),
+        )
+        .with_tips(Arc::new(Tips::in_memory()));
+        (pipeline, sink)
+    }
+
+    /// A dictation that finished and was pasted, paid for by `payer`.
+    fn settle_paid_by(pipeline: &Pipeline, payer: Option<Payer>) {
+        *pipeline.paid_by.lock() = payer;
+        pipeline.settle_transcribe(Ok(Some("hello".into())));
+    }
+
+    fn nudges(sink: &RecordingSink) -> usize {
+        sink.seen
+            .lock()
+            .iter()
+            .filter(|status| matches!(status, Status::Nudge { .. }))
+            .count()
+    }
+
+    #[test]
+    fn the_second_own_key_dictation_asks_for_a_beer_after_its_result() {
+        let (pipeline, sink) = tipping_pipeline();
+
+        settle_paid_by(&pipeline, Some(Payer::OwnKey));
+        assert_eq!(nudges(&sink), 0, "the first one is left alone");
+
+        settle_paid_by(&pipeline, Some(Payer::OwnKey));
+        let clickable = settings::pill_supported();
+        let seen = sink.seen.lock();
+        assert_eq!(
+            seen.last(),
+            Some(&Status::Nudge {
+                text: tips::nudge_text(clickable).to_string(),
+                clickable,
+            }),
+            "it is the last thing said"
+        );
+        let inserted = seen
+            .iter()
+            .rposition(|status| matches!(status, Status::Inserted { .. }))
+            .unwrap();
+        assert_eq!(inserted + 1, seen.len() - 1, "straight after the result");
+    }
+
+    #[test]
+    fn once_asked_it_does_not_ask_again_the_same_day() {
+        let (pipeline, sink) = tipping_pipeline();
+        for _ in 0..12 {
+            settle_paid_by(&pipeline, Some(Payer::OwnKey));
+        }
+        assert_eq!(nudges(&sink), 1);
+    }
+
+    #[test]
+    fn nobody_on_credits_is_ever_asked() {
+        let (pipeline, sink) = tipping_pipeline();
+        for _ in 0..12 {
+            settle_paid_by(&pipeline, Some(Payer::Credits));
+        }
+        assert_eq!(nudges(&sink), 0);
+    }
+
+    #[test]
+    fn a_dictation_whose_payer_is_unknown_is_not_counted() {
+        let (pipeline, sink) = tipping_pipeline();
+        for _ in 0..12 {
+            settle_paid_by(&pipeline, None);
+        }
+        assert_eq!(nudges(&sink), 0);
+    }
+
+    #[test]
+    fn having_tipped_ends_the_prompt() {
+        let (pipeline, sink) = tipping_pipeline();
+        pipeline.tips().mark_tipped();
+        for _ in 0..12 {
+            settle_paid_by(&pipeline, Some(Payer::OwnKey));
+        }
+        assert_eq!(nudges(&sink), 0);
+    }
+
+    #[test]
+    fn a_failed_or_cancelled_dictation_is_not_counted() {
+        let (pipeline, sink) = tipping_pipeline();
+        for _ in 0..6 {
+            *pipeline.paid_by.lock() = Some(Payer::OwnKey);
+            pipeline.settle_transcribe(Err("nothing was transcribed".into()));
+            *pipeline.paid_by.lock() = Some(Payer::OwnKey);
+            pipeline.settle_transcribe(Ok(None));
+        }
+        assert_eq!(nudges(&sink), 0);
+        // And they did not use up the two that must come first.
+        settle_paid_by(&pipeline, Some(Payer::OwnKey));
+        assert_eq!(nudges(&sink), 0);
+        settle_paid_by(&pipeline, Some(Payer::OwnKey));
+        assert_eq!(nudges(&sink), 1);
+    }
+
+    #[test]
+    fn the_beer_prompt_comes_after_a_notice_not_before_it() {
+        let (pipeline, sink) = tipping_pipeline();
+        settle_paid_by(&pipeline, Some(Payer::OwnKey));
+        *pipeline.device_warning.lock() = Some("Microphone disconnected".into());
+        settle_paid_by(&pipeline, Some(Payer::OwnKey));
+
+        let seen = sink.seen.lock();
+        let kinds: Vec<&str> = seen
+            .iter()
+            .skip(1)
+            .map(|status| match status {
+                Status::Inserted { .. } => "inserted",
+                Status::Notice { .. } => "notice",
+                Status::Nudge { .. } => "nudge",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(kinds, vec!["inserted", "notice", "nudge"]);
+    }
+
+    #[test]
+    fn nothing_here_ever_says_credit() {
+        // The overlay opens Buy credits for a failure that says so; this keeps
+        // the prompt's words clear of the one reserved there.
+        for clickable in [true, false] {
+            assert!(!tips::nudge_text(clickable).to_lowercase().contains("credit"));
+        }
+        assert!(!tips::THANKS_NOTICE.to_lowercase().contains("credit"));
+    }
+
+    #[test]
+    fn standard_records_who_paid_from_the_transcriber() {
+        struct PaidBy(Payer);
+        impl Transcriber for PaidBy {
+            fn transcribe(
+                &self,
+                _clip: &Clip,
+                _context: &TranscriptionContext,
+            ) -> Result<Transcription> {
+                Ok(Transcription {
+                    text: "hi".into(),
+                    units: Units::transcription(1),
+                })
+            }
+            fn payer(&self) -> Option<Payer> {
+                Some(self.0)
+            }
+        }
+
+        for payer in [Payer::OwnKey, Payer::Credits] {
+            let (pipeline, _) = tipping_pipeline();
+            inject(&pipeline, Arc::new(PaidBy(payer)));
+            pipeline.transcribe(half_second_clip(), None, None, 0).unwrap();
+            assert_eq!(*pipeline.paid_by.lock(), Some(payer));
+        }
+
+        // A transcriber that does not say leaves it unknown, which is "no".
+        let (pipeline, _) = tipping_pipeline();
+        inject(
+            &pipeline,
+            ScriptedTranscriber::immediate("hi", Units::transcription(1)),
+        );
+        pipeline.transcribe(half_second_clip(), None, None, 0).unwrap();
+        assert_eq!(*pipeline.paid_by.lock(), None);
+    }
+
+    #[test]
+    fn instant_records_who_paid_from_the_route_it_streamed_on() {
+        for payer in [Payer::OwnKey, Payer::Credits] {
+            let (pipeline, _) = tipping_pipeline();
+            *pipeline.live_payer.lock() = Some(payer);
+            let (stream, _) = ScriptedStream::ok("streamed", 2);
+            pipeline
+                .transcribe(half_second_clip(), Some(stream), None, 0)
+                .unwrap();
+            assert_eq!(*pipeline.paid_by.lock(), Some(payer));
+        }
+    }
+
+    #[test]
+    fn the_real_transcribers_say_who_pays() {
+        let own = crate::transcribe::OpenAiTranscriber::new("sk-test").unwrap();
+        assert_eq!(Transcriber::payer(&own), Some(Payer::OwnKey));
+    }
+
+    #[test]
+    fn the_nudge_status_reaches_the_webview_in_camel_case() {
+        let json = serde_json::to_value(Status::Nudge {
+            text: "hi".into(),
+            clickable: true,
+        })
+        .unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "kind": "nudge", "text": "hi", "clickable": true })
         );
     }
 }

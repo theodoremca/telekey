@@ -7,7 +7,8 @@
 //! spike measured the final text arriving ~0.9 s after the commit.
 //!
 //! Two routes, one protocol. With the user's own key the app talks straight
-//! to OpenAI. With TeleKey credits it talks to TeleKey's relay (`relay/`),
+//! to OpenAI. With TeleKey credits it talks to TeleKey's relay (`relay/` in the
+//! private `telekey-server` repository),
 //! which speaks the same protocol, checks the sign-in and charges for the
 //! final transcript. Either way this module sends the same four events and
 //! reads the same few back.
