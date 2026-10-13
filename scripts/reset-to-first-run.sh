@@ -11,7 +11,9 @@
 #      This must happen BEFORE the app is deleted: tccutil finds the app
 #      through Launch Services and fails with -10814 once it is gone.
 #   3. resets the signed-in account's staging credits, via
-#      functions/scripts/reset-staging-user.cjs (staging only, by construction)
+#      functions/scripts/reset-staging-user.cjs in the private telekey-server
+#      repository (staging only, by construction), found at ../telekey-server
+#      or $TELEKEY_SERVER_DIR
 #   4. removes the saved sign-in, and any stored OpenAI key, from the Keychain
 #   5. deletes the app and every file it keeps, old Flowtype leftovers
 #      included: the app adopts those on its first launch, which would quietly
@@ -33,6 +35,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# The server lives in its own, private repository, checked out next to this one.
+SERVER="${TELEKEY_SERVER_DIR:-$ROOT/../telekey-server}"
 # System tools first, as run.sh does: some Python distributions shadow them.
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
@@ -237,13 +241,16 @@ tell whose credits to reset. Run it again with --email <address>, or with --keep
   else
     command -v node >/dev/null 2>&1 ||
       die "Resetting credits needs Node, which is not installed. Install it, or pass --keep-credits."
-    [[ -d "$ROOT/functions/node_modules/firebase-admin" ]] ||
-      die "Resetting credits needs firebase-admin. Run 'cd functions && npm install', or pass --keep-credits."
+    [[ -d "$SERVER/functions" ]] ||
+      die "Resetting credits needs the private telekey-server repository at $SERVER
+(clone it there, or set TELEKEY_SERVER_DIR), or pass --keep-credits."
+    [[ -d "$SERVER/functions/node_modules/firebase-admin" ]] ||
+      die "Resetting credits needs firebase-admin. Run 'cd $SERVER/functions && npm install', or pass --keep-credits."
 
     # Read-only lookup, so the plan shows exactly whose credits go before
     # anything is deleted, and a credentials problem stops the run here rather
     # than halfway through.
-    if ! lookup="$(cd "$ROOT/functions" && node scripts/reset-staging-user.cjs --email "$EMAIL" --dry-run 2>&1)"; then
+    if ! lookup="$(cd "$SERVER/functions" && node scripts/reset-staging-user.cjs --email "$EMAIL" --dry-run 2>&1)"; then
       if [[ "$(kv account "$lookup")" == ambiguous ]]; then
         die "More than one staging account has the email $EMAIL, so this will not guess which to reset:
 $lookup
@@ -362,11 +369,11 @@ done
 
 # 3. Credits.
 if [[ -n "$credits_account" ]]; then
-  if output="$(cd "$ROOT/functions" && node scripts/reset-staging-user.cjs --email "$EMAIL" 2>&1)" &&
+  if output="$(cd "$SERVER/functions" && node scripts/reset-staging-user.cjs --email "$EMAIL" 2>&1)" &&
     [[ "$(kv deleted "$output")" == yes ]]; then
     printf 'Reset the staging account for %s\n' "$EMAIL"
   else
-    failures+=("staging credits: ${output:-no output}. Retry with: cd functions && node scripts/reset-staging-user.cjs --email $EMAIL")
+    failures+=("staging credits: ${output:-no output}. Retry with: cd $SERVER/functions && node scripts/reset-staging-user.cjs --email $EMAIL")
   fi
 fi
 

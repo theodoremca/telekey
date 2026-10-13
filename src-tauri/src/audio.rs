@@ -590,12 +590,15 @@ fn resample_to_target(samples: Vec<f32>, source_rate: u32) -> Result<Vec<f32>> {
 /// fixed 44 bytes for this format; tests decode the result with `hound` to prove
 /// it round-trips.
 ///
-/// The byte layout is a wire contract. The server accepts only this exact WAV
-/// (`uploadProblem` in functions/src/audio.ts): canonical 44-byte header, PCM,
+/// The byte layout is a wire contract. The server (the private repository
+/// `telekey-server`) accepts only this exact WAV (`uploadProblem` in its
+/// functions/src/audio.ts): canonical 44-byte header, PCM,
 /// mono, 16 kHz, 16-bit, lengths equal to the real ones, nothing after the
 /// data. It refuses anything else before OpenAI is paid, so a change here that
 /// the server does not know about makes every hosted dictation fail. Both sides
-/// are held to `functions/test/fixtures/app-recording.wav` (the tests
+/// are held to the same recording, kept byte-identical in both repositories:
+/// `src-tauri/tests/fixtures/app-recording.wav` here and
+/// `functions/test/fixtures/app-recording.wav` there (the tests
 /// `wav_matches_the_servers_golden_recording` here and "the committed recording
 /// is the generator's output" there). Change it only together with the server,
 /// and keep the server accepting the old layout for as long as apps that write
@@ -671,12 +674,13 @@ mod tests {
     /// checks the very same file, so the two encoders cannot drift apart
     /// unnoticed. The samples are a sawtooth, `((i % 100) - 50) * 100` for
     /// i in 0..1600, as i16; as f32 they are `value / 32767`, which this encoder
-    /// scales back to the same integers. The generator is in
-    /// functions/test/audio.test.mjs (`appRecording`).
+    /// scales back to the same integers. The generator is in the server's
+    /// functions/test/audio.test.mjs (`appRecording`); the file here is a
+    /// byte-identical copy of the server's fixture.
     #[test]
     fn wav_matches_the_servers_golden_recording() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../functions/test/fixtures/app-recording.wav");
+            .join("tests/fixtures/app-recording.wav");
         let golden = std::fs::read(&path)
             .unwrap_or_else(|err| panic!("cannot read the golden recording {}: {err}", path.display()));
 
@@ -689,7 +693,8 @@ mod tests {
         assert_eq!(
             bytes, golden,
             "encode_wav_16bit_mono no longer writes the bytes the server accepts \
-             (functions/src/audio.ts uploadProblem, functions/test/fixtures/app-recording.wav)"
+             (telekey-server: functions/src/audio.ts uploadProblem; keep \
+             src-tauri/tests/fixtures/app-recording.wav identical to its fixture)"
         );
     }
 

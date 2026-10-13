@@ -8,10 +8,13 @@ What to do, in what order, and why. Each phase says what "done" looks like.
 
 - The app works on your Mac. Dictation, overlay, history, usage, formatting.
 - **Cancel** is in: overlay ×, Escape, never pastes.
-- **Hosted credits** are in the repo (Firebase Auth + Firestore + Functions +
-  `web/`) but not deployed — needs your Firebase project, Stripe prices, and
-  the OpenAI key in `functions/.env`.
-- It is public on GitHub under MIT, with two releases.
+- **Hosted credits** are built. The app and `web/` are in this repo; the server
+  (Firebase Auth + Firestore + Functions, and the Instant relay) is in the
+  separate private repository `telekey-server`. Billing is exact, down to the
+  fraction of a cent, and packs start at $10. Going live in production is
+  still yours: see Phase 6.
+- The app and website are public on GitHub: MIT up to v0.3.0, then source
+  available under FSL-1.1-MIT. The server is private, all rights reserved.
 - Windows compiles in CI but nobody has run it. Linux has not been tried.
 - Hold-Fn is built. The settings bug that stopped it saving is fixed. **You have
   not yet confirmed Fn actually triggers a recording.**
@@ -22,9 +25,12 @@ These are settled so we do not re-argue them.
 
 | Decision | Choice |
 |---|---|
-| Open source or product? | **Both.** The free version stays open. A paid version comes later. |
+| Public code or product? | **Both.** The app and website are public and free with your own key. The paid version is the hosted service, whose server is private. |
+| Licence | **FSL-1.1-MIT** (source available, "fair source") for everything after v0.3.0; MIT up to v0.3.0. Licensor Theodore Imonigie. Each version becomes MIT two years after release. Never call it "open source" except for the old MIT releases. |
+| Trademark | "TeleKey" and the logo are trademarks (™, unregistered) of EntityQ LLC, the business that sells the service. The licence grants no trademark rights beyond naming TeleKey as the code's origin. |
 | What is the paid version? | **The same app, no OpenAI key required.** Sign in, buy credits, we proxy `gpt-transcribe`. BYOK stays free. |
-| Monthly or credits? | **Credits (USD cents).** Packs via Stripe Checkout. Not a monthly sub for v1. |
+| Monthly or credits? | **Credits (US dollars, never expire).** Packs via Stripe Checkout, minimum $10: $10 gives $10.00, $25 gives $27.50 (+10%), $50 gives $57.50 (+15%). Standard 1.35¢ a minute, Instant 5.1¢. Not a monthly sub for v1. |
+| What if someone uses their own key? | **A tip jar, not a paywall.** "Buy me a beer" (a pay-what-you-want Stripe link). After an own-key user's second dictation the app offers it, then at most once a day until they tip or say they already did. A clickable prompt; the app never opens the browser by itself. |
 | Which platforms? | **macOS, Windows, Linux.** Not iOS — see below. |
 | Who makes the content? | You. |
 
@@ -231,25 +237,33 @@ download.
 
 ---
 
-## Phase 6 — Hosted credits — **in the repo, not live**
+## Phase 6 — Hosted credits — **built; the server is private; going live is yours**
 
 **What:** Sign in with Google or a magic link. TeleKey uses one shared OpenAI
 key in Cloud Functions. Firestore holds `{staging|production}-users/{uid}.balanceCents`.
 Stripe Checkout buys packs. BYOK still talks to OpenAI directly.
 
 **Done in code:** cancel overlay; `HostedTranscriber` / `HostedPolisher`;
-Keychain session via `telekey://auth`; Settings + Setup Sign in; `functions/`
-(`staging` + `api` exports) and `web/`.
+Keychain session via `telekey://auth`; Settings + Setup Sign in; the website
+(`web/`); and, in the private `telekey-server` repository, `functions/`
+(`staging` + `api` exports) and `relay/`. Billing is exact (a dictation is
+priced in fractions of a cent, with the remainder carried, and nothing bills
+zero), and the packs are $10, $25 and $50.
 
-**Still yours to do:** Blaze on project `telekey-app`; copy `functions/.env.example`
-to `functions/.env` and fill OpenAI + Stripe keys; write `staging-packs` /
-`production-packs` from `functions/packs.example.json`; point Stripe test/live
-webhooks at `…/staging/stripeWebhook` and `…/api/stripeWebhook`; deploy Functions
-and `web/`; fill desktop `.env` + `.env.staging` (public URLs only).
+**Still yours to do:** everything that needs your accounts, all in
+`telekey-server` (its `CLAUDE.md` has the commands): Blaze on project
+`telekey-app`; fill `functions/.env` from `functions/.env.example` with the
+OpenAI and Stripe keys; seed `staging-packs` / `production-packs` from
+`functions/packs.example.json` (the $10 / $25 / $50 packs); point Stripe
+test/live webhooks at `…/staging/stripeWebhook` and `…/api/stripeWebhook`;
+deploy the Functions and both relays; deploy `web/` from this repo to
+`www.telekey.app`; then tag a plain `vX.Y.Z` so production builds ship.
 `minInstances` stays 0.
 
-**What free users keep:** everything. Bring-your-own-key stays free, open, and
-unrestricted. Hosted mode is the paid convenience, not a feature gate.
+**What free users keep:** everything. Bring-your-own-key stays free and
+unrestricted. Hosted mode is the paid convenience, not a feature gate. People
+on their own key are only ever asked, politely and with a click, to buy the
+author a beer.
 
 ---
 
@@ -263,10 +277,11 @@ unrestricted. Hosted mode is the paid convenience, not a feature gate.
   Windows, off on Linux, whose overlay takes focus when clicked.
 - **Instant** streams audio to `gpt-live-transcribe` while you speak: text 0.7–1.1 s
   after release, against 3–4 s, at about 4× the price. Off by default; falls back
-  to Standard on any failure. Credits go through `relay/` on Cloud Run.
+  to Standard on any failure. Credits go through the Instant relay, a Cloud Run
+service in the private `telekey-server` repository.
 
-Still to do: deploy the production relay before the first release with
-Instant; a real two-monitor and click-to-dictate check on Windows; a way to
+Still to do: deploy the production relay (from `telekey-server`) before the
+first release with Instant; a real two-monitor and click-to-dictate check on Windows; a way to
 make the Linux overlay non-activating so the pill can ship there. Plan,
 decisions and measurements: [docs/next-features.md](docs/next-features.md).
 
@@ -290,6 +305,49 @@ RELEASING.md › Updates.
 
 ---
 
+## Phase 10 — Read aloud — **next, not started**
+
+**What:** The opposite of dictation. Highlight text anywhere (a web page, a PDF,
+Mail, a code comment) and TeleKey reads it out loud with a text-to-speech model.
+
+**How it feels:**
+- **A shortcut.** Select text, press the shortcut, and it starts speaking.
+  Rebindable like the dictation shortcut, with its own stop key (and pressing
+  it again stops).
+- **A small floating button.** When text is selected, a small "Read aloud"
+  button appears near the selection, like a nudge hanging beside it, and
+  nowhere else. Click it and the text is read. It appears only while something
+  is highlighted and goes away when the selection does. It sits close to the
+  dictation pill's design and, like the pill, must be non-activating: it never
+  steals focus or clears the selection (CLAUDE.md rule 7).
+
+**Platforms:** macOS and Windows first. Linux later, for the same reason the
+pill is off there: it needs a non-activating overlay (rule 33).
+
+**Provider: not decided.** Decide on price per character, voice quality, how
+soon the first audio plays, and whether it runs on the user's own key as well
+as on credits. Nothing is built until that is chosen; do not add a placeholder
+provider.
+
+**Open questions for when it starts:**
+- Reading the selection. Accessibility already gives the selected text on
+  macOS (`context.rs` reads through the same grant) and UI Automation does on
+  Windows; apps that expose nothing (Electron, some PDF viewers) may need a
+  copy-and-restore through the clipboard, as `inject.rs` already does for
+  paste.
+- Privacy. The selected text leaves the computer for the provider, as audio
+  does today. The privacy policy, Terms and README must say so before it
+  ships, and it must never read from password fields (rule 26).
+- Billing. Priced exactly like dictation: derived, never stored, no
+  zero-cost reads, with its own rate on credits and no charge on a user's own
+  key.
+
+**Done when:** on both platforms, selecting a paragraph in another app and
+pressing the shortcut, or clicking the button, reads it aloud without the
+selection or focus changing, and it can be stopped at any moment.
+
+---
+
 ## The order, and roughly how long
 
 | Phase | Effort | Needs from you |
@@ -300,8 +358,10 @@ RELEASING.md › Updates.
 | 3b. Local models | 4–5 days | — (models confirmed) |
 | 4. Windows + Linux | 3 days | Your Windows PC; a Linux machine or friend |
 | 5. Content | ongoing | You |
-| 6. Hosted credits | code in; deploy is yours | Firebase project, Stripe, OpenAI secret |
+| 6. Hosted credits | built; going live is yours | Firebase project, Stripe, OpenAI secret (all in `telekey-server`) |
+| 10. Read aloud | not estimated; provider first | A provider choice |
 
 **Start with a real hold-speak-release on the installed app, including cancel.
-Then deploy hosted credits when the Firebase project exists.** Everything else
-(Fn check, notarise, OpenRouter, local models) waits.
+Then deploy hosted credits when the Firebase project exists.** Read aloud is
+the next feature after that launch. Everything else (Fn check, notarise,
+OpenRouter, local models) waits.

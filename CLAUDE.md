@@ -8,6 +8,14 @@ Read this file first. It holds everything that was learned the hard way and is
 not obvious from the code. `README.md` is for users, `RELEASING.md` for shipping,
 `ROADMAP.md` for what comes next.
 
+This repository is the desktop app and the website, **public**, licensed
+FSL-1.1-MIT (see Conventions). The server behind the paid credits (the Cloud
+Functions API in `functions/` and the Instant relay in `relay/`) lives in a
+separate **private** repository, `telekey-server`, checked out at
+`../telekey-server` (`TELEKEY_SERVER_DIR` overrides). Its `CLAUDE.md` holds
+everything server-side, including the full text of rules 24, 27, 32, 35 and 36
+below. The app reaches it over HTTP only.
+
 ---
 
 ## Commands
@@ -40,8 +48,10 @@ it shows the plan and asks first. Permissions are reset *before* the app is
 deleted: `tccutil` finds the app through Launch Services and fails (-10814) once
 it is gone. Every path is spelled out; never add a wildcard, because a glob on
 `flowtype` under `~/Library` also matches Claude Code's cache for this repo. The
-credits helper, `functions/scripts/reset-staging-user.cjs`, has the project and
-the `staging-users` collection hard-coded, so it cannot reach production.
+credits helper, `functions/scripts/reset-staging-user.cjs` in the private
+`telekey-server` repo (found at `../telekey-server` or `$TELEKEY_SERVER_DIR`;
+it also needs `npm install` there, or pass `--keep-credits`), has the project
+and the `staging-users` collection hard-coded, so it cannot reach production.
 
 ### Build without installing
 
@@ -151,7 +161,9 @@ Next.js Pages Router, Tailwind 4, GSAP. Pages are thin; the landing page is
 `web/screens/landing/`. Every word, link and figure is in `web/data/site.ts`,
 and each claim there traces back to `README.md` or to code — the credits rate is
 derived from `MARKUP`, `TRANSCRIBE_PER_MINUTE` and `LIVE_TRANSCRIBE_PER_MINUTE`
-in `functions/src/pricing.ts`, so re-check it when any of them changes.
+in `functions/src/pricing.ts` in the private `telekey-server` repo, and the
+credit packs are the `*-packs` Firestore documents seeded from there, so
+re-check the site when either changes.
 
 Scroll reveals are declarative (`data-reveal="land|key|capsule|lamp|rise|wipe"`,
 see `web/lib/sectionReveal.ts`). Content is pre-hidden with `visibility` only,
@@ -160,54 +172,20 @@ pre-hide with `opacity` or a CSS `transform`, and never `gsap.from()` on
 pre-hidden content: both leave the page blank with a clean console. The hero
 demo never touches a microphone; its trace is drawn, and the page says so.
 
-### Backend (`functions/`)
+### Backend and Instant relay (private repo)
 
-```bash
-cd functions && npm test                        # builds, then the pure tests in test/
-firebase deploy --only functions:staging        # or functions:api for production
-```
+The Cloud Functions API (`functions/`) and the Instant relay (`relay/`) are in
+the private `telekey-server` repository, not here. Its `CLAUDE.md` has their
+tests, deploy commands (the gcloud-credentials trick for the Firebase CLI, the
+revision check), the staging tester list and the Stripe, Firestore and webhook
+setup. Read it before touching anything that crosses the wire.
 
-The Firebase CLI on Theodore's Mac is signed in as an account with no access
-to `telekey-app`; his gcloud login has it. Deploy through gcloud's credentials
-with a throwaway CLI config, so the CLI falls back to them:
-
-```bash
-XDG_CONFIG_HOME=$(mktemp -d) \
-GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcloud/application_default_credentials.json \
-firebase deploy --only functions:staging --project telekey-app --non-interactive
-```
-
-This way the CLI has been seen to wait 25 minutes and report "Task index 0
-failed: timed out" for a deploy that had finished in two. Before redeploying,
-check `gcloud run revisions list --service api --region us-east1 --project
-telekey-app` (or `--service staging`): a new revision, Ready and serving, means
-it worked.
-
-**Staging is invite-only.** Every authenticated route on `staging` goes through
-`requireMember`, which refuses (403, code `not_a_tester`) any email not in
-`STAGING_ALLOWED_EMAILS` in `functions/.env`, before a user document or the
-welcome credit is created. The email must be Firebase-verified, and an empty
-list lets nobody in. To add a tester, add their email there and redeploy
-staging; the refusal message names the email to add. The website asks `/me`
-before handing a session to the app, so a non-tester is told on the login
-page. None of the refusal messages may contain "credit": the desktop overlay
-opens the Buy credits window for failures that do.
-
-### Instant relay (`relay/`)
-
-```bash
-cd relay && npm test                 # bundles, then node --test against a fake OpenAI
-./relay/deploy.sh staging            # or production; Cloud Run, us-east1
-gcloud logging read 'resource.labels.service_name="telekey-relay-staging"' --project telekey-app --limit 20
-```
-
-Instant on credits streams to this service, which forwards to OpenAI's live
-transcription with TeleKey's key and charges per transcript. It bundles the
-shared billing code from `functions/src` (`pricing.ts`, `ledger.ts`,
-`auth.ts`, `testers.ts`), so a change there needs both `functions:staging`
-and the relay redeployed. `deploy.sh` takes `OPENAI_API_KEY` and
-`STAGING_ALLOWED_EMAILS` from `functions/.env`. The gcloud CLI's default
-project on this Mac is another one; the script passes `--project telekey-app`.
+What matters from this side: **staging is invite-only** (a 403 with code
+`not_a_tester` for any email not on the server's `STAGING_ALLOWED_EMAILS`, and
+none of its refusal messages may contain "credit", because the overlay opens
+the Buy credits window for failures that do); a change to pricing, the upload
+format or the relay protocol needs both repositories changed and both deployed;
+and the golden recording (rule 34) must stay byte-identical across the two.
 
 ### Tests — run all three before claiming anything works
 
@@ -220,6 +198,11 @@ bun run tsc --noEmit                 # types
 CI (`.github/workflows/build.yml`) runs these plus a full build on
 `macos-latest` and `windows-latest` on every push. A green Windows job proves
 it compiles; it does not prove it works.
+
+The backend's tests (`functions/`, `relay/`) run in the private `telekey-server`
+repository and its own workflow, not here. The one thing both sides test is the
+recording format: the Rust test `wav_matches_the_servers_golden_recording`
+reads `src-tauri/tests/fixtures/app-recording.wav` (rule 34).
 
 ### Diagnostics
 
@@ -242,6 +225,7 @@ next rebuild. `stable` means they survive.
 | Settings | `~/Library/Application Support/telekey/settings.json` |
 | Transcript history | `…/telekey/history.json` (`0600`) |
 | Usage counters | `…/telekey/usage.json` (`0600`, tiered rollup) |
+| Beer-prompt counter | `…/telekey/tips.json` (own-key dictations, the day of the last prompt, whether they tipped). Never sent anywhere |
 | API key | Keychain, service `telekey`, account `openai-api-key` — or `OPENAI_API_KEY` env / a `.env` file, which win over the Keychain |
 | Hosted session | Keychain, service `telekey`, account `hosted-session` (Firebase refresh + ID token). Arrives over `telekey://auth` after the website signs in. |
 | Logs | `~/Library/Logs/telekey.log` when launched by `run.sh`; otherwise stdout |
@@ -278,15 +262,13 @@ A **development** build loads **`.env` then `.env.staging` or `.env.production`*
 | `TELEKEY_RELAY_URL` | `.env.staging` / `.env.production` | Instant relay, `wss://…/v1/realtime?intent=transcription`. Optional: each stage's Cloud Run address is built in (`session.rs`) |
 | `TELEKEY_UPDATE_URL` | launch env | Another `latest.json` to check, for testing an update (RELEASING.md › Updates). Also turns on automatic checks in a debug build |
 | `TAURI_SIGNING_PRIVATE_KEY` / `_PASSWORD` | GitHub secrets | Signs updates in `release.yml`. Never needed locally |
-| `NEXT_PUBLIC_TELEKEY_API_BASE` | `web/.env.development` or `web/.env.production` | Same Functions origin for the website |
-| Functions secrets | `functions/.env` | `OPENAI_API_KEY`, `STRIPE_SECRET_KEY_STAGING`, `STRIPE_SECRET_KEY_PRODUCTION`, `STRIPE_WEBHOOK_SECRET_STAGING`, `STRIPE_WEBHOOK_SECRET_PRODUCTION`. Gitignored; `firebase deploy` reads it from disk. Copy `functions/.env.example`. |
-| `TELEKEY_SITE_URL_STAGING` / `_PRODUCTION` | `functions/.env` | Checkout return URLs |
-| `STAGING_ALLOWED_EMAILS` | `functions/.env` | Comma-separated emails allowed to use staging. Everyone else gets a 403 naming their email. Empty means nobody. Production ignores it |
+| `NEXT_PUBLIC_TELEKEY_API_BASE` | `web/.env.development` or `web/.env.production` | Same server origin (the Functions API) for the website |
+| Server secrets and settings (OpenAI, Stripe, `STAGING_ALLOWED_EMAILS`, checkout return URLs) | `functions/.env` in the private `telekey-server` repo | Never in this repository. See that repo's `CLAUDE.md` for each variable |
+| `TELEKEY_SERVER_DIR` | shell | Where `scripts/reset-to-first-run.sh` finds `telekey-server` (default `../telekey-server`) |
 | `APPLE_ID` `APPLE_PASSWORD` `APPLE_TEAM_ID` / `APPLE_API_KEY` `APPLE_API_ISSUER` `APPLE_API_KEY_PATH` | shell | Notarisation, `release.sh` |
 
-Firestore: `staging-users` / `production-users`, `staging-packs` / `production-packs`.
-
-Webhooks: `…/staging/stripeWebhook` (test) and `…/api/stripeWebhook` (live).
+Firestore collections (`staging-` / `production-` users and packs) and the
+Stripe webhook addresses belong to the server; see `telekey-server`'s `CLAUDE.md`.
 
 ---
 
@@ -504,16 +486,11 @@ the first click is spent on the window, not the button. Linux has no pill
 and the paste lands in the wrong place.
 
 **24. Instant on credits falls back to Standard every time.**
-First check the relay is deployed for that stage (`relay/deploy.sh`). Then the
-ways it broke while being built. OpenAI sends `session.created` the instant
-its socket opens, before the relay has accepted the app's side, so the relay
-holds every upstream message from the first moment (`openUpstream`); without
-that the first event vanished and every session timed out. Cloud Run answers
-any path ending in `z` itself, so the health check is `/health`, not
-`/healthz`. A refused handshake reaches the app with only the part of the
-error body that arrived with the headers, so `live.rs` `refusal` words each
-status on its own too. The fallback note in the capsule is the symptom; the
-reason is in the log as `Instant failed, using Standard instead`.
+Server-side (relay not deployed for the stage, handshake ordering, the `/health`
+path): the full text is in `telekey-server`'s `CLAUDE.md`. App side: the
+fallback note in the capsule is the symptom, the reason is in the log as
+`Instant failed, using Standard instead`, and `live.rs` `refusal` words each
+handshake status on its own.
 
 **25. An Instant dictation is pasted but never charged.**
 The relay hands over the transcript first and charges after, because waiting
@@ -522,7 +499,8 @@ closes. The app must keep the socket open until then (`await_charge`, on the
 session's own thread, after the text has gone to the pipeline): Cloud Run
 throttles a service's CPU once its last connection closes, which can stall the
 write. The charge cannot refuse, so a balance can go below zero; every session
-first requires a positive balance, and the next purchase pays the debt.
+first requires a positive balance, and the next purchase pays the debt. (The
+relay's half of this is in `telekey-server`'s `CLAUDE.md`.)
 
 **26. "Use what's on screen" is on, and names still come back wrong.**
 Check the log for `screen context app=… title=… nearby_chars=…` at key-down.
@@ -542,11 +520,10 @@ can never reach the next one; Instant waits at most 250 ms for it, Standard
 wiped when the slot drops.
 
 **27. On credits, a vocabulary word with an accent arrives as mojibake.**
-reqwest sends header bytes above 127 as they are, and Node reads header
-values as latin1, so "Zoë" reached OpenAI as "ZoÃ«". `functions/src/headers.ts`
-re-reads them as UTF-8; the screen-context prompt goes base64 in
-`x-telekey-prompt` so it needs no such trick. The desktop keeps all its
-context headers under 6 KB and, on a 431, retries once without the prompt.
+Header encoding on the server (`functions/src/headers.ts`): see `telekey-server`'s
+`CLAUDE.md`. App side: the screen-context prompt goes base64 in
+`x-telekey-prompt`, all context headers stay under 6 KB, and on a 431 the
+desktop retries once without the prompt.
 
 **28. The smart pass pasted something the user did not say.**
 It must not be able to. Lists and self-corrections reach the formatting model
@@ -597,23 +574,9 @@ files left in config directories are ignored. `TeleKey check` prints the stage
 and URLs it resolved.
 
 **32. The price on the site is not what a short dictation costs, or a dictation costs nothing.**
-Credits are charged exactly: `pricing.ts` prices a dictation in microcents
-(1¢ = 1,000,000) and `carryCharge` debits whole cents while carrying the rest
-per user as `owedMicrocents`, so ten 10-second dictations cost 2¢ and leave a
-quarter of a cent owed. The true balance is `balanceCents` minus that, and
-`requireBalance` lets someone dictate while it is above zero. There used to be
-a 1¢ minimum per request, which made short dictations cost 4–13× the
-advertised rate. With the floor gone, nothing may bill zero: Standard bills
-OpenAI's reported seconds or, if absent, the larger of the WAV header and the
-body size; polish without a usage object is estimated from the text; the
-relay bills the bytes it forwarded (never less than everything streamed and
-unbilled), ignores empty commits in its billing queue, and charges fractional
-seconds while telling the app whole ones. OpenAI's own failures never reach
-the app as its status: they are 503 code `upstream` (or 400/413 `rejected`
-when OpenAI refused what was sent), logged with status, type, code, param
-and request id but never OpenAI's message, which can quote the user's words.
-Hosted and BYOK formatting send `store: false`. Functions run Node 22; the
-Functions and the relay share this code, so deploy both.
+Server-side billing (exact microcent pricing, the carry, no zero bills): the
+full text is in `telekey-server`'s `CLAUDE.md`. The rates and packs the website
+and README quote come from there, so change them together.
 
 **33. On Linux, the paste lands in TeleKey's own capsule.**
 Linux has no non-activating window, and `focused(false)` does not last: tao
@@ -622,47 +585,44 @@ the capsule the keyboard. `overlay.rs` builds it with `focusable(false)` on
 Linux only (GTK still delivers clicks). Never verified on a real Linux desktop.
 
 **34. Every hosted Standard dictation fails with "not in a format TeleKey sends".**
-`/transcribe` accepts only the exact WAV `audio.rs` `encode_wav_16bit_mono`
-writes (44-byte header, PCM, mono, 16 kHz, 16-bit, RIFF and data lengths equal
-to the body), because the price is checked from the data length *before*
-OpenAI is called and a compressed body would cost far more than its size
-says. That byte layout is a wire contract: `functions/test/fixtures/app-recording.wav`
-is checked by a Rust test (`wav_matches_the_servers_golden_recording`) and by
-`functions/test/audio.test.mjs`, and CI runs both. Change the encoder and the
-check together, never one alone; installed copies keep sending the old bytes.
+The server's `/transcribe` accepts only the exact WAV `audio.rs`
+`encode_wav_16bit_mono` writes (44-byte header, PCM, mono, 16 kHz, 16-bit,
+RIFF and data lengths equal to the body), because the price is checked from the
+data length *before* OpenAI is called and a compressed body would cost far more
+than its size says. That byte layout is a wire contract between two
+repositories: the golden recording `src-tauri/tests/fixtures/app-recording.wav`
+here must stay byte-identical with `functions/test/fixtures/app-recording.wav`
+in `telekey-server`. This side is checked by the Rust test
+`wav_matches_the_servers_golden_recording` (CI runs it); the server side by its
+`audio.test.mjs`. Change the encoder and both fixtures together, in both
+repositories, never one alone; installed copies keep sending the old bytes.
 
 **35. OpenAI was paid and nothing was charged, or a user is told "busy" for no reason.**
-Refusals happen only before OpenAI: `/transcribe` prices the upload, `/polish`
-estimates from the text, and both refuse (402) when the true balance
-(`balanceCents` minus `owedMicrocents`) cannot cover it. After OpenAI answers,
-`debit` always charges in full, even below zero; the next purchase pays the
-debt first and `requireBalance` blocks dictation until the balance is positive.
-`guard.ts` lets one paid request per user run per instance; the next two wait
-up to 15 s (a cancel then re-dictation must succeed) and only a third is told
-"Slow down a moment" (429). The 800 ms gap is gone. The relay forwards nothing
-until the app's `session.update` (so OpenAI's defaults never apply to billed
-audio), needs 10 s of Instant balance to start, stops a session at its
-admission balance plus 5 s, after 30 s without audio and at 280 s (Cloud Run's
-timeout is 300 s), allows 2 open sessions and 12 starts a minute per user per
-instance, ignores the client once the transcript is delivered, and bills at
-least every streamed byte not yet billed. A cancelled Instant dictation is
-charged for the audio already streamed (`CHARGE_ABANDONED_AUDIO`, published in
-the Terms and FAQ); that write happens after the app has gone, so it is best
-effort (rule 25). The routes live in `functions/src/app.ts`; `index.ts` only
-configures and exports them.
+Server-side (when it refuses, the per-user guard, the relay's limits): the full
+text is in `telekey-server`'s `CLAUDE.md`. Visible here: a cancelled Instant
+dictation is charged for the audio already streamed, which the Terms and FAQ on
+the website state, so change them together with the server.
 
 **36. The Google bill grows while nobody dictates, or reads run out.**
-Nothing may bill by the hour: min instances stay 0 on all four services (one
-warm instance is billed 24/7). Caps are deliberate: `maxInstances` 5 (`api`)
-and 2 (`staging`) in `index.ts`, 3 and 2 for the relays in `relay/deploy.sh`.
-`/me` is one Firestore read: it returns `usage: []` for old clients and serves
-packs from a 5-minute per-instance cache (`packs.ts`; a new or re-priced pack
-shows within 5 minutes, or at once after a redeploy). The desktop asks for the
-balance at most every 15 s, and 1.5 s after a dictation so Instant's charge has
-landed. `GET /packs` is gone and `firestore.rules` denies all client access:
-nothing uses a Firestore client SDK, and the Admin SDK ignores rules. Today
-every service sits inside Google's free allowances; egress to OpenAI is the
-first to run out as use grows.
+Server-side (min instances 0, max-instance caps, cached packs, the Firestore
+rules): the full text is in `telekey-server`'s `CLAUDE.md`. App side: the
+desktop asks for the balance at most every 15 s, and 1.5 s after a dictation so
+Instant's charge has landed.
+
+**37. The beer prompt never appears, appears on every dictation, or opens the browser by itself.**
+`tips.rs` counts a dictation only when it succeeded on the user's own key
+(`Payer::OwnKey`; a credits dictation neither counts nor prompts), prompts after
+the second, then at most once per calendar day until `tipped` is set, by the
+`telekey://thanks` link or by the user saying they already did (Settings ›
+Support TeleKey, `mark_tipped`). "Not the same day" is compared, not "an earlier
+day", so a wrongly set clock cannot silence it for years. The record is its own file, `tips.json`, not part of `Settings`: the
+settings window saves a whole `Settings` back, and a stale copy would overwrite
+a newer count. The prompt is queued behind the result in the capsule, like a
+notice (rule 17), and only a click on it, or the button in Settings, opens the
+page; nothing may call the opener on its own. The link is `TIP_URL`, and the
+website keeps its own copy (`TIP` in `web/data/site.ts`): change them
+together. Linux's capsule cannot take a click (rule 33), so its prompt names
+the Settings button instead.
 
 ---
 
@@ -675,11 +635,11 @@ escape.rs   (Esc)    ┴─► mpsc ─► pipeline.rs (worker thread)
                                     │  frontmost.rs   which app to paste into
                                     │  audio.rs       cpal → 16 kHz mono → WAV in memory
                                     │  transcribe.rs  Transcriber trait → OpenAI
-                                    │  live.rs        Instant: stream while speaking (relay/ for credits)
+                                    │  live.rs        Instant: stream while speaking (the private relay on credits)
                                     │  context.rs     screen context, sent as the prompt (opt-in)
                                     │  smart.rs       lists and self-corrections, gate + check
                                     │  replace.rs     "when I say … write …", last before paste
-                                    │  hosted.rs      same traits, via Cloud Functions
+                                    │  hosted.rs      same traits, via the private Cloud Functions API
                                     │  polish.rs      Polisher trait, optional
                                     │  inject.rs      clipboard save → ⌘V → restore
                                     │  history.rs / usage.rs
@@ -690,9 +650,10 @@ update.rs  latest.json on GitHub ─► download + verify ─► "Restart to Upd
 
 An OpenAI key in the Keychain still talks to OpenAI directly. A hosted session
 talks to `TELEKEY_API_BASE` (`…/staging` or `…/api`). Sign-in happens in the
-system browser (`web/`); `telekey://auth` stores the session. Cloud Functions
-hold the shared OpenAI key (from `functions/.env`) and the Firestore credit
-ledger, with `staging-` / `production-` collection prefixes.
+system browser (`web/`); `telekey://auth` stores the session. The Cloud
+Functions and the Instant relay (private `telekey-server` repo) hold the shared
+OpenAI key and the Firestore credit ledger, with `staging-` / `production-`
+collection prefixes.
 
 Three windows, each its own Vite entry: `index.html` (settings, history, usage),
 `overlay.html` (the recording HUD, an `NSPanel`), and `setup.html` (the
@@ -718,6 +679,13 @@ reports its own billing units and those are what get recorded.
   is the author of this project; an attribution trailer also puts a second name
   in GitHub's contributor list, which is wrong for a repository under his name.
 
+- **Licence.** Everything after v0.3.0 is FSL-1.1-MIT (`LICENSE`; the SPDX id is
+  in `package.json`, `web/package.json` and `Cargo.toml`); v0.3.0 and earlier
+  stay MIT. Call it "source available" or "fair source", never "open source"
+  (the old MIT releases are the one exception), in code, docs and on the site.
+  The server repository is private, all rights reserved. "TeleKey" and the logo
+  are trademarks (™, unregistered) of EntityQ LLC, which sells the service; the
+  licence grants no trademark rights beyond naming TeleKey as the code's origin.
 - **Platform code is `cfg`-gated per OS with a real implementation each.** A
   stub that silently does nothing is worse than a missing feature — say what is
   missing in a comment.

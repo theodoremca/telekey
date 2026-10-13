@@ -5,6 +5,10 @@ decided and measured while building it is in [Built](#built) at the end.
 Instant mode was planned 2026-10-04, the dictation pill and the
 multi-monitor fix 2026-10-07.
 
+Since this was written the server (`functions/` and `relay/`, named below) has
+moved to the private `telekey-server` repository. Paths under `functions/` and
+`relay/` in this document are in that repository; the app and website stay here.
+
 Three pieces of work, to be built together once planning is done:
 
 1. **The capsule follows your mouse across monitors.** A bug fix today:
@@ -288,7 +292,7 @@ The relay:
 **Backend**
 
 - A new `relay/` service (Node, `ws`), with its own tests, deployed to Cloud
-  Run for staging and production.
+  Run for staging and production (now in the private `telekey-server` repo).
 - `functions/src/index.ts`: `LIVE_TRANSCRIBE_PER_MINUTE = 0.017`, a markup for
   Instant, and a `liveTranscribeSeconds` unit in `costCents`, shared with the
   relay so both price the same way.
@@ -402,8 +406,9 @@ waits in the tap and goes as soon as the session is ready.
 
 ### Not done
 
-- The production relay is not deployed: `./relay/deploy.sh production` before
-  the first release with Instant (RELEASING.md).
+- The production relay is not deployed: `relay/deploy.sh production`, run from
+  the private `telekey-server` repo, before the first release with Instant
+  (RELEASING.md).
 - The pill on Linux, which needs a non-activating overlay there.
 - Real checks still owed: click-speak-stop pasting into another app, and
   hold-speak-release on each of several monitors, on macOS and Windows.

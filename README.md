@@ -4,6 +4,8 @@ Push-to-talk dictation for macOS and Windows. Hold a shortcut anywhere, speak,
 release, and polished text lands at your cursor — in Mail, Slack, a browser, a
 terminal. Tested on Mac and Windows; Linux builds exist but are untested.
 Website, sign-in and credits: [www.telekey.app](https://www.telekey.app).
+The code is source available under the Functional Source License; see
+[Licence](#licence).
 
 Transcription is OpenAI's `gpt-transcribe`, which punctuates, capitalises and
 drops filler words on its own, so there is no cleanup pass in the way. Audio is
@@ -77,6 +79,10 @@ magic link. TeleKey uses its own key and deducts prepaid credits. A new account
 starts empty, and Setup says so: buy a pack from there, from Settings, or on
 the website before your first dictation.
 
+Credits are US dollars and never expire. Packs start at $10: $10 buys $10.00
+of credit, $25 buys $27.50, $50 buys $57.50. Dictation is 1.35¢ a minute, or
+5.1¢ with Instant.
+
 ### 2. Microphone
 
 Setup's **Allow…** button brings up the macOS dialog; one click. If you hold
@@ -143,6 +149,7 @@ Everything below is optional — TeleKey works with none of it configured.
 | **History** | Recent transcripts, click any to copy. Stored on your computer only (readable by you alone on macOS), capped, clearable, and switchable off entirely. |
 | **Usage** | What you have spent and how many minutes you have dictated — today, this month, all time — with a 30-day chart. Rates are editable, since published prices change. |
 | **Updates** | TeleKey checks for a new version a minute after it starts and every six hours, downloads it in the background, and then shows **Restart to Update** in the menu bar and in Settings › Updates. Nothing installs until you click it, and never mid-dictation. Settings, history, your sign-in and macOS permissions are kept. On Linux the AppImage replaces itself; a `.deb` install asks for your password. Copies from before 0.3.0 need one manual download. |
+| **Buy me a beer** | TeleKey is free on your own OpenAI key and stays free. If you use one, after your second dictation the capsule offers a link to buy the author a beer (any amount, on one Stripe page), then at most once a day until you have tipped or tell it you already did (Settings › Support TeleKey, where the same link lives). You click it; TeleKey never opens your browser by itself. Never shown when you use credits. The count is a small file on your computer and is never sent anywhere. |
 
 ## Privacy
 
@@ -152,7 +159,7 @@ Everything below is optional — TeleKey works with none of it configured.
   to the HTTP client is only freed.)
 - **Audio goes to OpenAI.** That is where transcription happens. With your
   own key it goes there directly; with credits it passes through TeleKey's
-  server on the way (the Cloud Function, or the relay for Instant), which
+  server on the way (a small private service, or its relay for Instant), which
   forwards it and stores none of it. Instant streams it while you speak
   instead of after.
 - **Screen context is opt-in.** With "Use what's on screen" on, the window
@@ -172,6 +179,11 @@ Everything below is optional — TeleKey works with none of it configured.
 ---
 
 ## Build from source
+
+This repository is the desktop app and the website. The server behind the paid
+credits (accounts, billing and the Instant relay) is a separate private
+repository and is not part of this one. The app reaches it over HTTP only, so
+a build from source dictates with your own OpenAI key without it.
 
 ### macOS
 
@@ -280,7 +292,7 @@ hold key → trigger → capture audio → [release] → WAV in memory
 | `trigger.rs` | Global shortcut, press and release |
 | `audio.rs` | Capture → 16 kHz mono → WAV, all in memory |
 | `transcribe.rs` | `gpt-transcribe` upload, with vocabulary as `keywords[]` |
-| `live.rs` | Instant: streams to `gpt-live-transcribe` while you speak, through `relay/` on credits |
+| `live.rs` | Instant: streams to `gpt-live-transcribe` while you speak, through TeleKey's private relay on credits |
 | `context.rs` | "Use what's on screen": the window title and text near the cursor, as the prompt |
 | `smart.rs` | Lists and self-corrections: when to ask the model, and whether to trust its answer |
 | `replace.rs` | "When I say … write …" |
@@ -323,4 +335,24 @@ process.
 
 ## Licence
 
-MIT.
+Copyright 2026 Theodore Imonigie. Released under the
+[Functional Source License, Version 1.1, MIT Future License](LICENSE)
+(`FSL-1.1-MIT`), a fair-source licence: the code is public and source
+available, with one restriction below. Everything up to and including v0.3.0
+was released under the MIT licence and stays MIT; every later version is
+FSL-1.1-MIT.
+
+You may use, change and share the code for any purpose except a Competing Use,
+so reading it, running it at work, learning from it and researching with it are
+all fine. You may not offer it, or something built from it, to others as a
+commercial product or service that does what TeleKey does. Two years after a
+version is released it becomes plain MIT. [LICENSE](LICENSE) is the full text
+and is what governs.
+
+The paid service's server is private and all rights are reserved; it is not
+covered by this licence.
+
+"TeleKey" and the TeleKey logo are trademarks (™, unregistered) of EntityQ LLC,
+the business that sells the service. The licence grants no trademark rights
+beyond naming TeleKey as where the code came from: a fork should use its own
+name and logo.

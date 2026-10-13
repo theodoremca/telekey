@@ -133,13 +133,13 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
-Before the first release with Instant, deploy the production relay, or Instant
-on credits will fall back to Standard on every dictation (own-key Instant does
-not need it):
-
-```bash
-./relay/deploy.sh production    # telekey-relay-production; the app already knows its address
-```
+Before the first release with Instant, the production relay must be deployed, or
+Instant on credits will fall back to Standard on every dictation (own-key
+Instant does not need it). The relay, like the rest of the server, is in the
+private `telekey-server` repository (checked out at `../telekey-server`); its
+`CLAUDE.md` has the deploy steps (`relay/deploy.sh production`). The app already
+knows the address. Redeploy the Functions API and the relay there before a
+release that changes pricing, the credit packs or the upload format.
 
 A tag that does not match the version stops the run before anything is built.
 To rehearse without publishing, run the workflow by hand (Actions › release ›
@@ -156,6 +156,11 @@ What comes out:
 | All | `latest.json` | Lists each update with its signature |
 
 The release notes say how to get past each warning.
+
+Every release is published under the licence in `LICENSE`: FSL-1.1-MIT for
+everything after v0.3.0, MIT for v0.3.0 and earlier. Call a release "source
+available", never "open source", in its notes. The private `telekey-server`
+repository is released separately and is never part of a GitHub release here.
 
 ### Updates
 

@@ -1,6 +1,7 @@
 {
   "name": "telekey-web",
   "private": true,
+  "license": "FSL-1.1-MIT",
   "scripts": {
     "dev": "next dev --port 3000",
     "build": "next build",
