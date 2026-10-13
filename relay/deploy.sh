@@ -22,6 +22,18 @@ fi
 PROJECT="telekey-app"
 REGION="us-east1"
 SERVICE="telekey-relay-${STAGE}"
+# Ceilings on what a runaway client can cost: at most 3 instances in
+# production and 2 on staging. The timeout is the longest one connection may
+# last before Cloud Run ends it without a word. A dictation is seconds and
+# relay.ts closes an idle one after 30 s; it also ends any session itself at
+# MAX_SESSION_SECONDS (280, protocol.ts) with a plain message, which has to stay
+# comfortably under this figure: test/protocol.test.ts reads it from here.
+if [[ "${STAGE}" == "production" ]]; then
+  MAX_INSTANCES=3
+else
+  MAX_INSTANCES=2
+fi
+TIMEOUT_SECONDS=300
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_SOURCE="${ROOT}/functions/.env"
 
@@ -67,10 +79,10 @@ gcloud run deploy "${SERVICE}" \
   --source . \
   --env-vars-file "${ENV_YAML}" \
   --allow-unauthenticated \
-  --timeout 900 \
+  --timeout "${TIMEOUT_SECONDS}" \
   --concurrency 80 \
   --min-instances 0 \
-  --max-instances 10 \
+  --max-instances "${MAX_INSTANCES}" \
   --memory 512Mi \
   --quiet
 

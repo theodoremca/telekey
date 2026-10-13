@@ -24,16 +24,13 @@ import {
 import {
   carryCharge,
   costMicrocents,
-  hasCredit,
+  remainingMicrocents,
   wholeMicrocents,
   type Exact,
   type Units,
 } from "./pricing";
 
 export type Prefix = "staging" | "production";
-
-/** Two charges for one user closer together than this are refused. */
-const PER_UID_GAP_MS = 800;
 
 export function usersCol(prefix: Prefix) {
   return `${prefix}-users`;
@@ -43,45 +40,97 @@ export function packsCol(prefix: Prefix) {
   return `${prefix}-packs`;
 }
 
-/** The user's document, created on first use with staging's welcome credit. */
+/**
+ * A user's document as read once, at the start of a request. Everything a
+ * request needs to decide whether to spend TeleKey's OpenAI money (balance and
+ * what is owed) comes from this one read, so asking again costs nothing. The
+ * charge itself re-reads inside its transaction, which is the only read that
+ * counts.
+ */
+export type Account = {
+  ref: DocumentReference;
+  email: string | null;
+  balanceCents: number;
+  /** Used but not yet taken from the balance: 0 up to just under a cent. */
+  owedMicrocents: number;
+};
+
+/**
+ * The user's account, created on first use with staging's welcome credit.
+ * One read; a write only for a new user or a changed email.
+ */
 export async function ensureUser(
   prefix: Prefix,
   uid: string,
   email: string | undefined,
-): Promise<DocumentReference> {
-  const ref = getFirestore().collection(usersCol(prefix)).doc(uid);
+  db: Firestore = getFirestore(),
+): Promise<Account> {
+  const ref = db.collection(usersCol(prefix)).doc(uid);
   const snap = await ref.get();
   if (!snap.exists) {
+    const balanceCents = prefix === "staging" ? 100 : 0;
     await ref.set({
       email: email ?? null,
-      balanceCents: prefix === "staging" ? 100 : 0,
+      balanceCents,
       createdAt: FieldValue.serverTimestamp(),
     });
-  } else if (email && snap.get("email") !== email) {
-    await ref.set({ email }, { merge: true });
+    return { ref, email: email ?? null, balanceCents, owedMicrocents: 0 };
   }
-  return ref;
+  let stored: string | null = snap.get("email") ?? null;
+  if (email && stored !== email) {
+    await ref.set({ email }, { merge: true });
+    stored = email;
+  }
+  return {
+    ref,
+    email: stored,
+    balanceCents: Number(snap.get("balanceCents") ?? 0),
+    owedMicrocents: wholeMicrocents(snap.get("owedMicrocents")),
+  };
 }
 
-/** Refuse before spending OpenAI's time when there is nothing to charge. */
-export async function requireBalance(ref: DocumentReference) {
-  const snap = await ref.get();
-  const balance = Number(snap.get("balanceCents") ?? 0);
-  if (!hasCredit(balance, wholeMicrocents(snap.get("owedMicrocents")))) {
-    throw Object.assign(new Error("Out of credits — buy more in TeleKey."), {
-      status: 402,
-      code: "out_of_credits",
-    });
+/** The 402 every refusal for want of balance uses: the desktop opens Buy credits for it. */
+function outOfCredits() {
+  return Object.assign(new Error("Out of credits — buy more in TeleKey."), {
+    status: 402,
+    code: "out_of_credits",
+  });
+}
+
+/**
+ * Refuse, before spending OpenAI's money, when what is left cannot cover
+ * `needMicrocents`. With no estimate that is "nothing is left at all"; with
+ * one (`estimate.ts`) it is "not enough for this request". Reads nothing:
+ * the account was read once by `ensureUser`.
+ */
+export function requireBalance(
+  account: Pick<Account, "balanceCents" | "owedMicrocents">,
+  needMicrocents = 1,
+) {
+  if (remainingMicrocents(account.balanceCents, account.owedMicrocents) < needMicrocents) {
+    throw outOfCredits();
   }
 }
 
 /**
  * Charge for `units` exactly, and return the balance after in whole cents.
  *
- * Refuses (402) when the whole cents due are more than the balance. The
- * sub-cent part is never refused, so a person can use the last of their
- * balance down to the microcent; they end at most a cent short, and
- * `requireBalance` stops the next dictation.
+ * Never refuses. By the time this runs OpenAI has answered and TeleKey has
+ * paid for it, so a refusal would give the person the work for nothing and
+ * leave TeleKey out of pocket: the refusing is done earlier, before OpenAI is
+ * called (`requireBalance`, with an estimate of the request's price, then one
+ * request in flight per person: guard.ts). What gets here is charged in full,
+ * and a cost above what is left takes the balance below zero, exactly as for
+ * a delivered Instant transcript (`chargeDelivered`). That is then a WARN, and
+ * the next purchase pays it off; until then `requireBalance` refuses every
+ * request, since a balance that is not positive cannot start one.
+ *
+ * `lastTranscribeAt` is still written for a transcription (not a rewrite), as
+ * the time of a person's last dictation. Nothing reads it now that the 800 ms
+ * gap between transcriptions is gone (a quick second dictation is legitimate,
+ * and refusing it after the audio was uploaded lost it); it costs nothing, as
+ * it rides on the write that happens anyway, and shows when someone last used
+ * TeleKey if that is ever asked.
  */
 export async function debit(
   prefix: Prefix,
@@ -91,24 +140,15 @@ export async function debit(
 ) {
   const userRef = db.collection(usersCol(prefix)).doc(uid);
   const exact = costMicrocents(units);
-  return db.runTransaction(async (tx) => {
+  const transcribes = units.transcribeSeconds > 0;
+  const { before, cents } = await db.runTransaction(async (tx) => {
     const snap = await tx.get(userRef);
     const balance = Number(snap.get("balanceCents") ?? 0);
-    const lastAt = Number(snap.get("lastTranscribeAt") ?? 0);
-    if (Date.now() - lastAt < PER_UID_GAP_MS) {
-      throw Object.assign(new Error("Slow down a moment."), { status: 429 });
-    }
     const { cents, owedMicrocents } = carryCharge(wholeMicrocents(snap.get("owedMicrocents")), exact);
-    if (balance < cents) {
-      throw Object.assign(new Error("Out of credits — buy more in TeleKey."), {
-        status: 402,
-        code: "out_of_credits",
-      });
-    }
     tx.update(userRef, {
       balanceCents: balance - cents,
       owedMicrocents,
-      lastTranscribeAt: Date.now(),
+      ...(transcribes ? { lastTranscribeAt: Date.now() } : {}),
     });
     tx.set(userRef.collection("usage").doc(), {
       ...units,
@@ -116,8 +156,17 @@ export async function debit(
       costCents: cents,
       at: FieldValue.serverTimestamp(),
     });
-    return balance - cents;
+    return { before: balance, cents };
   });
+  const after = before - cents;
+  if (after < 0) {
+    // Outside the transaction, which may run more than once. Only counts.
+    console.warn(
+      `charge for ${uid} left the balance ${-after} cent(s) below zero: ` +
+        `${cents} cent(s) due, ${before} in the balance`,
+    );
+  }
+  return after;
 }
 
 /**

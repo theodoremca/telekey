@@ -1,58 +1,30 @@
 // Run with `npm test` (builds first). The ledger's debit, delivered charge and
-// balance check, against an in-memory stand-in for Firestore.
+// balance check, against an in-memory stand-in for Firestore (fakedb.mjs).
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { afterEach, beforeEach, test } from "node:test";
+import { afterEach, beforeEach, mock, test } from "node:test";
+
+import { fakeDb } from "./fakedb.mjs";
 
 const require = createRequire(import.meta.url);
-const { chargeDelivered, debit, requireBalance } = require("../lib/ledger.js");
+const {
+  chargeDelivered,
+  debit,
+  ensureUser,
+  requireBalance,
+} = require("../lib/ledger.js");
 const { costMicrocents, noUnits } = require("../lib/pricing.js");
 
 const USER = "staging-users/u1";
 const standard = (seconds) => ({ ...noUnits(), dictations: 1, transcribeSeconds: seconds });
 const instant = (seconds) => ({ ...noUnits(), dictations: 1, liveTranscribeSeconds: seconds });
+const polish = (inputTokens, outputTokens) => ({
+  ...noUnits(),
+  polishInputTokens: inputTokens,
+  polishOutputTokens: outputTokens,
+});
 
-/**
- * Just enough of Firestore for the ledger: documents by path, snapshots with
- * `get`, and transactions whose writes land when the callback returns.
- */
-function fakeDb(seed) {
-  const store = new Map(Object.entries(seed));
-  let autoId = 0;
-  const snapshot = (path) => ({
-    exists: store.has(path),
-    get: (field) => store.get(path)?.[field],
-  });
-  const ref = (path) => ({
-    path,
-    get: async () => snapshot(path),
-    collection: (name) => ({ doc: (id = `auto${++autoId}`) => ref(`${path}/${name}/${id}`) }),
-  });
-  return {
-    store,
-    usage: () =>
-      [...store.entries()].filter(([path]) => path.includes("/usage/")).map(([, data]) => data),
-    collection: (name) => ({ doc: (id) => ref(`${name}/${id}`) }),
-    async runTransaction(callback) {
-      const writes = [];
-      const tx = {
-        get: async (target) => snapshot(target.path),
-        update(target, data) {
-          if (!store.has(target.path)) throw new Error(`NOT_FOUND ${target.path}`);
-          writes.push(() => store.set(target.path, { ...store.get(target.path), ...data }));
-        },
-        set(target, data) {
-          writes.push(() => store.set(target.path, data));
-        },
-      };
-      const result = await callback(tx);
-      for (const write of writes) write();
-      return result;
-    },
-  };
-}
-
-// The ledger refuses two charges under 800 ms apart, so the tests keep a clock
+// The ledger stamps `lastTranscribeAt` from the clock, so the tests keep one
 // that moves a second between dictations.
 const realNow = Date.now;
 let clock = 0;
@@ -62,6 +34,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   Date.now = realNow;
+  mock.restoreAll();
 });
 const later = () => {
   clock += 1000;
@@ -107,17 +80,45 @@ test("an account from before owed amounts existed charges correctly", async () =
   assert.equal(db.store.get(USER).email, "a@b.c");
 });
 
-test("a charge bigger than the balance is refused and changes nothing", async () => {
+test("a charge bigger than the balance is still made: OpenAI has been paid, so it takes the balance below zero", async () => {
+  const warn = mock.method(console, "warn", () => {});
   const db = fakeDb({ [USER]: { balanceCents: 1, owedMicrocents: 100_000 } });
   // Five minutes of Standard is 6.75 cents, more than the one cent left.
-  await assert.rejects(debit("staging", "u1", standard(300), db), (err) => {
+  const balance = await debit("staging", "u1", standard(300), db);
+  // 6,750,000 + 100,000 owed = 6 whole cents due, 850,000 still owed.
+  assert.equal(balance, -5);
+  assert.equal(db.store.get(USER).balanceCents, -5);
+  assert.equal(db.store.get(USER).owedMicrocents, 850_000);
+  const [record] = db.usage();
+  assert.equal(record.costMicrocents, 6_750_000);
+  assert.equal(record.costCents, 6);
+  assert.equal(record.transcribeSeconds, 300);
+  // Said at WARN, with who and how far, so the shortfall can be found.
+  assert.equal(warn.mock.callCount(), 1);
+  assert.match(String(warn.mock.calls[0].arguments[0]), /u1.*5 cent\(s\) below zero/);
+  // And nothing more can be dictated until a purchase pays it off.
+  const account = await ensureUser("staging", "u1", undefined, db);
+  assert.throws(() => requireBalance(account), (err) => {
     assert.equal(err.status, 402);
     assert.equal(err.code, "out_of_credits");
     return true;
   });
-  assert.equal(db.store.get(USER).balanceCents, 1);
-  assert.equal(db.store.get(USER).owedMicrocents, 100_000);
-  assert.equal(db.usage().length, 0);
+});
+
+test("a charge that fits the balance says nothing, even one that lands on exactly zero", async () => {
+  const warn = mock.method(console, "warn", () => {});
+  const db = fakeDb({ [USER]: { balanceCents: 2 } });
+  // 1.35 cents of Standard: one whole cent comes off, 350,000 microcents are owed.
+  assert.equal(await debit("staging", "u1", standard(60), db), 1);
+  // 13.5 cents more is past what is left, and only that one is a warning.
+  assert.equal(await debit("staging", "u1", standard(600), db), -12);
+  assert.equal(warn.mock.callCount(), 1);
+
+  warn.mock.resetCalls();
+  const zero = fakeDb({ [USER]: { balanceCents: 1, owedMicrocents: 775_000 } });
+  // 775,000 owed plus 225,000 is exactly one cent: the balance is 0, not below it.
+  assert.equal(await debit("staging", "u1", standard(10), zero), 0);
+  assert.equal(warn.mock.callCount(), 0);
 });
 
 test("the last cent can be used down to the microcent", async () => {
@@ -126,43 +127,117 @@ test("the last cent can be used down to the microcent", async () => {
   assert.equal(await debit("staging", "u1", standard(10), db), 0);
   assert.equal(db.store.get(USER).owedMicrocents, 215_000);
   // Nothing is left to start another with.
-  await assert.rejects(requireBalance(db.collection("staging-users").doc("u1")), (err) => {
+  const account = await ensureUser("staging", "u1", undefined, db);
+  assert.throws(() => requireBalance(account), (err) => {
     assert.equal(err.status, 402);
     return true;
   });
 });
 
-test("two charges less than 800 ms apart: the second is told to slow down", async () => {
+test("two charges in the same instant are both made: there is no gap rule", async () => {
   const db = fakeDb({ [USER]: { balanceCents: 100 } });
   await debit("staging", "u1", standard(10), db);
-  clock += 799;
-  await assert.rejects(debit("staging", "u1", standard(10), db), (err) => {
-    assert.equal(err.status, 429);
-    return true;
-  });
+  // Not a millisecond later: a legitimate quick second dictation.
+  await debit("staging", "u1", standard(10), db);
   clock += 1;
   await debit("staging", "u1", standard(10), db);
-  assert.equal(db.usage().length, 2);
+  assert.equal(db.usage().length, 3);
+  // 3 x 0.225 cents: no whole cent yet.
+  assert.equal(db.store.get(USER).balanceCents, 100);
+  assert.equal(db.store.get(USER).owedMicrocents, 675_000);
 });
 
-test("requireBalance lets a positive balance dictate and refuses an empty one", async () => {
-  const users = (data) => fakeDb({ [USER]: data }).collection("staging-users").doc("u1");
-  await requireBalance(users({ balanceCents: 1 }));
-  await requireBalance(users({ balanceCents: 1, owedMicrocents: 999_999 }));
-  await requireBalance(users({ balanceCents: 100, owedMicrocents: 500_000 }));
+test("requireBalance lets a positive balance dictate and refuses an empty one", () => {
+  requireBalance({ balanceCents: 1, owedMicrocents: 0 });
+  requireBalance({ balanceCents: 1, owedMicrocents: 999_999 });
+  requireBalance({ balanceCents: 100, owedMicrocents: 500_000 });
   for (const empty of [
-    {},
-    { balanceCents: 0 },
+    { balanceCents: 0, owedMicrocents: 0 },
     { balanceCents: 0, owedMicrocents: 250_000 },
     { balanceCents: 1, owedMicrocents: 1_000_000 },
     { balanceCents: -3, owedMicrocents: 10_000 },
   ]) {
-    await assert.rejects(requireBalance(users(empty)), (err) => {
+    assert.throws(() => requireBalance(empty), (err) => {
       assert.equal(err.status, 402, JSON.stringify(empty));
       assert.equal(err.code, "out_of_credits");
       return true;
     });
   }
+});
+
+test("requireBalance with an estimate refuses what the balance cannot cover", () => {
+  // 3 cents less 0.5 owed: 2,500,000 microcents left.
+  const account = { balanceCents: 3, owedMicrocents: 500_000 };
+  requireBalance(account, 2_500_000);
+  requireBalance(account, 1_000_000);
+  for (const need of [2_500_001, 3_000_000, 50_000_000]) {
+    assert.throws(() => requireBalance(account, need), (err) => {
+      assert.equal(err.status, 402, String(need));
+      assert.equal(err.code, "out_of_credits");
+      // The one message the desktop opens Buy credits for.
+      assert.equal(err.message, "Out of credits — buy more in TeleKey.");
+      return true;
+    });
+  }
+});
+
+test("ensureUser is one read for a known user, and hands back what it read", async () => {
+  const db = fakeDb({
+    [USER]: { balanceCents: 7, owedMicrocents: 250_000, email: "a@b.c", lastTranscribeAt: 123 },
+  });
+  const account = await ensureUser("staging", "u1", "a@b.c", db);
+  assert.equal(db.reads.docs, 1);
+  assert.equal(account.balanceCents, 7);
+  assert.equal(account.owedMicrocents, 250_000);
+  assert.equal(account.email, "a@b.c");
+  assert.equal(account.ref.path, USER);
+});
+
+test("ensureUser treats missing fields as none, and a changed email as one write", async () => {
+  const db = fakeDb({ [USER]: { email: "old@b.c" } });
+  const account = await ensureUser("staging", "u1", "new@b.c", db);
+  assert.equal(db.reads.docs, 1);
+  assert.equal(account.balanceCents, 0);
+  assert.equal(account.owedMicrocents, 0);
+  assert.equal(account.email, "new@b.c");
+  assert.equal(db.store.get(USER).email, "new@b.c");
+});
+
+test("ensureUser creates a new user with staging's welcome credit and production's nothing", async () => {
+  const db = fakeDb({});
+  const staging = await ensureUser("staging", "u1", "a@b.c", db);
+  assert.equal(db.reads.docs, 1);
+  assert.equal(staging.balanceCents, 100);
+  assert.equal(db.store.get(USER).balanceCents, 100);
+  assert.equal(db.store.get(USER).email, "a@b.c");
+  const production = await ensureUser("production", "u2", undefined, db);
+  assert.equal(production.balanceCents, 0);
+  assert.equal(production.email, null);
+  assert.equal(db.store.get("production-users/u2").balanceCents, 0);
+});
+
+test("a Standard dictation is two reads: the account, then the charge", async () => {
+  const db = fakeDb({ [USER]: { balanceCents: 100 } });
+  const account = await ensureUser("staging", "u1", undefined, db);
+  requireBalance(account, 1);
+  await debit("staging", "u1", standard(10), db);
+  assert.equal(db.reads.docs, 2);
+});
+
+test("a transcription stamps the time of the last dictation; a rewrite does not", async () => {
+  const db = fakeDb({ [USER]: { balanceCents: 100 } });
+  await debit("staging", "u1", standard(10), db);
+  const stamp = db.store.get(USER).lastTranscribeAt;
+  assert.equal(stamp, clock);
+  // The rewrite comes straight after its transcription, as it always does.
+  clock += 100;
+  await debit("staging", "u1", polish(500, 400), db);
+  assert.equal(db.usage().length, 2);
+  assert.equal(db.store.get(USER).lastTranscribeAt, stamp);
+  clock += 5000;
+  await debit("staging", "u1", standard(10), db);
+  assert.equal(db.usage().length, 3);
+  assert.equal(db.store.get(USER).lastTranscribeAt, clock);
 });
 
 test("a delivered Instant charge carries the remainder like any other", async () => {
@@ -197,13 +272,14 @@ test("a delivered charge cannot refuse: it takes the balance below zero", async 
   assert.equal(record.costCents, 6);
   assert.equal(record.liveTranscribeSeconds, 60);
   // And nothing more can be dictated until a purchase pays it off.
-  await assert.rejects(requireBalance(db.collection("staging-users").doc("u1")), (err) => {
+  const account = await ensureUser("staging", "u1", undefined, db);
+  assert.throws(() => requireBalance(account), (err) => {
     assert.equal(err.status, 402);
     return true;
   });
 });
 
-test("a delivered charge does not apply the 800 ms gap", async () => {
+test("a delivered charge is written however recently the last one was", async () => {
   // The words are already delivered; the books must still be written.
   const db = fakeDb({ [USER]: { balanceCents: 10, lastTranscribeAt: clock } });
   await chargeDelivered("staging", "u1", instant(2), {}, db);

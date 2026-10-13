@@ -8,7 +8,7 @@
   "scripts": {
     "build": "bun build ./src/main.ts --target=node --format=esm --outfile=dist/relay.mjs --external firebase-admin --external 'firebase-admin/*' --external ws",
     "typecheck": "tsc --noEmit",
-    "test": "rm -rf dist-test && bun build ./test/protocol.test.ts ./test/relay.test.ts --target=node --format=esm --outdir=dist-test --external firebase-admin --external 'firebase-admin/*' --external ws && node --test dist-test/*.js"
+    "test": "rm -rf dist-test && bun build ./test/protocol.test.ts ./test/relay.test.ts ./test/admission.test.ts --target=node --format=esm --outdir=dist-test --external firebase-admin --external 'firebase-admin/*' --external ws && node --test dist-test/*.js"
   },
   "dependencies": {
     "firebase-admin": "^13.0.0",

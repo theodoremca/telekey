@@ -13,7 +13,8 @@ import { noUnits, type Units } from "./pricing";
 /** The usual rule of thumb for English text. */
 const CHARS_PER_TOKEN = 4;
 
-type Usage = {
+/** The token counts OpenAI reports for a response. */
+export type PolishUsage = {
   input_tokens?: unknown;
   output_tokens?: unknown;
   input_tokens_details?: { cached_tokens?: unknown } | null;
@@ -35,7 +36,7 @@ function estimateTokens(text: string): number {
  * real answer does; one that does not is as good as none.
  */
 export function billedPolishUnits(
-  usage: Usage | null | undefined,
+  usage: PolishUsage | null | undefined,
   instruction: string,
   text: string,
   output: string,

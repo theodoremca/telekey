@@ -1,6 +1,12 @@
 /**
  * Create Stripe prices and write staging-packs / production-packs.
  * Usage: node scripts/seed-packs.cjs
+ *
+ * Running API instances keep the packs in memory (src/packs.ts), so a change
+ * made here reaches /me within five minutes, not at once. A pack that is new
+ * can be bought sooner (checkout looks again for an id it does not know), but
+ * a price changed in place is only picked up when an instance's copy expires,
+ * or on a redeploy.
  */
 const fs = require("fs");
 const path = require("path");
@@ -84,6 +90,7 @@ async function grantStagingWelcome() {
   await seed("staging", env.STRIPE_SECRET_KEY_STAGING);
   await seed("production", env.STRIPE_SECRET_KEY_PRODUCTION);
   await grantStagingWelcome();
+  console.log("Running instances show changed packs within 5 minutes, or at once after a redeploy.");
 })().catch((err) => {
   console.error(err.message || err);
   process.exit(1);

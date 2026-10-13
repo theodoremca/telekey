@@ -7,6 +7,9 @@ import { getAuth, type DecodedIdToken } from "firebase-admin/auth";
 
 import { NOT_A_TESTER, testerProblem } from "./testers";
 
+/** What a request needs to know about who is calling. */
+export type Identity = Pick<DecodedIdToken, "uid" | "email" | "email_verified">;
+
 export async function requireUser(authorization: string | undefined): Promise<DecodedIdToken> {
   const match = /^Bearer (.+)$/i.exec(authorization ?? "");
   if (!match) {
@@ -31,8 +34,10 @@ export async function requireUser(authorization: string | undefined): Promise<De
 export async function requireMember(
   testers: Set<string> | undefined,
   authorization: string | undefined,
-): Promise<DecodedIdToken> {
-  const user = await requireUser(authorization);
+  /** How the token is checked; only the tests pass their own. */
+  verify: (authorization: string | undefined) => Promise<Identity> = requireUser,
+): Promise<Identity> {
+  const user = await verify(authorization);
   if (testers) {
     const problem = testerProblem(testers, user.email, user.email_verified);
     if (problem) {

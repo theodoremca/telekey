@@ -20,13 +20,61 @@
  */
 
 import { logField } from "../../functions/src/logfield";
+import { costMicrocents, noUnits } from "../../functions/src/pricing";
 
 export const OPENAI_LIVE_URL = "wss://api.openai.com/v1/realtime?intent=transcription";
 export const LIVE_MODEL = "gpt-live-transcribe";
 /** The only rate the live API accepts: 24 kHz, 16-bit, mono. */
 export const BYTES_PER_SECOND = 24_000 * 2;
-/** A longer session is closed: no dictation is fifteen minutes long. */
-export const MAX_SESSION_SECONDS = 15 * 60;
+/**
+ * The longest a session may last, in audio and in wall-clock time alike. Cloud
+ * Run ends a connection abruptly at its request timeout (`TIMEOUT_SECONDS` in
+ * deploy.sh, 300), which would cut a dictation off with no word to the app; the
+ * relay ends it itself, with a plain message, 20 seconds sooner. (No dictation
+ * is nearly this long; Standard takes longer ones.) test/protocol.test.ts
+ * checks this against deploy.sh.
+ */
+export const MAX_SESSION_SECONDS = 280;
+
+/** What `seconds` of Instant audio cost a person, in microcents: billing's own figure. */
+export function instantCost(seconds: number): number {
+  return costMicrocents(noUnits(), { liveSeconds: seconds });
+}
+
+/**
+ * Instant charges after the words are delivered and may take the balance
+ * below zero (ledger.ts `chargeDelivered`), so it is let in only with enough
+ * left for a short dictation, and a session is cut off once its audio would
+ * cost more than that balance plus a small allowance. The most a session can
+ * cost TeleKey unpaid is therefore the allowance, not whatever the app chose
+ * to stream. (A person cut off here falls back to Standard, which prices the
+ * same clip at a quarter and checks the balance again.)
+ */
+export const MIN_START_SECONDS = 10;
+export const OVERDRAFT_SECONDS = 5;
+export const MIN_START_MICROCENTS = instantCost(MIN_START_SECONDS);
+export const OVERDRAFT_MICROCENTS = instantCost(OVERDRAFT_SECONDS);
+
+/** Whether `bytes` of audio cost more than a session admitted with `budget` microcents may. */
+export function overBudget(bytes: number, budgetMicrocents: number | undefined): boolean {
+  if (budgetMicrocents === undefined) return false;
+  return instantCost(bytes / BYTES_PER_SECOND) > budgetMicrocents + OVERDRAFT_MICROCENTS;
+}
+
+/** No audio for this long, from connecting or since the last of it, ends a session. */
+export const IDLE_MS = 30_000;
+/** The most sessions one person may have open on an instance at once. */
+export const MAX_SESSIONS_PER_USER = 2;
+/**
+ * The most sessions one person may begin in any minute, on an instance. Each
+ * begun session costs a read of their account and a connection to OpenAI, so
+ * without a limit someone signed in could make a script of them. A person
+ * dictating as fast as they can hold, speak, release and wait for the paste
+ * starts about one every five seconds, which is this many a minute; the
+ * limit is a ceiling above that, not a pace to keep to.
+ */
+export const MAX_STARTS_PER_MINUTE = 12;
+export const START_WINDOW_MS = 60_000;
 
 const DELAYS = new Set(["minimal", "low", "medium", "high", "xhigh"]);
 const MAX_KEYWORDS = 100;
@@ -170,12 +218,15 @@ export function failureDetail(event: Json): string {
   );
 }
 
-/** Bytes of audio in a base64 string, without decoding it. */
+/**
+ * Bytes of audio in a base64 string, without decoding it. Never negative: a
+ * string of nothing but padding holds none.
+ */
 export function base64Bytes(encoded: string): number {
   const length = encoded.length;
   if (length === 0) return 0;
   const padding = encoded.endsWith("==") ? 2 : encoded.endsWith("=") ? 1 : 0;
-  return Math.floor((length * 3) / 4) - padding;
+  return Math.max(0, Math.floor((length * 3) / 4) - padding);
 }
 
 /**

@@ -1,5 +1,7 @@
 // Run with `npm test`. What the relay passes through, and what it charges.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { test } from "node:test";
 
 import {
@@ -8,8 +10,11 @@ import {
   failureDetail,
   fromClient,
   fromServer,
+  IDLE_MS,
   LIVE_MODEL,
   MAX_PROMPT_CHARS,
+  MAX_SESSION_SECONDS,
+  MAX_STARTS_PER_MINUTE,
   unitSeconds,
 } from "../src/protocol";
 
@@ -80,6 +85,34 @@ test("audio is counted without decoding it", () => {
   assert.equal((action as { bytes: number }).bytes, 4801);
   assert.equal(base64Bytes(Buffer.alloc(2).toString("base64")), 2);
   assert.equal(base64Bytes(""), 0);
+});
+
+test("an append with nothing in it counts as no audio, never as less than none", () => {
+  for (const empty of ["", "=", "==", "A"]) {
+    assert.equal(base64Bytes(empty), 0, JSON.stringify(empty));
+    const action = fromClient(JSON.stringify({ type: "input_audio_buffer.append", audio: empty }));
+    assert.equal(action.kind, "append");
+    assert.equal((action as { bytes: number }).bytes, 0, JSON.stringify(empty));
+  }
+  assert.equal(base64Bytes("AAAA"), 3);
+  assert.equal(base64Bytes("AAA="), 2);
+  assert.equal(base64Bytes("AA=="), 1);
+});
+
+test("a session ends before Cloud Run's request timeout would end it without a word", () => {
+  assert.equal(MAX_SESSION_SECONDS, 280);
+  // The timeout the service is deployed with.
+  const script = readFileSync(resolve(import.meta.dirname, "..", "deploy.sh"), "utf8");
+  const timeout = Number(/^TIMEOUT_SECONDS=(\d+)/m.exec(script)?.[1]);
+  assert.ok(Number.isInteger(timeout), "deploy.sh sets TIMEOUT_SECONDS");
+  // Room to say so, and for a charge to be written.
+  assert.ok(MAX_SESSION_SECONDS <= timeout - 15, `${MAX_SESSION_SECONDS} against ${timeout}`);
+  assert.ok(IDLE_MS < MAX_SESSION_SECONDS * 1000);
+});
+
+test("the start limit is above the pace of a person dictating one after another", () => {
+  // One a minute would be too few; every second would be no limit at all.
+  assert.ok(MAX_STARTS_PER_MINUTE >= 10 && MAX_STARTS_PER_MINUTE <= 30);
 });
 
 test("only the four events a dictation needs reach OpenAI", () => {

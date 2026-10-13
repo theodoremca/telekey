@@ -115,10 +115,19 @@ export function carryCharge(
 }
 
 /**
+ * What a person can still spend, in microcents: their balance less what they
+ * have already used but not yet been charged a whole cent for. Negative when
+ * an Instant charge has taken the balance below zero.
+ */
+export function remainingMicrocents(balanceCents: number, owedMicrocents: unknown): number {
+  return balanceCents * MICROCENTS_PER_CENT - wholeMicrocents(owedMicrocents);
+}
+
+/**
  * Whether a dictation may start: more is left than what is already owed. A
  * balance of 0 cents with nothing owed is empty, and so is 1 cent with all
  * but a microcent of it used.
  */
 export function hasCredit(balanceCents: number, owedMicrocents: number): boolean {
-  return balanceCents * MICROCENTS_PER_CENT - wholeMicrocents(owedMicrocents) > 0;
+  return remainingMicrocents(balanceCents, owedMicrocents) > 0;
 }

@@ -7,13 +7,9 @@
 import { initializeApp } from "firebase-admin/app";
 
 import { requireMember } from "../../functions/src/auth";
-import {
-  chargeDelivered,
-  ensureUser,
-  requireBalance,
-  type Prefix,
-} from "../../functions/src/ledger";
+import { chargeDelivered, ensureUser, type Prefix } from "../../functions/src/ledger";
 import { parseTesters } from "../../functions/src/testers";
+import { admitAccount } from "./admission";
 import { createRelay } from "./relay";
 
 initializeApp();
@@ -28,15 +24,18 @@ const prefix: Prefix = process.env.TELEKEY_STAGE === "production" ? "production"
 
 const server = createRelay({
   openaiKey: required("OPENAI_API_KEY"),
-  async admit(authorization) {
+  identify(authorization) {
     // Read on each connection, like the Functions API, so a redeploy with a
-    // new list takes effect at once.
+    // new list takes effect at once. No database: the relay applies its
+    // limits on how often a person may start a session before `admit` reads.
     const testers =
       prefix === "staging" ? parseTesters(process.env.STAGING_ALLOWED_EMAILS) : undefined;
-    const user = await requireMember(testers, authorization);
-    const ref = await ensureUser(prefix, user.uid, user.email);
-    await requireBalance(ref);
-    return { uid: user.uid, email: user.email };
+    return requireMember(testers, authorization);
+  },
+  async admit(user) {
+    // One read, from which the balance is checked and the session's budget set.
+    const account = await ensureUser(prefix, user.uid, user.email);
+    return admitAccount(user, account);
   },
   charge(member, units, exact) {
     return chargeDelivered(prefix, member.uid, units, exact);
