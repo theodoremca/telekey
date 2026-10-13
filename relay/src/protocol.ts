@@ -14,7 +14,12 @@
  *   - partial text (`…transcription.delta`) is never forwarded, so the only
  *     transcript a client receives is the final one, after it is paid for;
  *   - only the four client events a dictation needs are passed on.
+ *
+ * OpenAI's own failures (a revoked key, an exhausted quota) are not passed on
+ * either: the app gets a plain TeleKey error, and the detail is for the log.
  */
+
+import { logField } from "../../functions/src/logfield";
 
 export const OPENAI_LIVE_URL = "wss://api.openai.com/v1/realtime?intent=transcription";
 export const LIVE_MODEL = "gpt-live-transcribe";
@@ -41,7 +46,9 @@ export type ClientAction =
 export type ServerAction =
   | { kind: "forward"; message: string }
   | { kind: "drop" }
-  | { kind: "bill"; event: Record<string, unknown> };
+  | { kind: "bill"; event: Record<string, unknown> }
+  /** OpenAI reported an error; `detail` is safe to log, and is not for the app. */
+  | { kind: "failed"; detail: string };
 
 type Json = Record<string, unknown>;
 
@@ -141,7 +148,26 @@ export function fromServer(raw: string): ServerAction {
   if (event.type === "conversation.item.input_audio_transcription.completed") {
     return { kind: "bill", event };
   }
+  if (
+    event.type === "error" ||
+    event.type === "conversation.item.input_audio_transcription.failed"
+  ) {
+    return { kind: "failed", detail: failureDetail(event) };
+  }
   return { kind: "forward", message: raw };
+}
+
+/**
+ * What OpenAI said went wrong, for the log: the event, the error's type and
+ * code, and the event id to quote to OpenAI. Never its message, which can
+ * quote the vocabulary and screen text the dictation sent.
+ */
+export function failureDetail(event: Json): string {
+  const error = (event.error ?? {}) as Json;
+  return (
+    `event=${logField(event.type)} type=${logField(error.type)} code=${logField(error.code)} ` +
+    `request=${logField(event.event_id)}`
+  );
 }
 
 /** Bytes of audio in a base64 string, without decoding it. */
@@ -153,18 +179,36 @@ export function base64Bytes(encoded: string): number {
 }
 
 /**
- * Seconds to charge for one committed turn: the audio the relay forwarded,
- * or what OpenAI says it billed, whichever is more. Both round up to a whole
- * second, as OpenAI bills.
+ * Seconds to charge for one committed turn, exact and not rounded: a 1.4 s
+ * dictation costs 1.4 s.
+ *
+ * The audio the relay forwarded is counted to the byte, and that is the
+ * charge. OpenAI's own figure only matters if it is more than a whole second
+ * beyond that, which would mean it counted audio the relay did not send; it
+ * is then taken as it is. (A figure that is merely the forwarded length
+ * rounded up, which is what OpenAI's `usage.seconds` can look like, must not
+ * turn every dictation into whole seconds.)
+ *
+ * OpenAI prices this model per minute of audio ($0.017) and documents no
+ * rounding to whole seconds for it, so none is applied here.
  */
 export function billedSeconds(bytes: number, usage: unknown): number {
-  const measured = Math.ceil(bytes / BYTES_PER_SECOND);
+  const measured = Math.max(0, bytes) / BYTES_PER_SECOND;
   const reported =
     usage &&
     typeof usage === "object" &&
     (usage as Json).type === "duration" &&
-    typeof (usage as Json).seconds === "number"
-      ? Math.ceil((usage as Json).seconds as number)
+    typeof (usage as Json).seconds === "number" &&
+    Number.isFinite((usage as Json).seconds as number)
+      ? ((usage as Json).seconds as number)
       : 0;
-  return Math.max(measured, reported);
+  return reported > Math.ceil(measured) ? reported : measured;
+}
+
+/**
+ * The whole seconds the desktop is told (`liveTranscribeSeconds` is an
+ * integer there): the nearest second, and at least one if there was any audio.
+ */
+export function unitSeconds(exact: number): number {
+  return exact > 0 ? Math.max(1, Math.round(exact)) : 0;
 }

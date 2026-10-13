@@ -14,6 +14,11 @@
  * background, so the connection (and with it Cloud Run's CPU) lasts until the
  * charge is written. A session that fails before a transcript costs nothing.
  *
+ * OpenAI's failures are TeleKey's to carry, not the user's: a key OpenAI has
+ * revoked, or a quota it has used up, reaches the app as a plain 503 / error
+ * event ("having trouble, nothing was charged"), never as OpenAI's own status
+ * or wording, and is logged at ERROR with what OpenAI said.
+ *
  * Dependencies are passed in, so the tests drive it against a fake OpenAI.
  */
 
@@ -22,7 +27,8 @@ import type { Duplex } from "node:stream";
 
 import WebSocket, { WebSocketServer, type RawData } from "ws";
 
-import { noUnits, type Units } from "../../functions/src/pricing";
+import { logField } from "../../functions/src/logfield";
+import { noUnits, type Exact, type Units } from "../../functions/src/pricing";
 import {
   billedSeconds,
   BYTES_PER_SECOND,
@@ -30,6 +36,7 @@ import {
   fromServer,
   MAX_SESSION_SECONDS,
   OPENAI_LIVE_URL,
+  unitSeconds,
 } from "./protocol";
 
 export type Member = { uid: string; email?: string };
@@ -37,19 +44,40 @@ export type Member = { uid: string; email?: string };
 export type RelayDeps = {
   /** A signed-in user who may dictate now, or throw `{ status, code, message }`. */
   admit(authorization: string | undefined): Promise<Member>;
-  /** Charge for a transcript already delivered. May not refuse; may throw. */
-  charge(member: Member, units: Units): Promise<void>;
+  /**
+   * Charge for a transcript already delivered. `units` is in whole seconds,
+   * as the app counts; `exact` is the fractional figure to price. May not
+   * refuse; may throw.
+   */
+  charge(member: Member, units: Units, exact: Exact): Promise<void>;
   openaiKey: string;
   /** Where OpenAI is; the tests point it at a fake. */
   upstreamUrl?: string;
-  log?: (line: string) => void;
+  /** Where log lines go; `ERROR` marks what someone should look at. */
+  log?: (line: string, severity?: Severity) => void;
 };
+
+export type Severity = "INFO" | "ERROR";
+
+/**
+ * Cloud Run reads a JSON line on stdout as a log entry with its own severity,
+ * which is how an ERROR here becomes one in Cloud Logging.
+ */
+function writeLog(line: string, severity: Severity = "INFO") {
+  console.log(severity === "ERROR" ? JSON.stringify({ severity, message: line }) : line);
+}
+
+/** What the app is told when OpenAI is the one that failed. */
+export const UPSTREAM_MESSAGE = "TeleKey's Instant service is having trouble. Nothing was charged.";
+
+/** What the app is told when something of TeleKey's own broke. The same as the Functions API's. */
+export const UNEXPECTED_MESSAGE = "Something went wrong on TeleKey's side. Try again.";
 
 /** Long enough for a slow handshake, short enough to fall back to Standard in time. */
 const UPSTREAM_TIMEOUT_MS = 10_000;
 
 export function createRelay(deps: RelayDeps): Server {
-  const log = deps.log ?? ((line: string) => console.log(line));
+  const log = deps.log ?? writeLog;
   const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024 });
 
   const server = createServer((req, res) => {
@@ -76,10 +104,19 @@ export function createRelay(deps: RelayDeps): Server {
     try {
       member = await deps.admit(req.headers.authorization);
     } catch (err) {
-      const status = Number((err as { status?: number }).status ?? 500);
+      // TeleKey's own refusals (sign-in, tester list, balance) carry a status
+      // below 500 and a message written for people. Anything else is
+      // unexpected, and its message can name environment variables or
+      // Firestore internals: the app gets a fixed sentence, the log the cause.
+      const asked = Number((err as { status?: number }).status ?? 500);
+      const status = Number.isInteger(asked) && asked >= 400 && asked <= 599 ? asked : 500;
+      if (status >= 500) {
+        log(`admit failed: ${err instanceof Error ? err.message : String(err)}`, "ERROR");
+        refuse(socket, status, { error: UNEXPECTED_MESSAGE });
+        return;
+      }
       const code = (err as { code?: unknown }).code;
       const message = err instanceof Error ? err.message : "Something went wrong.";
-      if (status >= 500) log(`admit failed: ${message}`);
       refuse(socket, status, typeof code === "string" ? { error: message, code } : { error: message });
       return;
     }
@@ -88,8 +125,9 @@ export function createRelay(deps: RelayDeps): Server {
     try {
       upstream = await openUpstream(deps.upstreamUrl ?? OPENAI_LIVE_URL, deps.openaiKey);
     } catch (err) {
-      log(`upstream failed for ${member.uid}: ${(err as Error).message}`);
-      refuse(socket, 502, { error: "Instant is unavailable right now.", code: "upstream" });
+      // `HTTP 401` or `HTTP 429` here is OpenAI refusing TeleKey's key.
+      log(`upstream failed for ${member.uid}: ${(err as Error).message}`, "ERROR");
+      refuse(socket, 503, { error: UPSTREAM_MESSAGE, code: "upstream" });
       return;
     }
 
@@ -101,6 +139,7 @@ export function createRelay(deps: RelayDeps): Server {
     // billed. Turns complete in the order they were committed.
     let pending = 0;
     let total = 0;
+    let billed = 0;
     const committed: number[] = [];
     // Upstream messages are handled one at a time, so a transcript held up
     // by the charge is not overtaken by whatever OpenAI sends after it.
@@ -127,7 +166,11 @@ export function createRelay(deps: RelayDeps): Server {
           send(upstream, action.message);
           return;
         case "commit":
-          committed.push(pending);
+          // An empty commit is still passed on (OpenAI refuses it, as it
+          // would without the relay), but it takes no place in the billing
+          // queue: queued as 0 bytes, it would be matched to the next real
+          // transcript and bill that one nothing.
+          if (pending > 0) committed.push(pending);
           pending = 0;
           send(upstream, action.message);
           return;
@@ -149,18 +192,35 @@ export function createRelay(deps: RelayDeps): Server {
           send(client, action.message);
           return;
         }
+        if (action.kind === "failed") {
+          log(`upstream error for ${member.uid}: ${action.detail}`, "ERROR");
+          send(client, errorEvent("upstream", UPSTREAM_MESSAGE));
+          return;
+        }
 
-        const seconds = billedSeconds(committed.shift() ?? 0, action.event.usage);
-        const units: Units = { ...noUnits(), dictations: 1, liveTranscribeSeconds: seconds };
+        // Charged to the byte; the app is told the nearest whole second.
+        // Never less than the audio streamed and not yet billed: a session
+        // ends after its one transcript, and every byte sent on was paid for
+        // upstream, whatever the client did with commits and clears.
+        const bytes = Math.max(committed.shift() ?? 0, total - billed);
+        billed += bytes;
+        const seconds = billedSeconds(bytes, action.event.usage);
+        const units: Units = {
+          ...noUnits(),
+          dictations: 1,
+          liveTranscribeSeconds: unitSeconds(seconds),
+        };
         send(client, JSON.stringify({ ...action.event, units }));
         try {
           const charging = Date.now();
-          await deps.charge(member, units);
-          log(`charged ${member.uid} for ${seconds} s in ${Date.now() - charging} ms`);
+          await deps.charge(member, units, { liveSeconds: seconds });
+          log(
+            `charged ${member.uid} for ${seconds.toFixed(3)} s in ${Date.now() - charging} ms`,
+          );
         } catch (err) {
           // The words are already with the user; the books are what failed.
           const message = err instanceof Error ? err.message : String(err);
-          log(`CHARGE FAILED for ${member.uid}, ${seconds} s: ${message}`);
+          log(`CHARGE FAILED for ${member.uid}, ${seconds.toFixed(3)} s: ${message}`, "ERROR");
         }
         send(client, JSON.stringify({ type: "telekey.charged" }));
         client.close(1000, "done");
@@ -182,7 +242,9 @@ export function createRelay(deps: RelayDeps): Server {
     client.on("close", closeBoth);
     upstream.on("close", closeBoth);
     client.on("error", (err) => log(`client error for ${member.uid}: ${err.message}`));
-    upstream.on("error", (err) => log(`upstream error for ${member.uid}: ${err.message}`));
+    upstream.on("error", (err) =>
+      log(`upstream socket error for ${member.uid}: ${err.message}`, "ERROR"),
+    );
   }
 
   return server;
@@ -220,7 +282,9 @@ function openUpstream(url: string, key: string): Promise<Upstream> {
     socket.once("unexpected-response", (_req, res) => {
       clearTimeout(timer);
       socket.terminate();
-      reject(new Error(`HTTP ${res.statusCode}`));
+      // Status and OpenAI's request id only; the body is never read or logged.
+      const request = logField(res.headers["x-request-id"]);
+      reject(new Error(`HTTP ${res.statusCode} request=${request}`));
     });
     socket.once("error", (err) => {
       clearTimeout(timer);

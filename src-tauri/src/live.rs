@@ -518,7 +518,10 @@ impl WsSocket {
 }
 
 /// A refused handshake as the person reading the log should see it. The relay
-/// answers in JSON (`{"error": "Out of credits — …"}`), OpenAI likewise.
+/// answers in JSON (`{"error": "Out of credits — …"}`), OpenAI likewise. When
+/// OpenAI is what failed, the relay says so in its own words with a 503 (not
+/// OpenAI's 401 or 429, which would read as the person's own sign-in or
+/// balance); an unreadable 500, 502, 503 or 504 is the same kind of failure.
 fn refusal(err: tungstenite::HandshakeError<tungstenite::ClientHandshake<MaybeTlsStream<TcpStream>>>) -> anyhow::Error {
     match err {
         tungstenite::HandshakeError::Failure(tungstenite::Error::Http(response)) => {
@@ -541,6 +544,9 @@ fn refusal(err: tungstenite::HandshakeError<tungstenite::ClientHandshake<MaybeTl
                 (401, true) => anyhow!("Instant refused the credential (401)"),
                 (402, true) => anyhow!("Out of credits — buy more in TeleKey."),
                 (403, true) => anyhow!("Instant is not available to this account (403)"),
+                (500 | 502 | 503 | 504, true) => {
+                    anyhow!("Instant is unavailable right now ({status})")
+                }
                 _ => anyhow!("Instant refused the connection ({status})"),
             }
         }
@@ -823,6 +829,22 @@ mod tests {
     }
 
     #[test]
+    fn the_relays_upstream_error_fails_the_session_in_plain_words() {
+        let mut socket = FakeSocket::openai("x", json!(null));
+        socket.replies.lock().clear();
+        socket.reply(
+            "session.update",
+            json!({ "type": "error", "error": { "type": "telekey_error", "code": "upstream", "message": "TeleKey's Instant service is having trouble. Nothing was charged." } }),
+        );
+        let err = finished(&mut socket, &FakeAudio::seconds(1.0)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "TeleKey's Instant service is having trouble. Nothing was charged."
+        );
+        assert!(!err.to_string().to_lowercase().contains("credit"), "{err}");
+    }
+
+    #[test]
     fn a_tap_on_the_key_is_too_short_to_commit() {
         let mut socket = FakeSocket::openai("x", json!(null));
         let err = finished(&mut socket, &FakeAudio::seconds(0.05)).unwrap_err();
@@ -935,8 +957,9 @@ mod tests {
         assert_eq!(appended, BYTES_PER_SECOND);
     }
 
-    #[test]
-    fn a_refused_handshake_reads_as_the_servers_reason() {
+    /// A server that answers the WebSocket handshake with `status_line` and
+    /// `body`, and the error `WsSocket::connect` makes of it.
+    fn refused_handshake(status_line: &'static str, body: &'static str) -> String {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         std::thread::spawn(move || {
@@ -952,18 +975,60 @@ mod tests {
                     Ok(n) => request.extend_from_slice(&buf[..n]),
                 }
             }
-            let body = r#"{"error":"Out of credits — buy more in TeleKey.","code":"out_of_credits"}"#;
             // One write, as the relay sends it: the client only reads the
             // part of the body that came with the headers.
             let response = format!(
-                "HTTP/1.1 402 Payment Required\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             );
             let _ = stream.write_all(response.as_bytes());
         });
-        let err = WsSocket::connect(&format!("ws://127.0.0.1:{port}/v1/realtime"), "token")
+        WsSocket::connect(&format!("ws://127.0.0.1:{port}/v1/realtime"), "token")
             .err()
-            .expect("the handshake should be refused");
-        assert_eq!(err.to_string(), "Out of credits — buy more in TeleKey.");
+            .expect("the handshake should be refused")
+            .to_string()
+    }
+
+    #[test]
+    fn a_refused_handshake_reads_as_the_servers_reason() {
+        let body = r#"{"error":"Out of credits — buy more in TeleKey.","code":"out_of_credits"}"#;
+        assert_eq!(
+            refused_handshake("402 Payment Required", body),
+            "Out of credits — buy more in TeleKey."
+        );
+    }
+
+    #[test]
+    fn a_relay_that_cannot_reach_openai_says_so_in_its_own_words() {
+        let body = r#"{"error":"TeleKey's Instant service is having trouble. Nothing was charged.","code":"upstream"}"#;
+        let message = refused_handshake("503 Service Unavailable", body);
+        assert_eq!(message, "TeleKey's Instant service is having trouble. Nothing was charged.");
+        assert!(!message.to_lowercase().contains("credit"), "{message}");
+    }
+
+    #[test]
+    fn an_unreadable_503_is_still_a_plain_sentence() {
+        let message = refused_handshake("503 Service Unavailable", "upstream connect error");
+        assert_eq!(message, "Instant is unavailable right now (503)");
+    }
+
+    #[test]
+    fn an_unreadable_500_502_or_504_is_the_same_plain_sentence() {
+        for (line, status) in [
+            ("500 Internal Server Error", 500),
+            ("502 Bad Gateway", 502),
+            ("504 Gateway Timeout", 504),
+        ] {
+            let message = refused_handshake(line, "<html><body>Error</body></html>");
+            assert_eq!(message, format!("Instant is unavailable right now ({status})"));
+        }
+    }
+
+    #[test]
+    fn a_500_with_the_relays_own_sentence_shows_it() {
+        let body = r#"{"error":"Something went wrong on TeleKey's side. Try again."}"#;
+        let message = refused_handshake("500 Internal Server Error", body);
+        assert_eq!(message, "Something went wrong on TeleKey's side. Try again.");
+        assert!(!message.to_lowercase().contains("credit"), "{message}");
     }
 }

@@ -5,10 +5,12 @@ import { test } from "node:test";
 import {
   base64Bytes,
   billedSeconds,
+  failureDetail,
   fromClient,
   fromServer,
   LIVE_MODEL,
   MAX_PROMPT_CHARS,
+  unitSeconds,
 } from "../src/protocol";
 
 test("the model is always gpt-live-transcribe, whatever the client asks", () => {
@@ -108,12 +110,73 @@ test("partial text is never forwarded; the final transcript is billed first", ()
   assert.equal(fromServer(JSON.stringify({ type: "session.updated" })).kind, "forward");
 });
 
-test("a turn is charged for the audio sent or OpenAI's figure, whichever is more", () => {
-  // 11.9 s forwarded, OpenAI says 12: both round to 12.
-  assert.equal(billedSeconds(571_200, { type: "duration", seconds: 12 }), 12);
+test("a turn is charged for the audio sent, to the byte, not rounded up", () => {
+  // 1.4 s forwarded: 1.4 s, not 2.
+  assert.ok(Math.abs(billedSeconds(67_200, undefined) - 1.4) < 1e-12);
+  // 11.9 s forwarded, OpenAI says 12 (the same audio, rounded up): 11.9.
+  assert.ok(Math.abs(billedSeconds(571_200, { type: "duration", seconds: 12 }) - 11.9) < 1e-12);
   // OpenAI says less than was sent: the audio wins.
   assert.equal(billedSeconds(48_000 * 5, { type: "duration", seconds: 3 }), 5);
   // Token usage, or none at all: the audio alone.
-  assert.equal(billedSeconds(48_000 * 2 + 1, { type: "tokens", input_tokens: 9 }), 3);
+  assert.equal(billedSeconds(48_000 * 2 + 24_000, { type: "tokens", input_tokens: 9 }), 2.5);
   assert.equal(billedSeconds(0, undefined), 0);
+  assert.equal(billedSeconds(-10, undefined), 0);
+});
+
+test("OpenAI counting more than a whole second beyond what was sent is believed", () => {
+  // 2 s forwarded, OpenAI says 5: it counted audio the relay did not send.
+  assert.equal(billedSeconds(96_000, { type: "duration", seconds: 5 }), 5);
+  // Exactly the forwarded length rounded up is not "more".
+  assert.equal(billedSeconds(96_000, { type: "duration", seconds: 2 }), 2);
+  // A garbled figure is ignored.
+  assert.equal(billedSeconds(96_000, { type: "duration", seconds: Number.NaN }), 2);
+  assert.equal(billedSeconds(96_000, { type: "duration", seconds: "9" }), 2);
+  assert.equal(billedSeconds(96_000, { type: "duration", seconds: Infinity }), 2);
+});
+
+test("the app is told whole seconds: the nearest, and one at least for any audio", () => {
+  assert.equal(unitSeconds(1.4), 1);
+  assert.equal(unitSeconds(1.5), 2);
+  assert.equal(unitSeconds(0.2), 1);
+  assert.equal(unitSeconds(12), 12);
+  assert.equal(unitSeconds(0), 0);
+});
+
+test("OpenAI's errors are not forwarded; they become a log line without the key", () => {
+  const quota = JSON.stringify({
+    type: "error",
+    error: {
+      type: "insufficient_quota",
+      code: "insufficient_quota",
+      message: "You exceeded your current quota (sk-proj-AbCdEf123456).",
+    },
+  });
+  const action = fromServer(quota);
+  assert.equal(action.kind, "failed");
+  const detail = (action as { detail: string }).detail;
+  assert.equal(detail, "event=error type=insufficient_quota code=insufficient_quota request=-");
+  assert.ok(!detail.includes("AbCdEf123456"));
+  assert.ok(!detail.includes("exceeded"));
+
+  const failed = fromServer(
+    JSON.stringify({
+      type: "conversation.item.input_audio_transcription.failed",
+      error: { type: "server_error", message: "oops" },
+    }),
+  );
+  assert.equal(failed.kind, "failed");
+  assert.equal(fromServer(JSON.stringify({ type: "session.created" })).kind, "forward");
+  assert.match(failureDetail({ type: "error" }), /type=- code=-/);
+  // Only identifiers are logged; whatever else OpenAI put in a field is not,
+  // and neither is its message, which can quote the dictation's own words.
+  const quoting = failureDetail({
+    type: "error",
+    event_id: "event_9f3",
+    error: {
+      type: "invalid_request_error",
+      code: "invalid value: Zoë Hartwell",
+      message: 'Keyword "Zoë Hartwell" in prompt "draft to my landlord" is invalid.',
+    },
+  });
+  assert.equal(quoting, "event=error type=invalid_request_error code=- request=event_9f3");
 });

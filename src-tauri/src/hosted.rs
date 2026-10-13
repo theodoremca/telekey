@@ -158,13 +158,32 @@ struct HostedText {
     units: Option<Units>,
 }
 
+/// What the person is told when TeleKey's server failed and said nothing
+/// readable (a proxy's HTML page, an empty body). No "credit" in it: the
+/// overlay opens the Buy credits window for any failure that says so.
+const TROUBLE: &str = "TeleKey is having trouble right now — try again in a moment";
+
+/// A failed request as a sentence for the person. 401, 402 and 429 are
+/// TeleKey's own sign-in, balance and rate guard. The server answers 503 when
+/// OpenAI is what failed (a revoked key, an exhausted quota) and 500 when
+/// something of its own broke, each with a message written for people ("…
+/// Nothing was charged."), so that is shown as it is. A 500, 502, 503 or 504
+/// from Google's front end or a proxy has an HTML or plain-text body instead,
+/// and none of that belongs in the capsule. Only the server's own JSON
+/// `error` string is ever shown; the body itself never is.
 fn hosted_error(status: u16, body: &str) -> anyhow::Error {
-    let detail = extract_error(body).unwrap_or_else(|| body.chars().take(180).collect());
     match status {
         401 => anyhow!("Session expired — sign in again"),
         402 => anyhow!("Out of credits — buy more in TeleKey"),
         429 => anyhow!("busy — try again"),
-        _ => anyhow!("{detail}"),
+        500 | 502 | 503 | 504 => match extract_error(body) {
+            Some(message) => anyhow!("{message}"),
+            None => anyhow!("{TROUBLE}"),
+        },
+        _ => match extract_error(body) {
+            Some(message) => anyhow!("{message}"),
+            None => anyhow!("TeleKey could not complete that (error {status}) — try again in a moment"),
+        },
     }
 }
 
@@ -278,5 +297,97 @@ mod tests {
         assert!(hosted_error(402, r#"{"error":"nope"}"#)
             .to_string()
             .contains("credits"));
+    }
+
+    #[test]
+    fn telekeys_own_refusals_keep_their_wording() {
+        assert_eq!(
+            hosted_error(401, r#"{"error":"x"}"#).to_string(),
+            "Session expired — sign in again"
+        );
+        assert_eq!(hosted_error(429, "").to_string(), "busy — try again");
+        assert_eq!(
+            hosted_error(403, r#"{"error":"a@b.c is not on the list."}"#).to_string(),
+            "a@b.c is not on the list."
+        );
+    }
+
+    #[test]
+    fn a_503_shows_the_servers_message() {
+        let body = r#"{"error":"TeleKey's transcription service is having trouble. Nothing was charged.","code":"upstream"}"#;
+        let message = hosted_error(503, body).to_string();
+        assert_eq!(
+            message,
+            "TeleKey's transcription service is having trouble. Nothing was charged."
+        );
+        // The overlay opens the Buy credits window for any failure that says credit.
+        assert!(!message.to_lowercase().contains("credit"), "{message}");
+    }
+
+    #[test]
+    fn a_503_that_is_not_ours_is_a_plain_sentence() {
+        let message =
+            hosted_error(503, "<html><body>Service Unavailable</body></html>").to_string();
+        assert_eq!(message, "TeleKey is having trouble right now — try again in a moment");
+        assert!(!message.to_lowercase().contains("credit"));
+    }
+
+    #[test]
+    fn a_500_502_or_504_follows_the_same_rule_as_a_503() {
+        let html = "<html><body><h1>Error</h1><p>Server Error</p></body></html>";
+        for status in [500, 502, 503, 504] {
+            // No readable body: a plain sentence, never the markup.
+            for body in [html, "", "upstream connect error", "   "] {
+                let message = hosted_error(status, body).to_string();
+                assert_eq!(
+                    message,
+                    "TeleKey is having trouble right now — try again in a moment",
+                    "{status} {body:?}"
+                );
+            }
+            // The server's own sentence, when it sent one.
+            let json = r#"{"error":"Something went wrong on TeleKey's side. Try again."}"#;
+            assert_eq!(
+                hosted_error(status, json).to_string(),
+                "Something went wrong on TeleKey's side. Try again."
+            );
+        }
+    }
+
+    #[test]
+    fn no_server_failure_message_opens_the_buy_credits_window() {
+        for status in [500, 502, 503, 504] {
+            let message = hosted_error(status, "").to_string().to_lowercase();
+            assert!(!message.contains("credit"), "{status}: {message}");
+        }
+    }
+
+    #[test]
+    fn raw_html_is_never_shown_for_any_status() {
+        let html = "<!DOCTYPE html><html><head><title>413 Request Entity Too Large</title></head></html>";
+        for status in [400, 403, 404, 413, 500, 502, 503, 504] {
+            let message = hosted_error(status, html).to_string();
+            assert!(!message.contains('<'), "{status}: {message}");
+            assert!(!message.to_lowercase().contains("html"), "{status}: {message}");
+            assert!(!message.to_lowercase().contains("credit"), "{status}: {message}");
+        }
+        assert_eq!(
+            hosted_error(404, html).to_string(),
+            "TeleKey could not complete that (error 404) — try again in a moment"
+        );
+    }
+
+    #[test]
+    fn a_request_the_server_rejected_shows_its_sentence() {
+        let body = r#"{"error":"That recording could not be transcribed. Try a shorter one.","code":"rejected"}"#;
+        assert_eq!(
+            hosted_error(400, body).to_string(),
+            "That recording could not be transcribed. Try a shorter one."
+        );
+        let body = r#"{"error":"That recording is too long to transcribe. Try a shorter one."}"#;
+        assert_eq!(
+            hosted_error(413, body).to_string(),
+            "That recording is too long to transcribe. Try a shorter one."
+        );
     }
 }

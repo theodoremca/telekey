@@ -2,11 +2,33 @@
  * The credit ledger in Firestore: one document per user, holding the balance,
  * with a usage subcollection. Shared by the Functions API and the Instant
  * relay. Callers must have called `initializeApp()` first.
+ *
+ * The balance is `balanceCents`, whole cents, which is all anyone sees. A
+ * dictation costs a fraction of a cent, so what has been used but not yet
+ * taken from the balance is kept beside it as `owedMicrocents` (0 up to just
+ * under a cent; missing means 0) and every charge settles against it
+ * (`carryCharge`). The money a person really has left is
+ * `balanceCents` cents minus `owedMicrocents`.
+ *
+ * The functions that write take the database as a last argument only so the
+ * tests can pass a fake; callers leave it out.
  */
 
-import { FieldValue, getFirestore, type DocumentReference } from "firebase-admin/firestore";
+import {
+  FieldValue,
+  getFirestore,
+  type DocumentReference,
+  type Firestore,
+} from "firebase-admin/firestore";
 
-import { MIN_CENTS, type Units } from "./pricing";
+import {
+  carryCharge,
+  costMicrocents,
+  hasCredit,
+  wholeMicrocents,
+  type Exact,
+  type Units,
+} from "./pricing";
 
 export type Prefix = "staging" | "production";
 
@@ -44,7 +66,8 @@ export async function ensureUser(
 /** Refuse before spending OpenAI's time when there is nothing to charge. */
 export async function requireBalance(ref: DocumentReference) {
   const snap = await ref.get();
-  if (Number(snap.get("balanceCents") ?? 0) < MIN_CENTS) {
+  const balance = Number(snap.get("balanceCents") ?? 0);
+  if (!hasCredit(balance, wholeMicrocents(snap.get("owedMicrocents")))) {
     throw Object.assign(new Error("Out of credits — buy more in TeleKey."), {
       status: 402,
       code: "out_of_credits",
@@ -52,35 +75,49 @@ export async function requireBalance(ref: DocumentReference) {
   }
 }
 
-/** Charge `cost` cents for `units`, and return the balance after. */
-export async function debit(prefix: Prefix, uid: string, units: Units, cost: number) {
-  const db = getFirestore();
+/**
+ * Charge for `units` exactly, and return the balance after in whole cents.
+ *
+ * Refuses (402) when the whole cents due are more than the balance. The
+ * sub-cent part is never refused, so a person can use the last of their
+ * balance down to the microcent; they end at most a cent short, and
+ * `requireBalance` stops the next dictation.
+ */
+export async function debit(
+  prefix: Prefix,
+  uid: string,
+  units: Units,
+  db: Firestore = getFirestore(),
+) {
   const userRef = db.collection(usersCol(prefix)).doc(uid);
-  await db.runTransaction(async (tx) => {
+  const exact = costMicrocents(units);
+  return db.runTransaction(async (tx) => {
     const snap = await tx.get(userRef);
     const balance = Number(snap.get("balanceCents") ?? 0);
     const lastAt = Number(snap.get("lastTranscribeAt") ?? 0);
     if (Date.now() - lastAt < PER_UID_GAP_MS) {
       throw Object.assign(new Error("Slow down a moment."), { status: 429 });
     }
-    if (balance < cost) {
+    const { cents, owedMicrocents } = carryCharge(wholeMicrocents(snap.get("owedMicrocents")), exact);
+    if (balance < cents) {
       throw Object.assign(new Error("Out of credits — buy more in TeleKey."), {
         status: 402,
         code: "out_of_credits",
       });
     }
     tx.update(userRef, {
-      balanceCents: balance - cost,
+      balanceCents: balance - cents,
+      owedMicrocents,
       lastTranscribeAt: Date.now(),
     });
     tx.set(userRef.collection("usage").doc(), {
       ...units,
-      costCents: cost,
+      costMicrocents: exact,
+      costCents: cents,
       at: FieldValue.serverTimestamp(),
     });
+    return balance - cents;
   });
-  const after = await userRef.get();
-  return Number(after.get("balanceCents") ?? 0);
 }
 
 /**
@@ -92,20 +129,38 @@ export async function debit(prefix: Prefix, uid: string, units: Units, cost: num
  * left takes the balance below zero, and that debt is paid off by the next
  * purchase. Nothing more can be dictated meanwhile, since every dictation
  * first checks for a positive balance (`requireBalance`).
+ *
+ * Carrying the sub-cent remainder needs the current figure, so this reads
+ * before it writes, in a transaction; that costs tens of milliseconds, which
+ * is fine after the words are with the user.
+ *
+ * `units` holds whole seconds (the desktop counts them as integers); `measured`
+ * is the fractional figure the charge is really computed from, and is what the
+ * usage record's `costMicrocents` reflects.
  */
-export async function chargeDelivered(prefix: Prefix, uid: string, units: Units, cost: number) {
-  const db = getFirestore();
+export async function chargeDelivered(
+  prefix: Prefix,
+  uid: string,
+  units: Units,
+  measured: Exact = {},
+  db: Firestore = getFirestore(),
+) {
   const userRef = db.collection(usersCol(prefix)).doc(uid);
-  const batch = db.batch();
-  batch.update(userRef, {
-    balanceCents: FieldValue.increment(-cost),
-    lastTranscribeAt: Date.now(),
+  const exact = costMicrocents(units, measured);
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(userRef);
+    const balance = Number(snap.get("balanceCents") ?? 0);
+    const { cents, owedMicrocents } = carryCharge(wholeMicrocents(snap.get("owedMicrocents")), exact);
+    tx.update(userRef, {
+      balanceCents: balance - cents,
+      owedMicrocents,
+      lastTranscribeAt: Date.now(),
+    });
+    tx.set(userRef.collection("usage").doc(), {
+      ...units,
+      costMicrocents: exact,
+      costCents: cents,
+      at: FieldValue.serverTimestamp(),
+    });
   });
-  batch.set(userRef.collection("usage").doc(), {
-    ...units,
-    costCents: cost,
-    at: FieldValue.serverTimestamp(),
-  });
-  await batch.commit();
 }
-

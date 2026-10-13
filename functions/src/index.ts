@@ -17,10 +17,13 @@ import { onRequest } from "firebase-functions/v2/https";
 import OpenAI, { toFile } from "openai";
 import Stripe from "stripe";
 
+import { billedTranscribeSeconds, MAX_UPLOAD_BYTES } from "./audio";
 import { requireMember } from "./auth";
+import { failureResponse, TOO_LARGE_MESSAGE, type Subject } from "./errors";
 import { parseList, parsePrompt } from "./headers";
 import { debit, ensureUser, packsCol, requireBalance, usersCol, type Prefix } from "./ledger";
-import { costCents, noUnits, type Units } from "./pricing";
+import { noUnits, type Units } from "./pricing";
+import { billedPolishUnits } from "./polish";
 import { parseTesters } from "./testers";
 
 initializeApp();
@@ -107,22 +110,25 @@ function rawBody(req: express.Request): Buffer {
   return Buffer.alloc(0);
 }
 
-function usageSeconds(result: { usage?: { seconds?: number } }): number {
-  const seconds = result.usage?.seconds;
-  return typeof seconds === "number" ? Math.round(seconds) : 0;
-}
-
+/**
+ * Answer a failed request (errors.ts says how). What OpenAI refused because
+ * of the request is a WARN; any other failure of OpenAI's, and anything
+ * unexpected, is an ERROR carrying the real cause, which the person never sees.
+ */
 function fail(
   res: { status: (n: number) => { json: (b: unknown) => void } },
   err: unknown,
+  subject?: Subject,
 ) {
-  const status = Number((err as { status?: number }).status ?? 500);
-  const code = (err as { code?: unknown }).code;
-  const message = err instanceof Error ? err.message : "Something went wrong.";
-  if (status >= 500) {
+  const failure = failureResponse(err, subject);
+  if (failure.level === "warn") {
+    console.warn(failure.log);
+  } else if (failure.log) {
+    console.error(failure.log);
+  } else if (failure.status >= 500) {
     console.error(err);
   }
-  json(res, status, typeof code === "string" ? { error: message, code } : { error: message });
+  json(res, failure.status, failure.body);
 }
 
 function stripFunctionName(req: express.Request, _res: express.Response, next: express.NextFunction) {
@@ -168,6 +174,11 @@ function createApp(stage: Stage): express.Express {
         json(res, 400, { error: "recording too short" });
         return;
       }
+      // OpenAI refuses more than 25 MB; say so here, before spending a call.
+      if (wav.length > MAX_UPLOAD_BYTES) {
+        json(res, 413, { error: TOO_LARGE_MESSAGE });
+        return;
+      }
 
       const openai = new OpenAI({ apiKey: stage.openai() });
       const file = await toFile(wav, "speech.wav", { type: "audio/wav" });
@@ -186,16 +197,16 @@ function createApp(stage: Stage): express.Express {
         prompt,
       });
 
+      const reported = (result as { usage?: { seconds?: number } }).usage?.seconds;
       const units: Units = {
         ...noUnits(),
         dictations: 1,
-        transcribeSeconds: usageSeconds(result),
+        transcribeSeconds: billedTranscribeSeconds(reported, wav),
       };
-      const cost = costCents(units);
-      const balanceCents = await debit(stage.prefix, user.uid, units, cost);
+      const balanceCents = await debit(stage.prefix, user.uid, units);
       json(res, 200, { text: (result.text ?? "").trim(), units, balanceCents });
     } catch (err) {
-      fail(res, err);
+      fail(res, err, "recording");
     }
   });
 
@@ -218,22 +229,19 @@ function createApp(stage: Stage): express.Express {
         reasoning: { effort: "low" },
         instructions: instruction,
         input: text,
+        // The user's dictated words are not kept in TeleKey's OpenAI dashboard.
+        store: false,
       });
 
-      const usage = result.usage;
-      const units: Units = {
-        ...noUnits(),
-        polishInputTokens: usage?.input_tokens ?? 0,
-        polishCachedTokens: usage?.input_tokens_details?.cached_tokens ?? 0,
-        polishOutputTokens: usage?.output_tokens ?? 0,
-      };
-      const cost = costCents(units);
-      const balanceCents = await debit(stage.prefix, user.uid, units, cost);
       const output =
         typeof result.output_text === "string" ? result.output_text.trim() : text;
+      // OpenAI's token counts; the text's length stands in if it sent none, so
+      // a rewrite is never free.
+      const units = billedPolishUnits(result.usage, instruction, text, output);
+      const balanceCents = await debit(stage.prefix, user.uid, units);
       json(res, 200, { text: output || text, units, balanceCents });
     } catch (err) {
-      fail(res, err);
+      fail(res, err, "text");
     }
   });
 
@@ -346,6 +354,12 @@ function createApp(stage: Stage): express.Express {
     json(res, 200, { received: true });
   });
 
+  // Errors raised before a route runs (an upload over the limit, a body that
+  // is not JSON) get the same JSON answer, not Express's HTML page.
+  app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    fail(res, err);
+  });
+
   return app;
 }
 
@@ -374,7 +388,7 @@ export const api = onRequest(
   httpsOpts,
   createApp({
     prefix: "production",
-    siteUrl: () => optionalEnv("TELEKEY_SITE_URL_PRODUCTION", "https://telekey.vercel.app"),
+    siteUrl: () => optionalEnv("TELEKEY_SITE_URL_PRODUCTION", "https://www.telekey.app"),
     openai: () => requiredEnv("OPENAI_API_KEY"),
     stripe: () => requiredEnv("STRIPE_SECRET_KEY_PRODUCTION"),
     webhook: () => requiredEnv("STRIPE_WEBHOOK_SECRET_PRODUCTION"),

@@ -13,7 +13,6 @@ import {
   requireBalance,
   type Prefix,
 } from "../../functions/src/ledger";
-import { costCents } from "../../functions/src/pricing";
 import { parseTesters } from "../../functions/src/testers";
 import { createRelay } from "./relay";
 
@@ -39,8 +38,8 @@ const server = createRelay({
     await requireBalance(ref);
     return { uid: user.uid, email: user.email };
   },
-  charge(member, units) {
-    return chargeDelivered(prefix, member.uid, units, costCents(units));
+  charge(member, units, exact) {
+    return chargeDelivered(prefix, member.uid, units, exact);
   },
 });
 
