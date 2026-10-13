@@ -131,31 +131,50 @@ bun run dev              # Next.js on :3000
 bun run build            # must pass, along with `bun run tsc --noEmit`
 ```
 
-Deploying is by hand from `web/`; pushing to GitHub deploys nothing:
+Deploying is by hand from `web/`; pushing to GitHub deploys nothing. The
+**production** site is plain files on **Firebase Hosting**, site `telekey-app`
+in the same Google project as the server (`web/firebase.json`), not Vercel:
+Vercel's free Hobby plan is for non-commercial use only. **Staging** stays on
+Vercel, built the ordinary way:
 
 ```bash
-cd web && vercel deploy            # a Preview build; the URL is in the output
+cd web && STATIC_EXPORT=1 bun run build          # → web/out, static files; refuses while the Terms placeholder is unset
+XDG_CONFIG_HOME=$(mktemp -d) \
+GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcloud/application_default_credentials.json \
+firebase deploy --only hosting --project telekey-app --non-interactive   # production: www.telekey.app, telekey-app.web.app
+
+vercel deploy                                      # staging: a Preview build; the URL is in the output
 vercel alias set <that url> telekey-staging.vercel.app
-vercel deploy --prod               # www.telekey.app (the official address) follows
 ```
 
-The official address is **`https://www.telekey.app`**. Vercel's own domain
-setting sends the bare `telekey.app` to it, and `next.config.ts` sends
-`telekey.vercel.app` there too; never add a rule that redirects `www`
-anywhere, or the two loop. The staging alias and previews are never
-redirected, and every `*.vercel.app` host is served `X-Robots-Tag: noindex`.
+`STATIC_EXPORT=1` makes `next.config.ts` export instead of build for a server,
+and leaves out its `redirects()` and `headers()`, which only Vercel applies;
+`firebase.json` sets the private-page `X-Robots-Tag` for production. The export
+takes `NEXT_PUBLIC_*` from `web/.env` and `web/.env.production` on this Mac
+(the production API is `…cloudfunctions.net/api`, called directly, CORS on), so
+check those before building: a staging value there ships to the public site.
+`www.telekey.app` and `telekey.app` (which redirects to www) are Firebase
+custom domains; their DNS is in Cloudflare and must be "DNS only" (grey
+cloud), or Google cannot renew the certificate.
+
+The Vercel project must still hold `NEXT_PUBLIC_TELEKEY_API_BASE` and
+`NEXT_PUBLIC_FIREBASE_API_KEY` for Preview, because staging builds there.
+`.env*` files are neither committed nor uploaded, so a key that is only in a
+local `.env` builds fine on this Mac and ships a login page that says
+"Sign-in is not configured in this build". `vercel env ls` before deploying.
+
+The official address is **`https://www.telekey.app`**. Firebase sends the
+bare `telekey.app` to it (a custom domain with a redirect target), and on
+Vercel `next.config.ts` sends `telekey.vercel.app` there too; never add a rule
+that redirects `www` anywhere, or they loop. The staging alias and previews
+are never redirected, and every `*.vercel.app` host is served `X-Robots-Tag:
+noindex`.
 The app's Sign in, Stripe's return URLs (`TELEKEY_SITE_URL_PRODUCTION`) and
 Firebase's authorised domains must all name www. A production build refuses to
 finish while the Terms still show the governing-state placeholder
 (`GOVERNING_STATE` in `web/data/site.ts`). The privacy policy, terms and refund
 policy (`/privacy`, `/terms`, `/refunds`) make promises about what the app
 sends and keeps: change them with any feature that sends something new.
-
-The Vercel project must hold `NEXT_PUBLIC_TELEKEY_API_BASE` (staging origin for
-Preview, `/api` for Production) *and* `NEXT_PUBLIC_FIREBASE_API_KEY` for every
-environment. `.env*` files are neither committed nor uploaded, so a key that is
-only in a local `.env` builds fine on this Mac and ships a login page that says
-"Sign-in is not configured in this build". `vercel env ls` before deploying.
 
 Next.js Pages Router, Tailwind 4, GSAP. Pages are thin; the landing page is
 `web/screens/landing/`. Every word, link and figure is in `web/data/site.ts`,
