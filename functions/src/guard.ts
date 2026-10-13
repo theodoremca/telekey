@@ -137,7 +137,10 @@ export function createGuard(
               arm();
             }
           }, delay);
-          timer.unref?.();
+          // Not unref'd: the wait is at most a few seconds and always cleared,
+          // and an unref'd timer can be all that is pending (in a test, or a
+          // waiter whose caller's socket is already gone), which Node 22, the
+          // runtime in production, treats as nothing left to wait for.
         };
 
         const queue = queues.get(uid) ?? [];
