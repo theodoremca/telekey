@@ -73,6 +73,9 @@ export function Pricing() {
         <p data-reveal="rise" className="mt-8 mb-0 text-[15px] leading-relaxed text-ink-soft">
           <Rich parts={PRICING.coffee} linkClassName="text-ink" />
         </p>
+        <p data-reveal="rise" className="mt-3 mb-0 text-[15px] leading-relaxed text-ink-soft">
+          <Rich parts={PRICING.terms} linkClassName="text-ink" />
+        </p>
       </div>
     </section>
   );

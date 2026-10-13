@@ -45,12 +45,18 @@
     overflow-x: hidden;
   }
 
+  /* `clip`, not `hidden`: with `hidden` on both <html> and <body>, the body
+     becomes a scroll container of its own (it never scrolls, its height is
+     auto) and every `position: sticky` inside it, the header and the contents
+     list on the legal pages, silently stops sticking. `clip` still cuts off
+     sideways overflow without making a scroll container; the rule on <html>
+     above keeps the viewport itself from scrolling sideways. */
   body {
     margin: 0;
     background: var(--color-graphite);
     color: var(--color-ink);
     -webkit-font-smoothing: antialiased;
-    overflow-x: hidden;
+    overflow-x: clip;
   }
 
   ::selection {

@@ -118,6 +118,16 @@ export function Hero() {
             </KeycapLink>
           </div>
 
+          {/* Beside the Mac download: where the other installers are, and what
+              has and has not been tested. */}
+          <p
+            data-reveal="rise"
+            data-hero-copy=""
+            className="mt-4 mb-0 max-w-[46ch] font-mono text-[11px] leading-relaxed text-dim"
+          >
+            <Rich parts={HERO.platforms} linkClassName="text-glow" />
+          </p>
+
           <DemoKeys demo={demo} data-reveal="rise" data-hero-copy="" className="mt-9" />
 
           {/* The claim's receipt, last in the column: their price beside ours,

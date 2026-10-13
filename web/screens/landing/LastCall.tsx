@@ -30,9 +30,23 @@ export function LastCall() {
             {SIGN_IN.label}
           </KeycapLink>
         </div>
-        <p data-reveal="rise" data-reveal-at="0.9" className="mt-8 font-mono text-xs text-dim">
-          {LAST_CALL.note}
-        </p>
+        {/* Where it runs, said in full where someone is about to install, with a
+            way to the Windows and Linux installers beside the Mac key. */}
+        <div data-reveal="rise" data-reveal-at="0.9" className="mt-8 grid max-w-[64ch] gap-1.5 font-mono text-xs leading-relaxed text-dim">
+          {LAST_CALL.notes.map((note) => (
+            <p key={note} className="m-0">
+              {note}
+            </p>
+          ))}
+          <p className="m-0">
+            <a
+              href={LAST_CALL.all.href}
+              className="text-glow underline decoration-voice/70 decoration-2 underline-offset-[5px] transition-colors hover:decoration-voice"
+            >
+              {LAST_CALL.all.text}
+            </a>
+          </p>
+        </div>
       </div>
     </section>
   );

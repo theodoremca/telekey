@@ -1,5 +1,4 @@
-import Head from "next/head";
-
+import { Seo } from "@/components/Seo";
 import { BRAND, HERO } from "@/data/site";
 
 import { Everywhere } from "./Everywhere";
@@ -15,12 +14,12 @@ import { Privacy } from "./Privacy";
 export default function LandingScreen() {
   return (
     <>
-      <Head>
-        <title>{`${BRAND.name} — push-to-talk dictation`}</title>
-        <meta name="description" content={HERO.meta} />
-        <meta property="og:title" content={`${BRAND.name} — ${BRAND.tagline}`} />
-        <meta property="og:description" content={HERO.meta} />
-      </Head>
+      <Seo
+        title={`${BRAND.name} — push-to-talk dictation`}
+        shareTitle={`${BRAND.name} — ${BRAND.tagline}`}
+        description={HERO.meta}
+        path="/"
+      />
       <Hero />
       <Numbers />
       <HowItWorks />

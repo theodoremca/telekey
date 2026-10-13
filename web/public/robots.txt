@@ -1,0 +1,7 @@
+# TeleKey: https://www.telekey.app
+User-agent: *
+Allow: /
+Disallow: /account
+Disallow: /login
+
+Sitemap: https://www.telekey.app/sitemap.xml

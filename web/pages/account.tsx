@@ -1,9 +1,11 @@
-import Head from "next/head";
 import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
 import { onAuthStateChanged, signOut, type User } from "firebase/auth";
 
 import { KeycapButton, KeycapLink } from "@/components/Keycap";
+import { Rich } from "@/components/Rich";
+import { Seo } from "@/components/Seo";
+import { BUY_NOTICE } from "@/data/site";
 
 import { fetchAccount, isNotATester, money, startCheckout, type HostedAccount } from "../lib/api";
 import { firebaseAuth, isConfigured } from "../lib/firebase";
@@ -119,15 +121,18 @@ export default function Account() {
   };
 
   if (!isConfigured()) {
-    return <p className="m-0 text-[15px] text-ink-soft">Accounts are not configured in this build.</p>;
+    return (
+      <>
+        <Seo title="Account — TeleKey" path="/account" noindex />
+        <p className="m-0 text-[15px] text-ink-soft">Accounts are not configured in this build.</p>
+      </>
+    );
   }
 
   if (!user) {
     return (
       <>
-        <Head>
-          <title>Account — TeleKey</title>
-        </Head>
+        <Seo title="Account — TeleKey" path="/account" noindex />
         <h1 className={title}>Account</h1>
         <p className="mt-4 mb-8 text-[17px] leading-relaxed text-ink-soft">Sign in to see your credits.</p>
         <KeycapLink href="/login" variant="ink">
@@ -140,9 +145,7 @@ export default function Account() {
   if (notTester) {
     return (
       <>
-        <Head>
-          <title>Account — TeleKey</title>
-        </Head>
+        <Seo title="Account — TeleKey" path="/account" noindex />
         <h1 className={title}>Testers only</h1>
         <p className="mt-4 mb-2 max-w-[46ch] text-[17px] leading-relaxed text-ink-soft">
           This is TeleKey's test server, and only listed testers can use it.
@@ -164,9 +167,7 @@ export default function Account() {
 
   return (
     <>
-      <Head>
-        <title>Account — TeleKey</title>
-      </Head>
+      <Seo title="Account — TeleKey" path="/account" noindex />
       <h1 className={title}>Credits</h1>
       <p className="mt-3 mb-0 font-mono text-[13px] text-ink-soft">{user.email}</p>
 
@@ -201,6 +202,10 @@ export default function Account() {
             {account ? "Credit packs are loading…" : "Loading account…"}
           </p>
         )}
+
+        <p className="mt-5 mb-0 text-[13px] leading-relaxed text-ink-soft">
+          <Rich parts={BUY_NOTICE} linkClassName="text-ink" />
+        </p>
       </div>
 
       <div className="mt-6 flex flex-wrap gap-3">

@@ -1,4 +1,3 @@
-import Head from "next/head";
 import { useRouter } from "next/router";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -13,6 +12,9 @@ import {
 } from "firebase/auth";
 
 import { KeycapButton } from "@/components/Keycap";
+import { Rich } from "@/components/Rich";
+import { Seo } from "@/components/Seo";
+import { SIGN_IN_NOTICE } from "@/data/site";
 
 import { fetchAccount, isNotATester } from "../lib/api";
 import { firebaseAuth, isConfigured } from "../lib/firebase";
@@ -165,14 +167,17 @@ export default function Login() {
   };
 
   if (!isConfigured()) {
-    return <p className="m-0 text-[15px] text-ink-soft">Sign-in is not configured in this build.</p>;
+    return (
+      <>
+        <Seo title="Sign in — TeleKey" path="/login" noindex />
+        <p className="m-0 text-[15px] text-ink-soft">Sign-in is not configured in this build.</p>
+      </>
+    );
   }
 
   return (
     <>
-      <Head>
-        <title>Sign in — TeleKey</title>
-      </Head>
+      <Seo title="Sign in — TeleKey" path="/login" noindex />
       <h1 className="m-0 font-display text-[clamp(2.25rem,6vw,3.25rem)] font-bold leading-none tracking-[-0.035em]">
         {desktop ? "Sign in to TeleKey" : "Sign in"}
       </h1>
@@ -256,6 +261,10 @@ export default function Login() {
           )}
         </div>
       )}
+
+      <p className="mt-5 mb-0 max-w-[42ch] text-[13px] leading-relaxed text-ink-soft">
+        <Rich parts={SIGN_IN_NOTICE} linkClassName="text-ink" />
+      </p>
     </>
   );
 }

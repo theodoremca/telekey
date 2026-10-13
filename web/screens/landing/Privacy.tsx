@@ -3,7 +3,7 @@ import { PRIVACY } from "@/data/site";
 import { useSectionReveal } from "@/lib/sectionReveal";
 
 // Signature moment: the claim lands at full size, a rule draws under it, and
-// the four lamps switch on green one after another.
+// the lamps switch on green one after another.
 export function Privacy() {
   const reveal = useSectionReveal<HTMLElement>();
 
@@ -37,7 +37,10 @@ export function Privacy() {
           ))}
         </ul>
 
-        <div className="mt-12">
+        <div className="mt-12 flex flex-wrap gap-3">
+          <KeycapLink href={PRIVACY.policy.href} variant="paper">
+            {PRIVACY.policy.label}
+          </KeycapLink>
           <KeycapLink href={PRIVACY.source.href} variant="paper">
             {PRIVACY.source.label}
           </KeycapLink>

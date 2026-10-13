@@ -1,6 +1,6 @@
 # TeleKey — working notes for agents and contributors
 
-Push-to-talk dictation for macOS (Windows compiles; Linux untried). Rust + Tauri
+Push-to-talk dictation for macOS and Windows (Linux builds are offered untested). Rust + Tauri
 2 backend, React settings window, vanilla-TS overlay. Hold a shortcut → record →
 upload to OpenAI `gpt-transcribe` → paste at the cursor.
 
@@ -50,7 +50,7 @@ export APPLE_SIGNING_IDENTITY="<an Apple Development or Developer ID cert>"
 bun tauri build --bundles app      # → src-tauri/target/release/bundle/macos/TeleKey.app
 ./scripts/dev-sign.sh              # re-sign an existing bundle; auto-detects a certificate
 ./scripts/dmg.sh                   # → src-tauri/target/release/bundle/dmg/TeleKey_<ver>_<arch>.dmg
-./scripts/release.sh               # signed + notarised; needs the APPLE_* vars in RELEASING.md
+TELEKEY_STAGE=production ./scripts/release.sh   # signed + notarised; needs the APPLE_* vars in RELEASING.md
 ```
 
 ### Release (all platforms)
@@ -60,11 +60,23 @@ git tag v<version> && git push origin v<version>   # tag must equal the version 
 ```
 
 `.github/workflows/release.yml` then builds a universal macOS `.dmg`, a Windows
-`-setup.exe` and Linux `.deb`/`.AppImage`, and publishes the release. Running it
-by hand builds without publishing. Mac signing and notarisation need the
-`APPLE_CERTIFICATE*` / `APPLE_API_*` repo secrets in RELEASING.md; without them
-the Mac build is ad-hoc. The website's Download button points at
-`/releases/latest`.
+`-setup.exe` and Linux `.deb`/`.AppImage`, and publishes the release. **The tag
+decides the stage**, baked into the binary: a plain `vX.Y.Z` builds
+*production* and becomes the latest release (what the website's Download
+button and every installed copy's update check read); a tag with a suffix
+(`vX.Y.Z-rc.1`) builds *staging* and is published as a GitHub pre-release with
+no `latest.json`, so nobody is offered it. The versions in the three files
+must equal the tag without the `v`, suffix included. The publish job refuses a
+normal release unless every build recorded the production stage, the Mac build
+was notarised, and `latest.json` has a signed entry for all four platforms.
+Running the workflow by hand builds without publishing (stage is an input,
+staging by default); do that with an `-rc` version once before the first rc
+tag, since an NSIS installer with a pre-release version is still unverified.
+Mac signing and notarisation need the `APPLE_CERTIFICATE*` / `APPLE_API_*`
+repo secrets in RELEASING.md. Never untick "pre-release" on a staging release:
+it would become the latest and serve a staging build to everyone; tag a plain
+version instead. `scripts/release.sh` and `windows-setup.ps1 -Stage` refuse to
+build without a stage for the same reason.
 
 The release also carries `latest.json`, the update feed every installed copy
 (0.3.0 on) reads from `/releases/latest`: publishing a release offers it to
@@ -79,7 +91,7 @@ permissions silently never stick. See rule 2 below.
 ### Windows
 
 ```powershell
-.\scripts\windows-setup.ps1            # installs missing toolchain, then builds an NSIS .exe
+.\scripts\windows-setup.ps1 -Stage staging   # installs missing toolchain, then builds an NSIS .exe (or -Stage production)
 .\scripts\windows-setup.ps1 -SkipBuild # toolchain only
 .\scripts\windows-setup.ps1 -Msi       # .msi instead; needs the VBSCRIPT optional feature
 ```
@@ -112,8 +124,20 @@ Deploying is by hand from `web/`; pushing to GitHub deploys nothing:
 ```bash
 cd web && vercel deploy            # a Preview build; the URL is in the output
 vercel alias set <that url> telekey-staging.vercel.app
-vercel deploy --prod               # telekey.vercel.app follows automatically
+vercel deploy --prod               # www.telekey.app (the official address) follows
 ```
+
+The official address is **`https://www.telekey.app`**. Vercel's own domain
+setting sends the bare `telekey.app` to it, and `next.config.ts` sends
+`telekey.vercel.app` there too; never add a rule that redirects `www`
+anywhere, or the two loop. The staging alias and previews are never
+redirected, and every `*.vercel.app` host is served `X-Robots-Tag: noindex`.
+The app's Sign in, Stripe's return URLs (`TELEKEY_SITE_URL_PRODUCTION`) and
+Firebase's authorised domains must all name www. A production build refuses to
+finish while the Terms still show the governing-state placeholder
+(`GOVERNING_STATE` in `web/data/site.ts`). The privacy policy, terms and refund
+policy (`/privacy`, `/terms`, `/refunds`) make promises about what the app
+sends and keeps: change them with any feature that sends something new.
 
 The Vercel project must hold `NEXT_PUBLIC_TELEKEY_API_BASE` (staging origin for
 Preview, `/api` for Production) *and* `NEXT_PUBLIC_FIREBASE_API_KEY` for every
@@ -124,8 +148,8 @@ only in a local `.env` builds fine on this Mac and ships a login page that says
 Next.js Pages Router, Tailwind 4, GSAP. Pages are thin; the landing page is
 `web/screens/landing/`. Every word, link and figure is in `web/data/site.ts`,
 and each claim there traces back to `README.md` or to code — the credits rate is
-derived from `MARKUP` and `TRANSCRIBE_PER_MINUTE` in `functions/src/index.ts`,
-so re-check it when either changes.
+derived from `MARKUP`, `TRANSCRIBE_PER_MINUTE` and `LIVE_TRANSCRIBE_PER_MINUTE`
+in `functions/src/pricing.ts`, so re-check it when any of them changes.
 
 Scroll reveals are declarative (`data-reveal="land|key|capsule|lamp|rise|wipe"`,
 see `web/lib/sectionReveal.ts`). Content is pre-hidden with `visibility` only,
@@ -222,7 +246,7 @@ next rebuild. `stable` means they survive.
 | Built app | `src-tauri/target/release/bundle/macos/TeleKey.app` |
 | Installed app | `/Applications/TeleKey.app` — **TCC keys on this path**, so test the installed copy |
 
-Audio is never written anywhere. It lives in memory and is zeroed after upload.
+Audio is never written anywhere. It lives in memory; the recorded samples are zeroed after upload, and the WAV copy handed to the HTTP client is freed.
 
 **Upgrading from 0.1.x (when this was Flowtype).** Both of those locations
 changed name with the app, so `settings.rs` adopts the old ones once: the
@@ -235,7 +259,7 @@ ever reports losing settings or their key on upgrade, `adopt_legacy_dir` and
 
 ### Environment variables
 
-Desktop loads **`.env` then `.env.staging` or `.env.production`**, chosen by `TELEKEY_STAGE` in `.env` (`staging` is the daily default). A shell `TELEKEY_STAGE` still wins. `TELEKEY_ENV_FILE` replaces the stage overlay. Stripe and TeleKey’s OpenAI key never go in these files.
+A **development** build loads **`.env` then `.env.staging` or `.env.production`**, chosen by `TELEKEY_STAGE` in `.env` (`staging` is the daily default). A shell `TELEKEY_STAGE` still wins. `TELEKEY_ENV_FILE` replaces the stage overlay. A **release** build has its stage baked in and reads none of these files (rule 31). Stripe and TeleKey’s OpenAI key never go in these files.
 
 | Variable | Where | Effect |
 |---|---|---|
@@ -248,7 +272,7 @@ Desktop loads **`.env` then `.env.staging` or `.env.production`**, chosen by `TE
 | `OPENAI_API_KEY` | desktop `.env` / Keychain | Optional BYOK. Not TeleKey’s hosted key |
 | `TELEKEY_FIREBASE_API_KEY` | desktop `.env` | Firebase **web** API key, for ID-token refresh |
 | `TELEKEY_API_BASE` | `.env.staging` / `.env.production` | Functions origin, e.g. `…cloudfunctions.net/staging` |
-| `TELEKEY_SITE_URL` | `.env.staging` / `.env.production` | Live website origin for Sign in (`https://telekey-staging.vercel.app` / `https://telekey.vercel.app`) |
+| `TELEKEY_SITE_URL` | `.env.staging` / `.env.production` | Live website origin for Sign in (`https://telekey-staging.vercel.app` / `https://www.telekey.app`) |
 | `TELEKEY_RELAY_URL` | `.env.staging` / `.env.production` | Instant relay, `wss://…/v1/realtime?intent=transcription`. Optional: each stage's Cloud Run address is built in (`session.rs`) |
 | `TELEKEY_UPDATE_URL` | launch env | Another `latest.json` to check, for testing an update (RELEASING.md › Updates). Also turns on automatic checks in a debug build |
 | `TAURI_SIGNING_PRIVATE_KEY` / `_PASSWORD` | GitHub secrets | Signs updates in `release.yml`. Never needed locally |
@@ -557,6 +581,43 @@ permissions. On Windows, `install` ends the process to run the installer
 (which relaunches TeleKey), skipping the exit path, so the speakers are
 restored in `on_before_exit`. Copies older than the first updater build (0.3.0)
 never check; they need one manual download.
+
+**31. A production build talks to staging (testers' 403 "not a tester" for everyone).**
+Two ways it happened. release.yml used to bake `TELEKEY_STAGE: staging` into
+every release; the stage now comes from the tag (Release, above). And the app
+used to write the stage and its URLs into `.env` files in its config directory
+and load them back at the next launch, where anything in the environment beat
+the baked value, so a machine that had ever run staging stayed there after
+updating. `session.rs` now resolves the stage and the three URLs as real
+process environment, then the baked value, then the built-in default; a build
+with a baked stage loads no `.env` file at all, and nothing writes one. Old
+files left in config directories are ignored. `TeleKey check` prints the stage
+and URLs it resolved.
+
+**32. The price on the site is not what a short dictation costs, or a dictation costs nothing.**
+Credits are charged exactly: `pricing.ts` prices a dictation in microcents
+(1¢ = 1,000,000) and `carryCharge` debits whole cents while carrying the rest
+per user as `owedMicrocents`, so ten 10-second dictations cost 2¢ and leave a
+quarter of a cent owed. The true balance is `balanceCents` minus that, and
+`requireBalance` lets someone dictate while it is above zero. There used to be
+a 1¢ minimum per request, which made short dictations cost 4–13× the
+advertised rate. With the floor gone, nothing may bill zero: Standard bills
+OpenAI's reported seconds or, if absent, the larger of the WAV header and the
+body size; polish without a usage object is estimated from the text; the
+relay bills the bytes it forwarded (never less than everything streamed and
+unbilled), ignores empty commits in its billing queue, and charges fractional
+seconds while telling the app whole ones. OpenAI's own failures never reach
+the app as its status: they are 503 code `upstream` (or 400/413 `rejected`
+when OpenAI refused what was sent), logged with status, type, code, param
+and request id but never OpenAI's message, which can quote the user's words.
+Hosted and BYOK formatting send `store: false`. Functions run Node 22; the
+Functions and the relay share this code, so deploy both.
+
+**33. On Linux, the paste lands in TeleKey's own capsule.**
+Linux has no non-activating window, and `focused(false)` does not last: tao
+turns accept-focus back on after the first draw, so a later `show()` handed
+the capsule the keyboard. `overlay.rs` builds it with `focusable(false)` on
+Linux only (GTK still delivers clicks). Never verified on a real Linux desktop.
 
 ---
 

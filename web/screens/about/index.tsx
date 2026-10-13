@@ -1,9 +1,9 @@
-import Head from "next/head";
 import { useRouter } from "next/router";
 
 import { KeyCard } from "@/components/KeyCard";
 import { KeycapLink } from "@/components/Keycap";
 import { Rich } from "@/components/Rich";
+import { Seo } from "@/components/Seo";
 import { ABOUT, PRIMARY_ACTION } from "@/data/site";
 import { useSectionReveal } from "@/lib/sectionReveal";
 
@@ -222,12 +222,7 @@ function Support() {
 export default function AboutScreen() {
   return (
     <>
-      <Head>
-        <title>{ABOUT.meta.title}</title>
-        <meta name="description" content={ABOUT.meta.description} />
-        <meta property="og:title" content={ABOUT.meta.title} />
-        <meta property="og:description" content={ABOUT.meta.description} />
-      </Head>
+      <Seo title={ABOUT.meta.title} description={ABOUT.meta.description} path="/about" />
       <Intro />
       <Principles />
       <Support />

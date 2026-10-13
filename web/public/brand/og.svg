@@ -1,0 +1,75 @@
+<!-- The link preview for telekey.app (public/og.png, 1200 x 630). Regenerate the PNG
+     by rendering this file in a browser with the three Google Fonts below loaded:
+     Bricolage Grotesque 700, Geist 400, JetBrains Mono 500. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <radialGradient id="desk" cx="50%" cy="0%" r="95%" fx="50%" fy="0%" gradientTransform="translate(0 0) scale(1 1)">
+      <stop offset="0" stop-color="#24222f"/>
+      <stop offset="0.62" stop-color="#15141b"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#f5b324" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#f5b324" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1200" height="630" fill="#15141b"/>
+  <rect width="1200" height="630" fill="url(#desk)"/>
+  <ellipse cx="975" cy="330" rx="330" ry="300" fill="url(#glow)"/>
+
+  <!-- The mark and the name -->
+  <g transform="translate(72 52)">
+    <svg width="64" height="64" viewBox="0 0 64 64">
+      <rect x="13.5" y="40" width="7" height="9" rx="2" fill="#f5b324"/>
+      <rect x="4" y="48" width="56" height="8" rx="4" fill="#f2f0f7"/>
+      <rect x="42" y="36" width="10" height="14" rx="3" fill="#f2f0f7"/>
+      <g transform="rotate(8 47 36.5)">
+        <rect x="6" y="33" width="52" height="7" rx="3.5" fill="#f2f0f7"/>
+        <rect x="14" y="17" width="6" height="17" rx="2" fill="#f5b324"/>
+        <rect x="4" y="10" width="26" height="9" rx="4.5" fill="#f5b324"/>
+      </g>
+    </svg>
+    <text x="80" y="45" font-family="'Bricolage Grotesque', 'Helvetica Neue', Arial, sans-serif" font-weight="700" font-size="40" letter-spacing="-1.2" fill="#f2f0f7">TeleKey</text>
+  </g>
+
+  <!-- The claim -->
+  <g font-family="'Bricolage Grotesque', 'Helvetica Neue', Arial, sans-serif" font-weight="700" font-size="112" letter-spacing="-4">
+    <text x="68" y="278" fill="#f2f0f7">Hold a key.</text>
+    <text x="68" y="388" fill="#f2f0f7">Speak.</text>
+    <text x="68" y="498" fill="#f5b324">It's typed.</text>
+  </g>
+
+  <!-- The key you hold -->
+  <rect x="840" y="146" width="270" height="270" rx="40" fill="#9a6a05"/>
+  <rect x="840" y="130" width="270" height="270" rx="40" fill="#f5b324"/>
+  <rect x="841" y="131" width="268" height="268" rx="39" fill="none" stroke="#ffffff" stroke-opacity="0.35"/>
+  <text x="975" y="294" text-anchor="middle" font-family="'JetBrains Mono', ui-monospace, Menlo, monospace" font-weight="500" font-size="104" fill="#15141b">fn</text>
+
+  <!-- The capsule that appears while you hold it -->
+  <rect x="840" y="440" width="270" height="64" rx="32" fill="#211f2b" stroke="#ffffff" stroke-opacity="0.12"/>
+  <g fill="#f5b324">
+    <rect x="874" y="465" width="5" height="14" rx="2.5"/>
+    <rect x="885" y="459" width="5" height="26" rx="2.5"/>
+    <rect x="896" y="452" width="5" height="40" rx="2.5"/>
+    <rect x="907" y="461" width="5" height="22" rx="2.5"/>
+    <rect x="918" y="446" width="5" height="52" rx="2.5"/>
+    <rect x="929" y="455" width="5" height="34" rx="2.5"/>
+    <rect x="940" y="463" width="5" height="18" rx="2.5"/>
+    <rect x="951" y="449" width="5" height="46" rx="2.5"/>
+    <rect x="962" y="457" width="5" height="30" rx="2.5"/>
+    <rect x="973" y="466" width="5" height="12" rx="2.5"/>
+    <rect x="984" y="453" width="5" height="38" rx="2.5"/>
+    <rect x="995" y="460" width="5" height="24" rx="2.5"/>
+    <rect x="1006" y="448" width="5" height="48" rx="2.5"/>
+    <rect x="1017" y="462" width="5" height="20" rx="2.5"/>
+    <rect x="1028" y="455" width="5" height="34" rx="2.5"/>
+    <rect x="1039" y="464" width="5" height="16" rx="2.5"/>
+    <rect x="1050" y="451" width="5" height="42" rx="2.5"/>
+    <rect x="1061" y="458" width="5" height="28" rx="2.5"/>
+    <rect x="1072" y="467" width="5" height="10" rx="2.5"/>
+  </g>
+
+  <!-- Footer line -->
+  <text x="72" y="584" font-family="'Geist', 'Helvetica Neue', Arial, sans-serif" font-size="28" fill="#f2f0f7" fill-opacity="0.62">Push-to-talk dictation for Mac and Windows</text>
+  <text x="1128" y="584" text-anchor="end" font-family="'JetBrains Mono', ui-monospace, Menlo, monospace" font-weight="500" font-size="28" fill="#f2f0f7">telekey.app</text>
+</svg>

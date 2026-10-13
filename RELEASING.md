@@ -81,8 +81,13 @@ export APPLE_API_ISSUER="..."
 export APPLE_API_KEY="..."
 export APPLE_API_KEY_PATH="..."
 
-./scripts/release.sh
+TELEKEY_STAGE=production ./scripts/release.sh
 ```
+
+`release.sh` refuses to build without `TELEKEY_STAGE` (`production` or
+`staging`): the stage is baked into the binary, and a build without one is
+staging. A release published from GitHub needs none of this; the tag decides
+(below).
 
 `APPLE_PASSWORD` must be an **app-specific password** from
 [appleid.apple.com](https://appleid.apple.com), never your account password.
@@ -103,7 +108,7 @@ assessing an image as `exec` passes silently while telling you nothing.
 Add `universal` to build for Intel Macs as well:
 
 ```bash
-./scripts/release.sh universal
+TELEKEY_STAGE=production ./scripts/release.sh universal
 ```
 
 That needs `rustup target add x86_64-apple-darwin`, compiles everything twice,
@@ -157,8 +162,15 @@ The release notes say how to get past each warning.
 Installed copies (0.3.0 and later) read
 `/releases/latest/download/latest.json` a minute after launch and every six
 hours, download a newer version and offer "Restart to Update" (`update.rs`).
-So **the newest non-prerelease is what everyone is offered**; a tag with a
-hyphen (`v0.4.0-rc1`) is published as a prerelease and offered to no one.
+So **the newest non-prerelease is what everyone is offered**. A plain tag
+(`v0.4.0`) builds production and becomes that release; a tag with a suffix
+(`v0.4.0-rc.1`) builds staging, is published as a pre-release with no
+`latest.json`, and is offered to no one: testers install it by hand. Never
+turn a pre-release into a normal release in GitHub's page; it would become
+"latest" and offer a staging build to everyone. Tag a plain version instead.
+The publish job refuses a normal release whose builds were not all production,
+whose Mac build was not notarised, or whose `latest.json` lacks a signed entry
+for any of the four platforms.
 
 Each update is signed with TeleKey's update key, and the app installs nothing
 that does not verify against the public half in `tauri.conf.json`
@@ -276,10 +288,13 @@ The API key is read in this order:
    `~/Library/Application Support/telekey/.env`
 3. the Keychain
 
-Hosted URLs (`TELEKEY_API_BASE`, `TELEKEY_SITE_URL`, `TELEKEY_RELAY_URL`) come from `.env` plus
-`.env.staging` or `.env.production`, chosen by `TELEKEY_STAGE` in `.env`
-(`staging` is the daily default). `$TELEKEY_ENV_FILE` replaces that stage
-overlay. Stripe never belongs in these files.
+Hosted URLs (`TELEKEY_API_BASE`, `TELEKEY_SITE_URL`, `TELEKEY_RELAY_URL`) and
+the stage are fixed when a release is built (`TELEKEY_STAGE`, from the tag) and
+fall back to built-in defaults; an installed release reads no `.env` file for
+them. A development build still takes them from `.env` plus `.env.staging` or
+`.env.production`, chosen by `TELEKEY_STAGE` in `.env` (`staging` is the daily
+default), and `$TELEKEY_ENV_FILE` replaces that stage overlay. A variable set
+in the real environment beats both. Stripe never belongs in these files.
 
 Only the last two work for an installed `.app`, whose working directory is not
 the project. For distribution, the Keychain is the right answer — the settings

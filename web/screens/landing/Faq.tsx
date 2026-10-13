@@ -1,3 +1,4 @@
+import { Rich } from "@/components/Rich";
 import { FAQ } from "@/data/site";
 import { useSectionReveal } from "@/lib/sectionReveal";
 
@@ -33,7 +34,9 @@ export function Faq() {
                   +
                 </span>
               </summary>
-              <p className="m-0 mt-3 max-w-[60ch] text-[15px] leading-relaxed text-ink-soft">{item.a}</p>
+              <p className="m-0 mt-3 max-w-[60ch] text-[15px] leading-relaxed text-ink-soft">
+                {typeof item.a === "string" ? item.a : <Rich parts={item.a} linkClassName="text-ink" />}
+              </p>
             </details>
           ))}
         </div>

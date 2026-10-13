@@ -1,22 +1,28 @@
 # TeleKey
 
-Push-to-talk dictation for macOS. Hold a shortcut anywhere, speak, release, and
-polished text lands at your cursor — in Mail, Slack, a browser, a terminal.
+Push-to-talk dictation for macOS and Windows. Hold a shortcut anywhere, speak,
+release, and polished text lands at your cursor — in Mail, Slack, a browser, a
+terminal. Tested on Mac and Windows; Linux builds exist but are untested.
+Website, sign-in and credits: [www.telekey.app](https://www.telekey.app).
 
 Transcription is OpenAI's `gpt-transcribe`, which punctuates, capitalises and
 drops filler words on its own, so there is no cleanup pass in the way. Audio is
-held in memory, uploaded, then wiped. It never touches disk.
+held in memory only, uploaded, and discarded as soon as the upload ends. It
+never touches disk.
 
 Roughly 3–4 seconds from releasing the key to text appearing, most of it the
-transcription request. Around $3–6 a month at heavy use, billed to your own
+transcription request. On your own OpenAI key that costs 0.45¢ a minute of
+speech, around $3–6 a month at 30 to 60 minutes a day, billed to your own
 OpenAI account.
 
 ---
 
 ## Install
 
-Download the latest `.dmg` from [Releases](../../releases), open it, and drag
-**TeleKey** onto **Applications**.
+Download the installer for your computer from [Releases](../../releases).
+
+**Mac** (macOS 12 or later). Open the `.dmg` and drag **TeleKey** onto
+**Applications**.
 
 > **If macOS says "TeleKey is damaged and can’t be opened"**
 >
@@ -29,11 +35,19 @@ Download the latest `.dmg` from [Releases](../../releases), open it, and drag
 >
 > Then open it normally. If the release is notarised this will not happen.
 
+**Windows.** Run the `-setup.exe`. The installer is not code-signed yet, so
+Windows SmartScreen may warn on first run: choose **More info → Run anyway**.
+
+**Linux.** The release carries a `.deb` and an AppImage, but nobody has used
+them yet. The shortcut needs X11; it does not work on Wayland.
+
 Then work through **Setup** below.
 
 ## Setup
 
-TeleKey needs up to four things, and it walks you through them: a **Setup**
+TeleKey needs up to four things (on Windows, fewer: Accessibility and Input
+Monitoring are macOS permissions, and Setup lists only what applies), and it
+walks you through them: a **Setup**
 window opens on first launch listing each one, with a button that asks macOS
 for that permission right there, or opens the exact pane of System Settings.
 Nothing is asked for before that window has said what it is for. It re-checks
@@ -48,7 +62,8 @@ click through it.
 
 **Your own key.** Get one from [platform.openai.com](https://platform.openai.com/api-keys).
 It needs credit on the account; dictation costs a fraction of a cent per sentence.
-Paste it into **Settings → OpenAI key**, where it is stored in your Keychain.
+Paste it into **Settings → OpenAI key**, where it is stored in your Keychain
+(Credential Manager on Windows).
 Or from the terminal:
 
 ```bash
@@ -118,33 +133,36 @@ Everything below is optional — TeleKey works with none of it configured.
 | **Shortcut** | Rebindable. Click **Change** and press the combination you want. |
 | **Instant** | Off by default, in Settings › Speed. Streams your voice while you speak, so the text lands about a second after you let go instead of 3–4. Costs about four times as much: 5.1¢ a minute on credits, or OpenAI's $0.017 a minute with your own key. If it cannot connect, that dictation quietly uses Standard. |
 | **Replacements** | Settings › Vocabulary. "When I say *cloud code*, write *Claude Code*": a guaranteed fix for a word the model keeps getting wrong, applied on your computer after everything else. |
-| **Use what's on screen** | Off by default. Sends the window title and up to about 1,000 characters around your cursor with the audio, so names on screen come back spelled right. Never reads password fields, and only the title in terminals and password managers. macOS; Windows sends the app and window title. |
-| **Lists and self-corrections** | Off by default, in Settings › Formatting. A dictation that sounds like a list is pasted as bullets or numbers (real bullets in Notes, Mail and Slack); "my car, sorry, my bike" becomes "my bike". Only dictations where TeleKey hears a list or a correction go to the formatting model, and its answer is pasted only if it changed nothing else. Adds a second or two, and 1¢ on credits, to those dictations. |
+| **Use what's on screen** | Off by default. Sends the app name, the window title and up to about 1,200 characters around your cursor (1,000 before it, 200 after) with the audio, so names on screen come back spelled right; the whole prompt is cut to 1,500 bytes. Never reads password fields, and only the title in terminals and password managers. macOS; Windows sends the app and window title; Linux sends nothing. |
+| **Lists and self-corrections** | Off by default, in Settings › Formatting. A dictation that sounds like a list is pasted as bullets or numbers (real bullets in Notes, Mail and Slack); "my car, sorry, my bike" becomes "my bike". Only dictations where TeleKey hears a list or a correction go to the formatting model, and its answer is pasted only if it changed nothing else. Adds a second or two to those dictations, and a fraction of a cent on credits. |
 | **Dictation pill** | On by default on macOS and Windows; switch it off in Settings › Shortcut and only the shortcut remains. Off on Linux for now, where clicking it would take focus from the app you are dictating into. |
 | **Vocabulary** | Names and jargon — "Kubernetes", your product names — sent to the model as recognition hints so they come back spelled right. |
-| **Formatting** | Per-app styles: literal in a terminal (no sentence capital, no full stop), terse in Slack, formal in Mail. Literal runs on your Mac; the others cost one extra request. |
+| **Formatting** | Per-app styles: literal in a terminal (no sentence capital, no full stop), terse in Slack, formal in Mail. Literal runs on your computer; the others cost one extra request. |
 | **Mute while dictating** | Off by default. Silences whatever is playing for as long as you hold the key, so music and video cannot bleed into the microphone. Your volume comes back when you let go. macOS only for now. |
 | **Microphone** | Follows the system default, so a headset takes over when you connect it — the capsule says "Microphone: AirPods Pro" for a moment when that happens. Pin one in Settings › Input if you would rather it did not. If the microphone drops out mid-sentence, what was captured is still transcribed and the capsule tells you. |
-| **History** | Recent transcripts, click any to copy. Stored `0600` on your Mac only, capped, clearable, and switchable off entirely. |
+| **History** | Recent transcripts, click any to copy. Stored on your computer only (readable by you alone on macOS), capped, clearable, and switchable off entirely. |
 | **Usage** | What you have spent and how many minutes you have dictated — today, this month, all time — with a 30-day chart. Rates are editable, since published prices change. |
 | **Updates** | TeleKey checks for a new version a minute after it starts and every six hours, downloads it in the background, and then shows **Restart to Update** in the menu bar and in Settings › Updates. Nothing installs until you click it, and never mid-dictation. Settings, history, your sign-in and macOS permissions are kept. On Linux the AppImage replaces itself; a `.deb` install asks for your password. Copies from before 0.3.0 need one manual download. |
 
 ## Privacy
 
 - **Audio never touches disk.** It is captured to memory, uploaded for
-  transcription, and the buffer is zeroed — whether or not the request worked.
+  transcription, and discarded as soon as the upload ends — whether or not the
+  request worked. (The recorded samples are zeroed first; the WAV copy handed
+  to the HTTP client is only freed.)
 - **Audio goes to OpenAI.** That is where transcription happens. With your
   own key it goes there directly; with credits it passes through TeleKey's
   server on the way (the Cloud Function, or the relay for Instant), which
   forwards it and stores none of it. Instant streams it while you speak
   instead of after.
 - **Screen context is opt-in.** With "Use what's on screen" on, the window
-  title and the text around your cursor go with the audio, the same way and
-  to the same place. Never from a password field, never while a password is
+  title and up to about 1,200 characters around your cursor go with the audio
+  (inside a 1,500-byte cap), the same way and to the same place. Never from a password field, never while a password is
   being typed, never logged or stored.
-- **Transcripts stay local.** History is a file on your Mac, owner-readable
-  only. Turn it off in Settings and existing entries are deleted immediately.
-- **Your API key** lives in the Keychain, and is never logged or printed.
+- **Transcripts stay local.** History is a file on your computer,
+  owner-readable only on macOS. Turn it off in Settings and existing entries are deleted immediately.
+- **Your API key** lives in the Keychain (Credential Manager on Windows), and is
+  never logged or printed.
 - **Usage records are counts, not content** — seconds and token totals, never
   what you said. Rolled up as they age, so the file stays a few KB for life.
 - **Update checks** fetch one public file from GitHub, which sees an ordinary
@@ -254,7 +272,7 @@ hold key → trigger → capture audio → [release] → WAV in memory
               └──────────→ format (optional) ←────────┘
                                  │
                                  ▼
-                    paste at cursor → history + usage, buffer zeroed
+                    paste at cursor → history + usage, audio discarded
 ```
 
 | Module | Job |
