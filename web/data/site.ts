@@ -517,18 +517,15 @@ export type LegalDoc = {
 };
 
 /**
- * The state whose law governs the terms. EntityQ LLC's state of formation is
- * the usual choice, but it is the owner's to confirm, so it is left as a
- * visible placeholder rather than guessed.
+ * The state whose law governs the terms: Delaware, where EntityQ LLC was
+ * formed (confirmed by the owner, 2026-10-13).
  *
- * OWNER: replace the value below with the state's name (for example
- * "Delaware"), and leave GOVERNING_STATE_PLACEHOLDER alone. Until you do, a
- * production build refuses to run: next.config.ts throws when VERCEL_ENV is
- * "production" and this is still the placeholder. Preview and local builds
- * are not affected, so staging keeps showing the bracketed text.
+ * The placeholder stays as a guard: next.config.ts refuses a production build
+ * while GOVERNING_STATE equals it, so the terms can never go live with the
+ * bracketed text if this is ever reset.
  */
 export const GOVERNING_STATE_PLACEHOLDER = "[US STATE: EntityQ LLC TO CONFIRM BEFORE LAUNCH]";
-export const GOVERNING_STATE: string = GOVERNING_STATE_PLACEHOLDER;
+export const GOVERNING_STATE: string = "Delaware";
 
 const EMAIL: Segment = { text: SUPPORT_EMAIL, href: SUPPORT_MAILTO };
 const OPENAI_DATA_POLICY = "https://platform.openai.com/docs/guides/your-data";
