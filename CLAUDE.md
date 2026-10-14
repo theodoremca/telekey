@@ -150,13 +150,15 @@ XDG_CONFIG_HOME=$(mktemp -d) \
 GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcloud/application_default_credentials.json \
 firebase deploy --only hosting --project telekey-app --non-interactive   # production: www.telekey.app, telekey-app.web.app
 
-vercel deploy                                      # staging: a Preview build; the URL is in the output
-vercel alias set <that url> telekey-staging.vercel.app
+vercel deploy --scope theodoremcas-projects        # staging: a Preview build; the URL is in the output
+vercel alias set <that url> telekey-staging.vercel.app --scope theodoremcas-projects
 ```
 
 `STATIC_EXPORT=1` makes `next.config.ts` export instead of build for a server,
 and leaves out its `redirects()` and `headers()`, which only Vercel applies;
-`firebase.json` sets the private-page `X-Robots-Tag` for production. The export
+`firebase.json` sets the private-page `X-Robots-Tag` for production. Vercel CLI
+63 answers "Not authorized" to a deploy without `--scope theodoremcas-projects`,
+even when `vercel whoami` is signed in. The export
 takes `NEXT_PUBLIC_*` from `web/.env` and `web/.env.production` on this Mac
 (the production API is `…cloudfunctions.net/api`, called directly, CORS on), so
 check those before building: a staging value there ships to the public site.
