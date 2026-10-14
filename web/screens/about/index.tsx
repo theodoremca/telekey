@@ -5,7 +5,8 @@ import { KeyCard } from "@/components/KeyCard";
 import { KeycapLink } from "@/components/Keycap";
 import { Rich } from "@/components/Rich";
 import { Seo } from "@/components/Seo";
-import { ABOUT, PRIMARY_ACTION } from "@/data/site";
+import { ABOUT } from "@/data/site";
+import { DownloadKey } from "@/components/Download";
 import { tellAppThanks } from "@/lib/handoff";
 import { useSectionReveal } from "@/lib/sectionReveal";
 
@@ -97,14 +98,7 @@ function Intro() {
             >
               {support.tip.label}
             </KeycapLink>
-            <KeycapLink
-              href={PRIMARY_ACTION.href}
-              variant="dark"
-              data-reveal="key"
-              data-reveal-at="0.58"
-            >
-              {PRIMARY_ACTION.label}
-            </KeycapLink>
+            <DownloadKey variant="dark" data-reveal="key" data-reveal-at="0.58" />
           </div>
         </div>
       </div>

@@ -3,9 +3,9 @@ import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
 import { onAuthStateChanged, signOut, type User } from "firebase/auth";
 
-import { KeycapLink } from "@/components/Keycap";
 import { Mark } from "@/components/Mark";
-import { ACCOUNT, BRAND, NAV_LINKS, PRIMARY_ACTION, SIGN_IN, SIGN_OUT } from "@/data/site";
+import { ACCOUNT, BRAND, NAV_LINKS, SIGN_IN, SIGN_OUT } from "@/data/site";
+import { DownloadKey } from "@/components/Download";
 import { firebaseAuth, isConfigured } from "@/lib/firebase";
 
 const quietLink =
@@ -72,10 +72,7 @@ export function Header() {
               {SIGN_IN.label}
             </Link>
           )}
-          <KeycapLink href={PRIMARY_ACTION.href} className="keycap-sm">
-            <span className="sm:hidden">Download</span>
-            <span className="hidden sm:inline">{PRIMARY_ACTION.label}</span>
-          </KeycapLink>
+          <DownloadKey className="keycap-sm" compact />
         </div>
       </div>
     </header>

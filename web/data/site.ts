@@ -60,13 +60,43 @@ export const BRAND = {
   markOnDark: "/brand/mark-on-dark.svg",
 } as const;
 
-/** The page's one job. Every primary button points here. */
-export const PRIMARY_ACTION = {
-  label: "Download for Mac",
-  // The newest published release, which .github/workflows/release.yml makes
-  // from a version tag.
-  href: `${REPO}/releases/latest`,
+/**
+ * The installers, one per system. Mac and Windows link straight to the file:
+ * every release also carries its installers under names that never change
+ * (.github/workflows/release.yml copies them), so /releases/latest/download/…
+ * is always the newest. Linux goes to the release page instead, whose notes
+ * say how to install a .deb or an AppImage. The download key shows the
+ * visitor's own system (lib/visitorOs.ts), and the others sit beside it.
+ */
+export const DOWNLOADS = {
+  mac: {
+    label: "Download for Mac",
+    name: "Mac",
+    href: `${REPO}/releases/latest/download/TeleKey.dmg`,
+  },
+  windows: {
+    label: "Download for Windows",
+    name: "Windows",
+    href: `${REPO}/releases/latest/download/TeleKey-setup.exe`,
+  },
+  linux: {
+    label: "Download for Linux",
+    name: "Linux",
+    href: `${REPO}/releases/latest`,
+  },
 } as const;
+
+export type DownloadOs = keyof typeof DOWNLOADS;
+
+/** Every installer and every version, on GitHub. */
+export const ALL_DOWNLOADS = { text: "all versions", href: `${REPO}/releases` } as const;
+
+/**
+ * The page's one job. Every primary button points here; on screen it becomes
+ * the visitor's own system (components/Download.tsx), and Mac is what a page
+ * shows before it knows, or on a phone.
+ */
+export const PRIMARY_ACTION = DOWNLOADS.mac;
 
 /**
  * One statement of where TeleKey runs, said the same way everywhere (the hero,
@@ -81,8 +111,6 @@ export const PLATFORMS = {
   mac: "The Mac app needs macOS 12 or later.",
   windows:
     "The Windows installer is not signed yet, so Windows SmartScreen may warn: choose More info → Run anyway.",
-  /** For Windows and Linux visitors, beside the Mac download. */
-  all: { text: "Windows and Linux downloads", href: `${REPO}/releases/latest` },
 } as const;
 
 export const SIGN_IN = { label: "Sign in", href: "/login" } as const;
@@ -109,8 +137,8 @@ export const HERO = {
   ],
   /** For search results and link previews, where the claim needs its subject. */
   meta: "Push-to-talk dictation for Mac and Windows. Free and source available with your own OpenAI key, or pay per minute instead of per month.",
-  /** Under the download key: where the other installers are. */
-  platforms: [PLATFORMS.line, " ", { text: PLATFORMS.all.text, href: PLATFORMS.all.href }],
+  /** Under the download key and the other systems' downloads. */
+  platforms: [PLATFORMS.line],
   demo: {
     windowTitle: "New message",
     windowMeta: "To: Ada · Subject: Standup",
@@ -278,9 +306,15 @@ export const FAQ = {
       id: "platforms",
       q: "Which computers?",
       a: [
-        `${PLATFORMS.line} ${PLATFORMS.mac} ${PLATFORMS.windows} `,
-        { text: PLATFORMS.all.text, href: PLATFORMS.all.href },
-        " are on GitHub.",
+        `${PLATFORMS.line} ${PLATFORMS.mac} ${PLATFORMS.windows} Download for `,
+        { text: DOWNLOADS.mac.name, href: DOWNLOADS.mac.href },
+        ", ",
+        { text: DOWNLOADS.windows.name, href: DOWNLOADS.windows.href },
+        " or ",
+        { text: DOWNLOADS.linux.name, href: DOWNLOADS.linux.href },
+        ", or see ",
+        { text: ALL_DOWNLOADS.text, href: ALL_DOWNLOADS.href },
+        " on GitHub.",
       ],
     },
   ],
@@ -618,7 +652,6 @@ export const LAST_CALL = {
   titleLines: ["Stop typing", "what you could say."],
   /** Said in full here, where someone is about to install. */
   notes: [PLATFORMS.line, PLATFORMS.mac, PLATFORMS.windows],
-  all: PLATFORMS.all,
 } as const;
 
 /** The legal pages, linked from the footer; the first three also beside every sign-in and buy. */

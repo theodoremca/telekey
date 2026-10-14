@@ -2,7 +2,8 @@ import { useRef } from "react";
 
 import { KeycapLink } from "@/components/Keycap";
 import { Rich } from "@/components/Rich";
-import { COMPARE, HERO, PRIMARY_ACTION, SIGN_IN } from "@/data/site";
+import { COMPARE, HERO, SIGN_IN } from "@/data/site";
+import { DownloadKey, OtherDownloads } from "@/components/Download";
 import { gsap, useGSAP } from "@/lib/gsap";
 import { landPrepared } from "@/lib/sectionReveal";
 
@@ -110,23 +111,24 @@ export function Hero() {
             <Rich parts={HERO.lede} linkClassName="text-glow" />
           </p>
           <div className="flex flex-wrap gap-3">
-            <KeycapLink href={PRIMARY_ACTION.href} data-reveal="key" data-hero-key="">
-              {PRIMARY_ACTION.label}
-            </KeycapLink>
+            <DownloadKey data-reveal="key" data-hero-key="" />
             <KeycapLink href={SIGN_IN.href} variant="dark" data-reveal="key" data-hero-key="">
               {SIGN_IN.label}
             </KeycapLink>
           </div>
 
-          {/* Beside the Mac download: where the other installers are, and what
+          {/* Beside the download key: the other systems' installers, and what
               has and has not been tested. */}
-          <p
+          <div
             data-reveal="rise"
             data-hero-copy=""
-            className="mt-4 mb-0 max-w-[46ch] font-mono text-[11px] leading-relaxed text-dim"
+            className="mt-4 mb-0 grid max-w-[46ch] gap-1 font-mono text-[11px] leading-relaxed text-dim"
           >
-            <Rich parts={HERO.platforms} linkClassName="text-glow" />
-          </p>
+            <OtherDownloads linkClassName="text-glow underline decoration-voice/60 underline-offset-[3px] hover:decoration-voice" />
+            <p className="m-0">
+              <Rich parts={HERO.platforms} linkClassName="text-glow" />
+            </p>
+          </div>
 
           <DemoKeys demo={demo} data-reveal="rise" data-hero-copy="" className="mt-9" />
 

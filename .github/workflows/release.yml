@@ -568,6 +568,25 @@ jobs:
             echo "::error::Expected 4 installers (dmg, exe, deb, AppImage), found ${#files[@]}."
             exit 1
           fi
+          # The same installers again under names that never change, so the
+          # website can link straight to the file:
+          # /releases/latest/download/TeleKey.dmg always means the newest
+          # release's. latest.json names the versioned files, not these.
+          mkdir -p stable
+          for file in "${files[@]}"; do
+            case "$file" in
+              *.dmg) cp "$file" stable/TeleKey.dmg ;;
+              *-setup.exe) cp "$file" stable/TeleKey-setup.exe ;;
+              *.deb) cp "$file" stable/TeleKey-amd64.deb ;;
+              *.AppImage) cp "$file" stable/TeleKey-amd64.AppImage ;;
+            esac
+          done
+          mapfile -t stable < <(find stable -type f | sort)
+          if (( ${#stable[@]} != 4 )); then
+            echo "::error::Expected 4 fixed-name installers, made ${#stable[@]}."
+            exit 1
+          fi
+          files+=("${stable[@]}")
           # The update feed, and the macOS update (the other platforms update
           # from the installers above). Signatures live inside latest.json.
           mapfile -t updates < <(find dist -maxdepth 1 -type f \( -name 'latest.json' -o -name '*.app.tar.gz' \) | sort)

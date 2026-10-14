@@ -1,5 +1,6 @@
 import { KeycapLink } from "@/components/Keycap";
-import { LAST_CALL, PRIMARY_ACTION, SIGN_IN } from "@/data/site";
+import { LAST_CALL, SIGN_IN } from "@/data/site";
+import { DownloadKey, OtherDownloads } from "@/components/Download";
 import { useSectionReveal } from "@/lib/sectionReveal";
 
 // Signature moment: the display face at its largest, landing line by line, with
@@ -23,29 +24,20 @@ export function LastCall() {
           ))}
         </h2>
         <div className="mt-10 flex flex-wrap gap-3">
-          <KeycapLink href={PRIMARY_ACTION.href} data-reveal="key" data-reveal-at="0.7">
-            {PRIMARY_ACTION.label}
-          </KeycapLink>
+          <DownloadKey data-reveal="key" data-reveal-at="0.7" />
           <KeycapLink href={SIGN_IN.href} variant="dark" data-reveal="key" data-reveal-at="0.78">
             {SIGN_IN.label}
           </KeycapLink>
         </div>
-        {/* Where it runs, said in full where someone is about to install, with a
-            way to the Windows and Linux installers beside the Mac key. */}
+        {/* Where it runs, said in full where someone is about to install, with
+            the other systems' installers beside the download key. */}
         <div data-reveal="rise" data-reveal-at="0.9" className="mt-8 grid max-w-[64ch] gap-1.5 font-mono text-xs leading-relaxed text-dim">
           {LAST_CALL.notes.map((note) => (
             <p key={note} className="m-0">
               {note}
             </p>
           ))}
-          <p className="m-0">
-            <a
-              href={LAST_CALL.all.href}
-              className="text-glow underline decoration-voice/70 decoration-2 underline-offset-[5px] transition-colors hover:decoration-voice"
-            >
-              {LAST_CALL.all.text}
-            </a>
-          </p>
+          <OtherDownloads />
         </div>
       </div>
     </section>

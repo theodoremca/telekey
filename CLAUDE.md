@@ -88,6 +88,13 @@ it would become the latest and serve a staging build to everyone; tag a plain
 version instead. `scripts/release.sh` and `windows-setup.ps1 -Stage` refuse to
 build without a stage for the same reason.
 
+Every release also carries its four installers again under names that never
+change (`TeleKey.dmg`, `TeleKey-setup.exe`, `TeleKey-amd64.deb`,
+`TeleKey-amd64.AppImage`), so the website's download keys can link straight to
+`/releases/latest/download/TeleKey.dmg` and the Windows `.exe`; Linux links to
+the release page for its install steps. The key shows the visitor's own system
+(`web/lib/visitorOs.ts`), Mac until the page knows, with the others beside it.
+
 The release also carries `latest.json`, the update feed every installed copy
 (0.3.0 on) reads from `/releases/latest`: publishing a release offers it to
 everyone within six hours. Updates are signed with the `TAURI_SIGNING_*`
