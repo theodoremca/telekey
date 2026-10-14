@@ -120,7 +120,7 @@ impl Overlay {
 
         // Click-through until a dictation is live and the cancel control
         // exists, or the pointer is over the pill.
-        if let Err(err) = window.set_ignore_cursor_events(true) {
+        if let Err(err) = panel::set_click_through(&window, true) {
             tracing::warn!("could not make the overlay click-through: {err}");
         }
 
@@ -210,7 +210,7 @@ impl Overlay {
             }
             let pill = overlay.pill.load(Ordering::SeqCst);
             overlay.hovered.store(false, Ordering::SeqCst);
-            if let Err(err) = window.set_ignore_cursor_events(true) {
+            if let Err(err) = panel::set_click_through(window, true) {
                 tracing::warn!("could not make the overlay click-through: {err}");
             }
 
@@ -231,7 +231,7 @@ impl Overlay {
                 // The pointer may already be on the pill — it was, if the
                 // dictation was stopped from there.
                 overlay.track(window);
-            } else if let Err(err) = window.hide() {
+            } else if let Err(err) = panel::hide(window) {
                 tracing::warn!("could not hide the overlay: {err:#}");
             }
         });
@@ -333,7 +333,7 @@ impl Overlay {
     /// or the pointer is over the pill.
     pub fn set_clickable(&self, clickable: bool) {
         self.on_main(move |window| {
-            if let Err(err) = window.set_ignore_cursor_events(!clickable) {
+            if let Err(err) = panel::set_click_through(window, !clickable) {
                 tracing::warn!("could not update overlay click-through: {err}");
             }
         });
@@ -435,7 +435,7 @@ impl Overlay {
         }
         self.hovered.store(over, Ordering::SeqCst);
         tracing::debug!(hover = over, "pill");
-        if let Err(err) = window.set_ignore_cursor_events(!over) {
+        if let Err(err) = panel::set_click_through(window, !over) {
             tracing::warn!("could not update overlay click-through: {err}");
         }
         self.announce_pill(true, over);

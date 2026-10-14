@@ -652,6 +652,20 @@ website keeps its own copy (`TIP` in `web/data/site.ts`): change them
 together. Linux's capsule cannot take a click (rule 33), so its prompt names
 the Settings button instead.
 
+**38. On Windows, the pill vanishes the moment the pointer reaches it (or never shows).**
+Tauri's `set_ignore_cursor_events` and `hide()` go to tao, which on Windows
+rewrites the window's whole style from its own record of the window. That
+record never learns what `panel.rs` does with raw Win32 calls: the overlay is
+shown with `SetWindowPos`, so tao thinks it is hidden, and `make_nonactivating`
+sets bits tao does not know. Each click-through change therefore dropped
+`WS_VISIBLE` (the pill disappeared as the pointer arrived, and the capsule when
+it became clickable) and wiped `WS_EX_NOACTIVATE`, and `hide()` did nothing,
+since tao believed it already hidden. The overlay goes through
+`panel::set_click_through` and `panel::hide` instead: on Windows they flip only
+`WS_EX_TRANSPARENT | WS_EX_LAYERED` and call `ShowWindow(SW_HIDE)` directly;
+elsewhere they are Tauri's own calls. Never call a tao style or visibility
+method on the overlay on Windows.
+
 ---
 
 ## Architecture in one screen

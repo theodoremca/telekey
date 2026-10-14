@@ -127,9 +127,10 @@ mod imp {
     use anyhow::{Context, Result};
     use windows_sys::Win32::Foundation::HWND;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST,
-        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, WS_EX_NOACTIVATE,
-        WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE,
+        HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+        SWP_SHOWWINDOW, SW_HIDE, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        WS_EX_TOPMOST, WS_EX_TRANSPARENT,
     };
 
     fn hwnd(window: &tauri::WebviewWindow) -> Result<HWND> {
@@ -187,6 +188,52 @@ mod imp {
         let style = unsafe { GetWindowLongPtrW(handle, GWL_EXSTYLE) };
         Ok(style & WS_EX_NOACTIVATE as isize == 0)
     }
+
+    /// Let clicks through to whatever is underneath, or take them.
+    ///
+    /// Not Tauri's `set_ignore_cursor_events`. On Windows that goes to tao,
+    /// which rewrites the window's whole style from its own record of the
+    /// window, and tao's record says hidden (the overlay is shown above with
+    /// `SetWindowPos`, which tao never hears about) and has none of
+    /// `make_nonactivating`'s bits. So every change dropped `WS_VISIBLE`,
+    /// and the pill vanished the moment the pointer reached it, and wiped
+    /// `WS_EX_NOACTIVATE`, so a click could take focus. Only the two bits tao
+    /// itself uses for this change here; everything else is left as it is.
+    pub fn set_click_through(window: &tauri::WebviewWindow, through: bool) -> Result<()> {
+        let handle = hwnd(window)?;
+        let bits = (WS_EX_TRANSPARENT | WS_EX_LAYERED) as isize;
+
+        unsafe {
+            let current = GetWindowLongPtrW(handle, GWL_EXSTYLE);
+            let wanted = if through { current | bits } else { current & !bits };
+            if wanted != current {
+                SetWindowLongPtrW(handle, GWL_EXSTYLE, wanted);
+                // A style change takes effect once the frame is refreshed.
+                SetWindowPos(
+                    handle,
+                    std::ptr::null_mut(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Hide, the counterpart of `show_without_focus`. Tauri's `hide()` asks tao,
+    /// which believes the window is already hidden (see `set_click_through`)
+    /// and so does nothing at all.
+    pub fn hide(window: &tauri::WebviewWindow) -> Result<()> {
+        let handle = hwnd(window)?;
+        unsafe {
+            ShowWindow(handle, SW_HIDE);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -210,6 +257,24 @@ mod imp {
 }
 
 pub use imp::{make_nonactivating, show_without_focus};
+#[cfg(target_os = "windows")]
+pub use imp::{hide, set_click_through};
+
+/// Let clicks through to whatever is underneath, or take them. macOS and Linux
+/// keep the window's state in step with Tauri, so its own call is right there;
+/// Windows has its own (see the Windows `imp`).
+#[cfg(not(target_os = "windows"))]
+pub fn set_click_through(window: &tauri::WebviewWindow, through: bool) -> anyhow::Result<()> {
+    window.set_ignore_cursor_events(through)?;
+    Ok(())
+}
+
+/// Hide the overlay; the counterpart of `show_without_focus`.
+#[cfg(not(target_os = "windows"))]
+pub fn hide(window: &tauri::WebviewWindow) -> anyhow::Result<()> {
+    window.hide()?;
+    Ok(())
+}
 // Whether the window would take focus if shown. macOS and Windows can read it
 // back from the native window; Linux has no way to.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
