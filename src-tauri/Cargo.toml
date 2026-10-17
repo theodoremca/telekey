@@ -1,6 +1,6 @@
 [package]
 name = "telekey"
-version = "0.3.2"
+version = "0.3.3"
 description = "Push-to-talk dictation for macOS"
 authors = ["Theodore Imonigie"]
 license = "FSL-1.1-MIT"
