@@ -141,12 +141,13 @@ impl ApiUsage {
     }
 }
 
-impl Transcriber for OpenAiTranscriber {
-    fn payer(&self) -> Option<Payer> {
-        Some(Payer::OwnKey)
-    }
-
-    fn transcribe(&self, clip: &Clip, context: &TranscriptionContext) -> Result<Transcription> {
+impl OpenAiTranscriber {
+    /// The request a dictation makes, up to OpenAI's answer.
+    fn upload(
+        &self,
+        clip: &Clip,
+        context: &TranscriptionContext,
+    ) -> Result<reqwest::blocking::Response> {
         if clip.is_empty() {
             bail!("nothing was recorded");
         }
@@ -183,13 +184,48 @@ impl Transcriber for OpenAiTranscriber {
             form = form.text("prompt", prompt.clone());
         }
 
-        let response = self
-            .client
+        self.client
             .post(&self.endpoint)
             .bearer_auth(&self.api_key)
             .multipart(form)
             .send()
-            .context("could not reach the transcription API")?;
+            .context("could not reach the transcription API")
+    }
+
+    /// Whether this key can do what a dictation needs, found out by asking it
+    /// to: one second of silence, sent exactly as a dictation is.
+    ///
+    /// Nothing free can tell. Listing models works for a key whose account has
+    /// no quota left, and for a restricted key that may not transcribe; only a
+    /// real transcription meets the same checks a dictation will. It costs
+    /// OpenAI's price for one second, a small fraction of a cent.
+    pub fn verify(&self) -> Result<()> {
+        let silence = Clip {
+            samples: vec![0.0; TARGET_SAMPLE_RATE as usize],
+        };
+        let response = self
+            .upload(&silence, &TranscriptionContext::default())
+            .map_err(|err| {
+                tracing::warn!("could not check the OpenAI key: {err:#}");
+                anyhow!("{KEY_CHECK_UNREACHABLE}")
+            })?;
+        let status = response.status().as_u16();
+        let body = if response.status().is_success() {
+            String::new()
+        } else {
+            response.text().unwrap_or_default()
+        };
+        judge_key_check(status, &body)
+    }
+}
+
+impl Transcriber for OpenAiTranscriber {
+    fn payer(&self) -> Option<Payer> {
+        Some(Payer::OwnKey)
+    }
+
+    fn transcribe(&self, clip: &Clip, context: &TranscriptionContext) -> Result<Transcription> {
+        let response = self.upload(clip, context)?;
 
         let status = response.status();
         if !status.is_success() {
@@ -218,17 +254,79 @@ impl Transcriber for OpenAiTranscriber {
     }
 }
 
+/// What a dictation on the person's own key says when OpenAI has no quota left
+/// for it. Never the word "credit": the capsule opens TeleKey's Buy credits
+/// window for any failure that says so, and TeleKey's credits are not what ran
+/// out. Saying "out of credit" here is what made a key look as if it were still
+/// going through TeleKey's credits.
+pub const OPENAI_OUT_OF_QUOTA: &str =
+    "Your OpenAI account is out of quota — add billing at platform.openai.com";
+
+/// Settings could not reach OpenAI to check a key, so it was not saved.
+pub const KEY_CHECK_UNREACHABLE: &str =
+    "Could not reach OpenAI to check the key. Check your connection and try again.";
+
 /// Turn an HTTP failure into something worth showing a user.
 fn describe_failure(status: reqwest::StatusCode, body: &str) -> anyhow::Error {
     let detail = extract_api_message(body).unwrap_or_else(|| body.trim().to_string());
 
     match status.as_u16() {
         401 => anyhow!("API key rejected — check it in Settings"),
-        429 => anyhow!("rate limited or out of credit: {detail}"),
+        403 => anyhow!("OpenAI refused this key: {detail}"),
+        429 if out_of_quota(body) => anyhow!("{OPENAI_OUT_OF_QUOTA}"),
+        429 => anyhow!("OpenAI is rate limiting your key — try again in a moment"),
         413 => anyhow!("recording was too large for the API"),
         500..=599 => anyhow!("OpenAI is having trouble ({status}): {detail}"),
         _ => anyhow!("transcription failed ({status}): {detail}"),
     }
+}
+
+/// What the one-second check in [`OpenAiTranscriber::verify`] says about a key.
+/// The messages are shown under the key field in Settings and Setup.
+///
+/// Throttling passes: OpenAI only throttles a key it has accepted, so the key
+/// is good and the next dictation will most likely go through.
+fn judge_key_check(status: u16, body: &str) -> Result<()> {
+    let detail = extract_api_message(body);
+    let because = detail
+        .as_deref()
+        .map(|detail| format!(": {detail}"))
+        .unwrap_or_default();
+    match status {
+        200..=299 => Ok(()),
+        429 if !out_of_quota(body) => {
+            tracing::info!("the OpenAI key check was throttled; keeping the key");
+            Ok(())
+        }
+        429 => bail!(
+            "That key's OpenAI account has no quota left. Add billing at platform.openai.com, then save the key again."
+        ),
+        // A restricted key without the audio permission is refused with 401
+        // too, and OpenAI's own words name the permission it lacks.
+        401 if detail.as_deref().is_some_and(mentions_permissions) => {
+            bail!("That key is missing a permission TeleKey needs{because}")
+        }
+        401 => bail!("OpenAI did not accept that key. Check that you copied all of it."),
+        403 => bail!("OpenAI refused that key{because}"),
+        404 => bail!("That key's project cannot use {DEFAULT_MODEL}{because}"),
+        500..=599 => bail!(
+            "OpenAI is having trouble right now, so the key could not be checked. Try again in a moment."
+        ),
+        _ => bail!("OpenAI refused the test transcription ({status}){because}"),
+    }
+}
+
+fn mentions_permissions(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("permission") || lower.contains("scope")
+}
+
+/// A 429 that waiting will not fix: the account has no quota, or no billing.
+fn out_of_quota(body: &str) -> bool {
+    matches!(
+        api_error_code(body).as_deref(),
+        Some("insufficient_quota" | "billing_not_active" | "billing_hard_limit_reached")
+    )
 }
 
 /// OpenAI errors arrive as `{"error": {"message": ...}}`.
@@ -238,6 +336,17 @@ fn extract_api_message(body: &str) -> Option<String> {
         .get("error")?
         .get("message")?
         .as_str()
+        .map(str::to_string)
+}
+
+/// OpenAI's machine-readable reason: `error.code`, or `error.type` without one.
+fn api_error_code(body: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    let error = value.get("error")?;
+    error
+        .get("code")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| error.get("type").and_then(serde_json::Value::as_str))
         .map(str::to_string)
 }
 
@@ -450,5 +559,133 @@ mod tests {
         assert_eq!(extract_api_message(body).as_deref(), Some("nope"));
         assert_eq!(extract_api_message("not json"), None);
         assert_eq!(extract_api_message("{}"), None);
+    }
+
+    /// OpenAI's answer to a key whose account has no quota or billing.
+    const NO_QUOTA: &str = r#"{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}"#;
+    const THROTTLED: &str = r#"{"error":{"message":"Rate limit reached for requests","type":"requests","code":"rate_limit_exceeded"}}"#;
+
+    #[test]
+    fn no_failure_on_an_own_key_ever_says_credit() {
+        // The capsule opens TeleKey's Buy credits window for any failure that
+        // says "credit". A key's own quota running out is not TeleKey's credits.
+        let cases = [
+            (401, r#"{"error":{"message":"Incorrect API key provided"}}"#),
+            (403, r#"{"error":{"message":"Country, region, or territory not supported"}}"#),
+            (413, ""),
+            (429, NO_QUOTA),
+            (429, THROTTLED),
+            (429, ""),
+            (500, r#"{"error":{"message":"upstream exploded"}}"#),
+            (400, r#"{"error":{"message":"Invalid file format."}}"#),
+        ];
+        for (status, body) in cases {
+            let status = reqwest::StatusCode::from_u16(status).unwrap();
+            let message = describe_failure(status, body).to_string();
+            assert!(!message.to_lowercase().contains("credit"), "{status}: {message}");
+        }
+        assert!(!OPENAI_OUT_OF_QUOTA.to_lowercase().contains("credit"));
+    }
+
+    #[test]
+    fn running_out_of_quota_is_told_apart_from_being_throttled() {
+        let quota = describe_failure(reqwest::StatusCode::TOO_MANY_REQUESTS, NO_QUOTA);
+        assert_eq!(quota.to_string(), OPENAI_OUT_OF_QUOTA);
+        let throttled = describe_failure(reqwest::StatusCode::TOO_MANY_REQUESTS, THROTTLED);
+        assert!(throttled.to_string().contains("rate limiting"), "{throttled}");
+    }
+
+    #[test]
+    fn the_key_check_passes_a_working_or_merely_throttled_key() {
+        assert!(judge_key_check(200, "").is_ok());
+        assert!(judge_key_check(429, THROTTLED).is_ok());
+    }
+
+    #[test]
+    fn the_key_check_says_why_a_key_will_not_work() {
+        let wrong = judge_key_check(401, r#"{"error":{"message":"Incorrect API key provided"}}"#)
+            .unwrap_err()
+            .to_string();
+        assert!(wrong.contains("did not accept"), "{wrong}");
+
+        let restricted = judge_key_check(
+            401,
+            r#"{"error":{"message":"You have insufficient permissions for this operation. Missing scopes: api.model.audio.request."}}"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(restricted.contains("missing a permission"), "{restricted}");
+        assert!(restricted.contains("api.model.audio.request"), "{restricted}");
+
+        let empty = judge_key_check(429, NO_QUOTA).unwrap_err().to_string();
+        assert!(empty.contains("no quota"), "{empty}");
+
+        let model = judge_key_check(404, r#"{"error":{"message":"The model does not exist"}}"#)
+            .unwrap_err()
+            .to_string();
+        assert!(model.contains(DEFAULT_MODEL), "{model}");
+
+        let down = judge_key_check(503, "<html>").unwrap_err().to_string();
+        assert!(down.contains("could not be checked"), "{down}");
+
+        for message in [wrong, restricted, empty, model, down] {
+            assert!(!message.to_lowercase().contains("credit"), "{message}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_key_check_sends_a_real_transcription_with_the_key() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(header("authorization", "Bearer sk-check"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "text": "" })))
+            .mount(&server)
+            .await;
+
+        let endpoint = server.uri();
+        run_blocking(move || {
+            OpenAiTranscriber::new("sk-check")
+                .unwrap()
+                .with_endpoint(endpoint)
+                .verify()
+        })
+        .await
+        .unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        let body = String::from_utf8_lossy(&requests[0].body);
+        assert!(body.contains("gpt-transcribe"), "not the dictation model");
+        assert!(body.contains("RIFF"), "no audio sent");
+    }
+
+    #[tokio::test]
+    async fn the_key_check_reports_an_account_with_no_quota() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(429).set_body_string(NO_QUOTA))
+            .mount(&server)
+            .await;
+
+        let endpoint = server.uri();
+        let err = run_blocking(move || {
+            OpenAiTranscriber::new("sk-empty")
+                .unwrap()
+                .with_endpoint(endpoint)
+                .verify()
+        })
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("no quota"), "{err}");
+    }
+
+    #[test]
+    fn the_key_check_says_when_openai_cannot_be_reached() {
+        let err = OpenAiTranscriber::new("sk-offline")
+            .unwrap()
+            .with_endpoint("http://127.0.0.1:1/unreachable")
+            .verify()
+            .unwrap_err();
+        assert_eq!(err.to_string(), KEY_CHECK_UNREACHABLE);
     }
 }

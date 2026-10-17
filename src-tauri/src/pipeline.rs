@@ -801,23 +801,20 @@ impl Pipeline {
 
     /// Where Instant should stream, or `None` for a Standard dictation.
     ///
-    /// Same order as [`Self::transcriber`]: a sign-in wins over a stored key,
-    /// and pays through the relay; a key alone goes straight to OpenAI.
+    /// Same order as [`Self::transcriber`]: the person's own key goes straight
+    /// to OpenAI; without one, a sign-in pays through the relay.
     fn live_route(&self) -> Option<Route> {
         let mut cached = self.live_route.lock();
         if let Some(route) = cached.as_ref() {
             return Some(route.clone());
         }
-        let route = if session::is_signed_in() {
-            session::relay_url().map(|url| Route::Relay { url })
-        } else {
-            match settings::load_api_key() {
-                Ok(Some(key)) => Some(Route::OpenAi { key }),
-                Ok(None) => None,
-                Err(err) => {
-                    tracing::warn!("Instant has no key to stream with: {err:#}");
-                    None
-                }
+        let route = match credential() {
+            Ok(Some(Credential::OwnKey(key))) => Some(Route::OpenAi { key }),
+            Ok(Some(Credential::Credits)) => session::relay_url().map(|url| Route::Relay { url }),
+            Ok(None) => None,
+            Err(err) => {
+                tracing::warn!("Instant has no key to stream with: {err:#}");
+                None
             }
         };
         cached.clone_from(&route);
@@ -950,20 +947,13 @@ impl Pipeline {
             return Ok(Arc::clone(existing));
         }
 
-        if session::is_signed_in() {
-            let polisher: Arc<dyn Polisher> = Arc::new(HostedPolisher::new()?);
-            *cached = Some(Arc::clone(&polisher));
-            return Ok(polisher);
-        }
-
-        let key = settings::load_api_key()?;
-        if let Some(key) = key {
-            let polisher: Arc<dyn Polisher> = Arc::new(OpenAiPolisher::new(key)?);
-            *cached = Some(Arc::clone(&polisher));
-            return Ok(polisher);
-        }
-
-        anyhow::bail!("No OpenAI API key set")
+        let polisher: Arc<dyn Polisher> = match credential()? {
+            Some(Credential::OwnKey(key)) => Arc::new(OpenAiPolisher::new(key)?),
+            Some(Credential::Credits) => Arc::new(HostedPolisher::new()?),
+            None => anyhow::bail!("No OpenAI API key set"),
+        };
+        *cached = Some(Arc::clone(&polisher));
+        Ok(polisher)
     }
 
     /// Append to history, if the user keeps it. Never fatal: the text is
@@ -1030,27 +1020,68 @@ impl Pipeline {
             return Ok(Arc::clone(existing));
         }
 
-        // Signed-in credits take precedence. A leftover BYOK key used to hide
-        // the hosted path, which made "I signed in" look broken.
-        if session::is_signed_in() {
-            let transcriber: Arc<dyn Transcriber> = Arc::new(HostedTranscriber::new()?);
-            *cached = Some(Arc::clone(&transcriber));
-            return Ok(transcriber);
-        }
-
-        let key = settings::load_api_key()?;
-        if let Some(key) = key {
-            let transcriber: Arc<dyn Transcriber> = Arc::new(OpenAiTranscriber::new(key)?);
-            *cached = Some(Arc::clone(&transcriber));
-            return Ok(transcriber);
-        }
-
-        anyhow::bail!("No OpenAI API key set — add one in TeleKey's settings, or sign in")
+        let transcriber: Arc<dyn Transcriber> = match credential()? {
+            Some(Credential::OwnKey(key)) => Arc::new(OpenAiTranscriber::new(key)?),
+            Some(Credential::Credits) => Arc::new(HostedTranscriber::new()?),
+            None => anyhow::bail!(
+                "No OpenAI API key set — add one in TeleKey's settings, or sign in"
+            ),
+        };
+        *cached = Some(Arc::clone(&transcriber));
+        Ok(transcriber)
     }
 
     fn fail(&self, message: String) {
         self.recording.store(false, Ordering::Relaxed);
         self.announce(Status::Failed { message });
+    }
+}
+
+/// What pays for a dictation.
+#[derive(Clone, PartialEq)]
+enum Credential {
+    /// The person's own OpenAI key, straight to OpenAI.
+    OwnKey(String),
+    /// TeleKey credits, through the server and the relay.
+    Credits,
+}
+
+/// Written by hand so the key can never reach a log or a failed assertion.
+impl std::fmt::Debug for Credential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Credential::OwnKey(_) => f.write_str("OwnKey(..)"),
+            Credential::Credits => f.write_str("Credits"),
+        }
+    }
+}
+
+/// The credential every client is built from: the transcriber, the polisher
+/// and Instant's route all ask here, so they can never disagree.
+fn credential() -> Result<Option<Credential>> {
+    choose_credential(settings::load_api_key(), session::is_signed_in)
+}
+
+/// A key of the person's own wins over a sign-in. They added it to use it, and
+/// Settings checked it with OpenAI before keeping it. Credits used to win
+/// instead, so a signed-in account that had run out kept every dictation on
+/// "Out of credits" with a working key sitting in the Keychain; signing in no
+/// longer hides a key, and removing the key is how to go back to credits.
+///
+/// A Keychain that cannot be read is not allowed to cost a signed-in person
+/// their dictation: it is logged and credits pay. Signed out, it is the error.
+fn choose_credential(
+    key: Result<Option<String>>,
+    signed_in: impl FnOnce() -> bool,
+) -> Result<Option<Credential>> {
+    match key {
+        Ok(Some(key)) => Ok(Some(Credential::OwnKey(key))),
+        Ok(None) => Ok(signed_in().then_some(Credential::Credits)),
+        Err(err) if signed_in() => {
+            tracing::warn!("could not read the OpenAI key, using credits: {err:#}");
+            Ok(Some(Credential::Credits))
+        }
+        Err(err) => Err(err),
     }
 }
 
@@ -2094,5 +2125,41 @@ mod tests {
             json,
             serde_json::json!({ "kind": "nudge", "text": "hi", "clickable": true })
         );
+    }
+
+    fn key(value: &str) -> Result<Option<String>> {
+        Ok(Some(value.to_string()))
+    }
+
+    #[test]
+    fn an_own_key_wins_over_a_sign_in() {
+        let chosen = choose_credential(key("sk-mine"), || true).unwrap();
+        assert_eq!(chosen, Some(Credential::OwnKey("sk-mine".into())));
+    }
+
+    #[test]
+    fn a_key_alone_is_used_and_the_session_is_not_even_read() {
+        let chosen = choose_credential(key("sk-mine"), || panic!("read the session")).unwrap();
+        assert_eq!(chosen, Some(Credential::OwnKey("sk-mine".into())));
+    }
+
+    #[test]
+    fn credits_pay_only_without_a_key() {
+        assert_eq!(
+            choose_credential(Ok(None), || true).unwrap(),
+            Some(Credential::Credits)
+        );
+        assert_eq!(choose_credential(Ok(None), || false).unwrap(), None);
+    }
+
+    #[test]
+    fn an_unreadable_keychain_falls_back_to_credits_only_when_signed_in() {
+        let broken = || Err(anyhow::anyhow!("keychain locked"));
+        assert_eq!(
+            choose_credential(broken(), || true).unwrap(),
+            Some(Credential::Credits)
+        );
+        let err = choose_credential(broken(), || false).unwrap_err();
+        assert!(err.to_string().contains("keychain locked"), "{err}");
     }
 }

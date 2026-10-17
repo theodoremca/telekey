@@ -64,9 +64,14 @@ click through it.
 
 **Your own key.** Get one from [platform.openai.com](https://platform.openai.com/api-keys).
 It needs credit on the account; dictation costs a fraction of a cent per sentence.
-Paste it into **Settings → OpenAI key**, where it is stored in your Keychain
-(Credential Manager on Windows).
-Or from the terminal:
+Paste it into **Settings → OpenAI key**. TeleKey checks it with OpenAI first,
+by transcribing one second of silence (a tiny fraction of a cent), and keeps it
+only if that works: a mistyped key, a key without the audio permission, or an
+account with no quota is refused there, with the reason, rather than at your
+first dictation. It is stored in your Keychain (Credential Manager on Windows).
+While a key is set it pays for every dictation, even when you are also signed
+in; remove it in Settings to use credits again.
+Or from the terminal (this one is stored without the check):
 
 ```bash
 /Applications/TeleKey.app/Contents/MacOS/TeleKey set-api-key

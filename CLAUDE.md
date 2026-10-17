@@ -666,6 +666,23 @@ since tao believed it already hidden. The overlay goes through
 elsewhere they are Tauri's own calls. Never call a tao style or visibility
 method on the overlay on Windows.
 
+**39. An OpenAI key is set and dictation still says "Out of credits", or opens Buy credits.**
+Two causes. A sign-in used to win over a stored key, so an account that ran
+out kept failing with a working key in the Keychain. Now the key wins
+everywhere (`pipeline.rs` `choose_credential`, which the transcriber, the
+polisher and Instant's route all use), and removing the key in Settings is the
+way back to credits. And OpenAI's own 429 was worded "rate limited or out of
+credit", so the capsule's "credit" match opened TeleKey's Buy credits window
+for the key's quota: `transcribe.rs` now says "out of quota" and tells
+throttling apart (`out_of_quota`), and a test keeps "credit" out of every
+own-key failure. Because a set key pays for everything, Settings stores one
+only after `OpenAiTranscriber::verify` sends it one second of silence the way a
+dictation does (models listing passes for a key with no quota, so it proves
+nothing); throttling passes, everything else is refused with the reason.
+`set_api_key` is an `async` command for that request: a sync command runs on
+the main thread and would freeze every window and the tray while OpenAI
+answered. `TeleKey set-api-key` (CLI) stores without the check.
+
 ---
 
 ## Architecture in one screen

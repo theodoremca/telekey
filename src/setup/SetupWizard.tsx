@@ -108,7 +108,11 @@ export function SetupWizard() {
   const refreshCredentials = useCallback(async () => {
     try {
       const [key, session] = await Promise.all([api.apiKeyStatus(), api.sessionStatus()]);
-      if (session.signedIn) {
+      // Same order as the app: a key of the person's own pays ahead of a
+      // sign-in, so it is what this row reports.
+      if (key.isSet) {
+        setCredentials({ kind: "key", source: key.source });
+      } else if (session.signedIn) {
         try {
           const account = await api.hostedAccount();
           setCredentials({
@@ -123,8 +127,6 @@ export function SetupWizard() {
             balance: { kind: "unknown", reason: messageFrom(err) },
           });
         }
-      } else if (key.isSet) {
-        setCredentials({ kind: "key", source: key.source });
       } else {
         setCredentials({ kind: "none" });
       }
@@ -582,7 +584,7 @@ function CredentialsField({ onSaved }: { onSaved: () => Promise<void> }) {
           onChange={(event) => setValue(event.target.value)}
         />
         <button className="ghost" type="submit" disabled={saving || !value.trim()}>
-          Save
+          {saving ? "Checking…" : "Save"}
         </button>
       </form>
       {problem && <p className="problem">{problem}</p>}

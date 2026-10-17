@@ -247,7 +247,9 @@ const inTauri = () =>
  * `?update=ready|downloading|failed|upToDate` (the Updates row's states),
  * `?tipped=1` (the Support row after a tip), `?bonus=0` (packs from an older
  * server, which send no `creditCents`), `?signedin=1` (a TeleKey account, so
- * Usage shows the Buy buttons and Support has no "I already did").
+ * Usage shows the Buy buttons and Support has no "I already did"), `?key=set`
+ * (an OpenAI key already stored), `?key=fail` (a key that OpenAI refuses when
+ * it is checked on save).
  */
 const previewFlags = () =>
   typeof window !== "undefined"
@@ -355,11 +357,10 @@ const previewState: {
       { app: "com.apple.Terminal", label: "Terminal", style: { kind: "literal" } },
     ],
   },
-  key: {
-    isSet: false,
-    source: null,
-    keychainIsEffective: true,
-  },
+  key:
+    previewFlags().get("key") === "set"
+      ? { isSet: true, source: "Keychain", keychainIsEffective: true }
+      : { isSet: false, source: null, keychainIsEffective: true },
   session:
     previewFlags().get("signedin") === "1"
       ? { signedIn: true, email: "you@example.com", uid: "preview" }
@@ -479,6 +480,12 @@ const preview = {
   platform: async () => previewPlatform(),
   apiKeyStatus: async () => previewState.key,
   setApiKey: async () => {
+    if (previewFlags().get("key") === "fail") {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      throw new Error(
+        "That key's OpenAI account has no quota left. Add billing at platform.openai.com, then save the key again.",
+      );
+    }
     previewState.key = {
       isSet: true,
       source: "Keychain",

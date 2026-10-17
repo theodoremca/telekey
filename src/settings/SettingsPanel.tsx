@@ -629,6 +629,20 @@ function ApiKeyRow({
     }
   };
 
+  // While a key is set it pays for every dictation, ahead of a sign-in, so
+  // removing it is how someone goes back to TeleKey credits.
+  const remove = async () => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      onChanged(await api.clearApiKey());
+    } catch (err) {
+      setProblem(messageFrom(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (editing) {
     return (
       <div className="row column">
@@ -647,32 +661,43 @@ function ApiKeyRow({
             }}
           />
           <button className="primary" disabled={busy} onClick={() => void save()}>
-            {busy ? "Saving…" : "Save"}
+            {busy ? "Checking…" : "Save"}
           </button>
           <button className="ghost" onClick={() => setEditing(false)}>
             Cancel
           </button>
         </div>
-        <p className="rowHint">Stored in {CREDENTIAL_STORE[platform.os]}, never in a file.</p>
+        <p className="rowHint">
+          Checked with OpenAI before it is saved (one second of silence, a tiny fraction of a cent),
+          then stored in {CREDENTIAL_STORE[platform.os]}, never in a file.
+        </p>
         {problem && <p className="problem">{problem}</p>}
       </div>
     );
   }
 
   return (
-    <div className="row">
-      <span className={`dot ${status?.isSet ? "ok" : "bad"}`} />
-      <div className="rowText">
-        <span className="rowLabel">OpenAI key</span>
-        <span className="rowHint">
-          {status?.isSet
-            ? `From ${status.source}`
-            : "Optional — sign in above to use TeleKey credits instead."}
-        </span>
+    <div className="row column">
+      <div className="row tight">
+        <span className={`dot ${status?.isSet ? "ok" : "bad"}`} />
+        <div className="rowText">
+          <span className="rowLabel">OpenAI key</span>
+          <span className="rowHint">
+            {status?.isSet
+              ? `Used for every dictation, ahead of TeleKey credits. From ${status.source}.`
+              : "Optional — sign in above to use TeleKey credits instead."}
+          </span>
+        </div>
+        {status?.isSet && status.keychainIsEffective && (
+          <button className="ghost" disabled={busy} onClick={() => void remove()}>
+            Remove
+          </button>
+        )}
+        <button className="ghost" disabled={busy} onClick={() => setEditing(true)}>
+          {status?.isSet ? "Replace" : "Add"}
+        </button>
       </div>
-      <button className="ghost" onClick={() => setEditing(true)}>
-        {status?.isSet ? "Replace" : "Add"}
-      </button>
+      {problem && <p className="problem">{problem}</p>}
     </div>
   );
 }
@@ -739,7 +764,7 @@ function AccountRow({
             <span className="rowLabel">TeleKey credits</span>
             <span className="rowHint">
               {standing}
-              {usingOwnKey ? " Sign in uses TeleKey credits; your key is unused until you sign out." : ""}
+              {usingOwnKey ? " Not in use: your OpenAI key pays while it is set. Remove the key to use credits." : ""}
             </span>
           </div>
           <button className="ghost" disabled={busy} onClick={() => void signOut()}>

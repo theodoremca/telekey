@@ -156,12 +156,20 @@ pub fn api_key_status() -> ApiKeyStatus {
     ApiKeyStatus::read()
 }
 
+/// Keep a key only once OpenAI has shown it works: the key is real, may
+/// transcribe, and has quota left (`OpenAiTranscriber::verify`). A key that is
+/// set is used for every dictation, ahead of a sign-in, so one that cannot
+/// transcribe must never be stored.
+///
+/// `async`, and the check on a blocking thread: it is a network request, and a
+/// synchronous command runs on the main thread, where it would freeze every
+/// window and the tray until OpenAI answered.
 #[tauri::command]
-pub fn set_api_key(
+pub async fn set_api_key(
     pipeline: State<'_, Arc<Pipeline>>,
     key: String,
 ) -> Result<ApiKeyStatus, String> {
-    let key = key.trim();
+    let key = key.trim().to_string();
 
     if key.is_empty() {
         return Err("Enter a key first.".to_string());
@@ -170,10 +178,19 @@ pub fn set_api_key(
         return Err("That does not look like an OpenAI key — they start with 'sk-'.".to_string());
     }
 
-    settings::store_api_key(key).map_err(to_message)?;
+    let checking = key.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::transcribe::OpenAiTranscriber::new(checking)?.verify()
+    })
+    .await
+    .map_err(|err| format!("Could not check the key: {err}"))?
+    .map_err(to_message)?;
 
-    // The cached client holds the old key.
+    settings::store_api_key(&key).map_err(to_message)?;
+
+    // The cached clients hold the old key, or the sign-in the key now replaces.
     pipeline.invalidate_transcriber();
+    tracing::info!("OpenAI key checked and stored");
 
     Ok(ApiKeyStatus::read())
 }
