@@ -125,6 +125,25 @@ on restart.
 Ready to dictate.
 ```
 
+### If something goes wrong
+
+TeleKey keeps a log of what it did: when a dictation started and ended, which
+route it took, and every warning and error. Choose **Show Logs in Finder** from
+the menu bar (**Show Logs in File Explorer** on Windows) and attach `telekey.log`
+to your bug report. If the app froze, attach it after you quit or force-quit:
+the lines up to the freeze are already in the file.
+
+| | |
+|---|---|
+| macOS | `~/Library/Logs/TeleKey/telekey.log` |
+| Windows | `%LOCALAPPDATA%\telekey\logs\telekey.log` |
+| Linux | `~/.local/share/telekey/logs/telekey.log` |
+
+Each file grows to 4 MB, then becomes `telekey.1.log`; the three newest old
+files are kept and anything older is deleted. The log never contains your audio,
+your transcripts or your key, and it is never sent anywhere: it leaves your
+computer only if you attach it to something.
+
 ## Using it
 
 Hold **⌃⌥Space**, speak, release. A capsule appears at the bottom of the screen
@@ -177,6 +196,10 @@ Everything below is optional — TeleKey works with none of it configured.
   never logged or printed.
 - **Usage records are counts, not content** — seconds and token totals, never
   what you said. Rolled up as they age, so the file stays a few KB for life.
+- **The log stays local.** It records what the app did (timings, the app it
+  pasted into, the microphone, errors), never audio, transcripts or your key,
+  is capped at about 16 MB, and is never sent anywhere (see
+  [If something goes wrong](#if-something-goes-wrong)).
 - **Update checks** fetch one public file from GitHub, which sees an ordinary
   download request and nothing about you. An update installs only if it is
   signed with TeleKey's release key.

@@ -27,7 +27,7 @@ All from the repo root unless stated.
 ```bash
 bun install                # once
 ./scripts/run.sh           # build → sign → quit old copy → install to /Applications → launch
-tail -f ~/Library/Logs/telekey.log
+tail -f ~/Library/Logs/TeleKey/telekey.log
 ```
 
 `run.sh` is the only way to test dictation end to end. It replaces
@@ -256,7 +256,7 @@ next rebuild. `stable` means they survive.
 | Beer-prompt counter | `…/telekey/tips.json` (own-key dictations, the day of the last prompt, whether they tipped). Never sent anywhere |
 | API key | Keychain, service `telekey`, account `openai-api-key` — or `OPENAI_API_KEY` env / a `.env` file, which win over the Keychain |
 | Hosted session | Keychain, service `telekey`, account `hosted-session` (Firebase refresh + ID token). Arrives over `telekey://auth` after the website signs in. |
-| Logs | `~/Library/Logs/telekey.log` when launched by `run.sh`; otherwise stdout |
+| Logs | `~/Library/Logs/TeleKey/telekey.log` (macOS), `%LOCALAPPDATA%\telekey\logs\` (Windows), `~/.local/share/telekey/logs/` (Linux), written by the app itself (`logging.rs`) however it was started, and to stdout as well. 4 MB a file, then `telekey.1.log` … `telekey.3.log`, oldest deleted. Synchronous, so a force-quit keeps every line before it; panics land there too. Tray › Show Logs in Finder (File Explorer on Windows) opens the folder. Never sent anywhere |
 | Built app | `src-tauri/target/release/bundle/macos/TeleKey.app` |
 | Installed app | `/Applications/TeleKey.app` — **TCC keys on this path**, so test the installed copy |
 
@@ -280,7 +280,7 @@ A **development** build loads **`.env` then `.env.staging` or `.env.production`*
 | `APPLE_SIGNING_IDENTITY` | shell | Tauri signs the bundle; also honoured by `dev-sign.sh` |
 | `TELEKEY_DEV_IDENTITY` | shell | Overrides the certificate `dev-sign.sh` picks |
 | `TELEKEY_LOG` | shell | `tracing` filter, e.g. `telekey=debug` |
-| `TELEKEY_LOG_FILE` | shell | Where `run.sh` sends output |
+| `TELEKEY_LOG_FILE` | shell | An extra file for `run.sh` to send the app's stdout and stderr to. The app's own log is written regardless, so never point this at it |
 | `TELEKEY_STAGE` | desktop `.env` (or shell) | `staging` (daily default) or `production`. Picks `.env.staging` / `.env.production` |
 | `TELEKEY_ENV_FILE` | shell | Explicit overlay env path, instead of `.env.staging` / `.env.production` |
 | `OPENAI_API_KEY` | desktop `.env` / Keychain | Optional BYOK. Not TeleKey’s hosted key |

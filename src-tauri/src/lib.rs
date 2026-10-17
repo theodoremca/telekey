@@ -16,6 +16,7 @@ pub mod hosted;
 pub mod inject;
 pub mod input_device;
 pub mod live;
+pub mod logging;
 pub mod output_mute;
 pub mod overlay;
 pub mod panel;
@@ -150,7 +151,7 @@ fn spawn_level_ticker(app: AppHandle, pipeline: Arc<Pipeline>) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    init_tracing();
+    logging::init();
     session::hydrate_env();
 
     let config_dir = settings::config_dir().unwrap_or_else(|err| {
@@ -694,6 +695,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     // update.rs keeps the wording in step.
     let update_item =
         MenuItem::with_id(app, "update", "Check for Updates…", true, None::<&str>)?;
+    // The log file, to attach to a bug report (logging.rs).
+    let logs_item = MenuItem::with_id(app, "logs", logging::REVEAL_LABEL, true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit TeleKey", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
@@ -703,6 +706,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             &settings_item,
             &setup_item,
             &update_item,
+            &logs_item,
             &quit,
         ],
     )?;
@@ -728,6 +732,15 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 if let Some(updater) = app.try_state::<Arc<update::Updater>>() {
                     updater.menu_clicked();
                 }
+            }
+            "logs" => {
+                // Off the main thread, which draws the tray: it waits for the
+                // file manager to be asked.
+                std::thread::spawn(|| {
+                    if let Err(err) = logging::reveal() {
+                        tracing::warn!("could not show the log files: {err:#}");
+                    }
+                });
             }
             "quit" => app.exit(0),
             _ => {}
@@ -771,13 +784,4 @@ fn load_settings() -> Settings {
             Settings::default()
         }
     }
-}
-
-fn init_tracing() {
-    use tracing_subscriber::{fmt, EnvFilter};
-
-    let filter = EnvFilter::try_from_env("TELEKEY_LOG")
-        .unwrap_or_else(|_| EnvFilter::new("telekey=info,warn"));
-
-    let _ = fmt().with_env_filter(filter).try_init();
 }

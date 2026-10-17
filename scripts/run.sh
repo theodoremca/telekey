@@ -25,7 +25,12 @@ export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 export CARGO_TARGET_DIR="$ROOT/src-tauri/target"
 BUILT="$CARGO_TARGET_DIR/release/bundle/macos/TeleKey.app"
 INSTALLED="/Applications/TeleKey.app"
-LOG="${TELEKEY_LOG_FILE:-$HOME/Library/Logs/telekey.log}"
+# TeleKey writes this itself (src-tauri/src/logging.rs), the same file a copy
+# started from Finder writes. Its stdout is therefore not redirected here: that
+# would put every line in the file twice. TELEKEY_LOG_FILE, when set, still
+# captures stdout and stderr in a file of its own.
+LOG="$HOME/Library/Logs/TeleKey/telekey.log"
+OUT="${TELEKEY_LOG_FILE:-/dev/null}"
 
 dotenv_get() {
   local file="$1" key="$2"
@@ -84,8 +89,10 @@ rm -rf "$INSTALLED"
 cp -R "$BUILT" "$INSTALLED"
 
 echo "▸ Launching…"
-mkdir -p "$(dirname "$LOG")"
-: > "$LOG"
+if [[ "$OUT" != /dev/null ]]; then
+  mkdir -p "$(dirname "$OUT")"
+  : > "$OUT"
+fi
 # Launched via `open` so launchd owns the process. Started from a shell instead,
 # macOS attributes permission prompts to the terminal rather than to TeleKey.
 open_env=(
@@ -95,7 +102,7 @@ open_env=(
 [[ -n "${TELEKEY_API_BASE:-}" ]] && open_env+=(--env "TELEKEY_API_BASE=${TELEKEY_API_BASE}")
 [[ -n "${TELEKEY_SITE_URL:-}" ]] && open_env+=(--env "TELEKEY_SITE_URL=${TELEKEY_SITE_URL}")
 [[ -n "${TELEKEY_FIREBASE_API_KEY:-}" ]] && open_env+=(--env "TELEKEY_FIREBASE_API_KEY=${TELEKEY_FIREBASE_API_KEY}")
-open -a "$INSTALLED" --stdout "$LOG" --stderr "$LOG" "${open_env[@]}"
+open -a "$INSTALLED" --stdout "$OUT" --stderr "$OUT" "${open_env[@]}"
 
 sleep 2
 echo

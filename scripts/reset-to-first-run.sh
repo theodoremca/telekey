@@ -131,6 +131,7 @@ TARGETS=(
   "$HOME/Library/Caches/flowtype"
   "$HOME/Library/HTTPStorages/com.theodoremca.telekey"
   "$HOME/Library/Saved Application State/com.theodoremca.telekey.savedState"
+  "$HOME/Library/Logs/TeleKey"
   "$HOME/Library/Logs/telekey.log"
   "$HOME/Library/Logs/flowtype.log"
 )

@@ -29,7 +29,7 @@ export const SUPPORT_EMAIL = "support@telekey.app";
 export const SUPPORT_MAILTO = `mailto:${SUPPORT_EMAIL}`;
 
 /** The date the legal pages below took effect. Change it when their text does. */
-const LEGAL_EFFECTIVE = "13 October 2026";
+const LEGAL_EFFECTIVE = "17 October 2026";
 
 /**
  * A Stripe Payment Link on the live EntityQ LLC account (plink_1UKqv5JBYM0g0sSoS93Ot3Uy):
@@ -861,6 +861,7 @@ export const PRIVACY_POLICY: LegalDoc = {
             "Usage counts (seconds and tokens, never content), your settings, your vocabulary and your replacements are files on your computer too.",
             "If you use your own OpenAI key, the app counts your dictations on your computer so that it can offer, now and then, a link to buy the developer a beer. That count, and whether you have tipped or asked it to stop, stay on your computer. The app never opens a link by itself.",
             "Your OpenAI key, if you use one, and your sign-in session, if you have one, are kept in the macOS Keychain or Windows Credential Manager. The key is never logged and is sent only to OpenAI.",
+            "The app keeps a log of what it did, such as when each dictation started and ended, the app it pasted into, the microphone it used and any errors, so that a bug report can say what went wrong. It never contains your audio, your transcripts or your key. It is capped at about 16 MB, older entries are deleted as it fills, and the app never sends it anywhere: it leaves your computer only if you attach it to a message yourself.",
           ],
         },
       ],

@@ -62,6 +62,9 @@ pub fn check() -> Result<()> {
         }
         Err(err) => println!("  settings         UNREADABLE: {err:#}"),
     }
+    if let Some(logs) = crate::logging::dir() {
+        println!("  log file         {}", logs.join(crate::logging::FILE_NAME).display());
+    }
 
     let resolved = settings::resolve_api_key().unwrap_or(None);
     let key_set = resolved.is_some();
